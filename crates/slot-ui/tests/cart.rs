@@ -155,8 +155,7 @@ fn game_boy_cart_uses_the_real_front_and_label_proportions() {
     assert!((label_ratio - 42.0 / 37.0).abs() < 0.01);
 }
 
-/// The label is wide and low: thin plastic beside it, a broad moulded grip above. A
-/// uniform border reads as a frame, and a narrow label reads as a coaster.
+/// The label is wide and low, but keeps the roughly 43:22 aspect of real GBA paper.
 #[test]
 fn the_label_is_wide_and_sits_low() {
     let (x0, y0, x1, y1) = label_panel(CART_W, CART_H);
@@ -165,11 +164,12 @@ fn the_label_is_wide_and_sits_low() {
     let top = y0 as f32 / h;
     let bottom = 1.0 - y1 as f32 / h;
     let width = (x1 - x0) as f32 / w;
+    let ratio = (x1 - x0) as f32 / (y1 - y0) as f32;
 
-    // Wide, not an exact number. 0.82 was the value on the day this was written, and pinning
-    // it meant editing the test every time the label was nudged by a percent.
+    // Wide, not an exact number. It still occupies most of the shell while retaining the
+    // physical label's less panoramic proportions.
     assert!(
-        width > 0.78,
+        width > 0.72,
         "the label is only {:.0}% of the cart wide, that reads as a panel not a label",
         width * 100.0
     );
@@ -179,12 +179,16 @@ fn the_label_is_wide_and_sits_low() {
         top * 100.0
     );
     assert!(
-        top > side * 2.0,
-        "top band {top:.2} against side margin {side:.2}: that is a uniform border"
+        top > side * 1.4,
+        "top band {top:.2} against side margin {side:.2}: the grip has disappeared"
     );
     assert!(
-        top > bottom * 1.6,
+        top > bottom * 1.4,
         "the label is not sitting low, top {top:.2} bottom {bottom:.2}"
+    );
+    assert!(
+        (ratio - 43.0 / 22.0).abs() < 0.02,
+        "label ratio {ratio:.3} is not the physical GBA label's 43:22"
     );
 }
 

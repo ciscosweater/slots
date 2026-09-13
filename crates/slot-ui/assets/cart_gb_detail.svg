@@ -1,14 +1,14 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 274">
-  <!-- Scoop soft recessed floor shading -->
-  <path d="M 40 15 L 200 15 A 16 16 0 0 1 216 31 A 16 16 0 0 1 200 47 L 40 47 A 16 16 0 0 1 24 31 A 16 16 0 0 1 40 15 Z" fill="#000" opacity="0.06"/>
+  <!-- One precise capsule: common centreline, equal 17 px end radii and level edges. -->
+  <rect x="24" y="14" width="192" height="34" rx="17"
+        fill="#000" opacity="0.06"/>
+  <path d="M 41 14 H 199 A 17 17 0 0 1 216 31
+           M 24 31 A 17 17 0 0 1 41 14"
+        fill="none" stroke="#000" stroke-width="2" stroke-linecap="round"/>
+  <path d="M 24 31 A 17 17 0 0 0 41 48 H 199 A 17 17 0 0 0 216 31"
+        fill="none" stroke="#fff" stroke-width="1" stroke-linecap="round" opacity="0.7"/>
 
-  <!-- Scoop upper & side shadow bevel -->
-  <path d="M 24 31 C 24 22 31 15 40 15 L 200 15 C 209 15 216 22 216 31" fill="none" stroke="#000" stroke-width="2.0" stroke-linecap="round"/>
-
-  <!-- Scoop lower highlight bevel -->
-  <path d="M 24 31 C 24 40 31 47 40 47 L 200 47 C 209 47 216 40 216 31" fill="none" stroke="#fff" stroke-width="1.2" stroke-linecap="round" opacity="0.75"/>
-
-  <!-- Left shoulder ribs (5 ribs spanning x=4 to 24, perfectly meeting scoop at 24) -->
+  <!-- Ribs share a 6.5 px pitch and terminate exactly on the capsule tangents. -->
   <path d="
     M 4 18 L 24 18
     M 4 24.5 L 24 24.5
@@ -24,7 +24,7 @@
     M 4 45.2 L 24 45.2
   " fill="none" stroke="#fff" stroke-width="1.0" stroke-linecap="round" opacity="0.6"/>
 
-  <!-- Right shoulder ribs (4 ribs spanning x=216 to 236, perfectly meeting scoop at 216) -->
+  <!-- The upper-right lock step occupies y=0..18, hence four ribs on this side. -->
   <path d="
     M 216 24.5 L 236 24.5
     M 216 31 L 236 31
@@ -38,7 +38,9 @@
     M 216 45.2 L 236 45.2
   " fill="none" stroke="#fff" stroke-width="1.0" stroke-linecap="round" opacity="0.6"/>
 
-  <!-- Bottom hollow arrow (positioned lower down at y=242..258) -->
-  <path d="M 100 242 L 140 242 L 120 258 Z M 104 244 L 136 244 L 120 255.5 Z" fill="#000" fill-rule="evenodd"/>
-  <path d="M 100 242 L 120 258 L 140 242" fill="none" stroke="#fff" stroke-width="1.0" opacity="0.6"/>
+  <!-- Fine moulded thumb arrow, matching the visual weight of the GBA detail. -->
+  <path d="M 104 244 H 136 L 120 257 Z"
+        fill="none" stroke="#000" stroke-width="1.25" stroke-linejoin="round"/>
+  <path d="M 106 245 H 134 L 120 255.5"
+        fill="none" stroke="#fff" stroke-width="0.65" stroke-linejoin="round" opacity="0.55"/>
 </svg>

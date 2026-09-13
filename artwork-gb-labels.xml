@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- GB / GBC cart labels for slot. The paper on a real cart is 42:37; 168x148 is that
-     ratio at a size that still looks sharp on the 192x169 label. Point Skyscraper at this
+<!-- GB / GBC cart labels for slot. The paper on a real cart is 42:37; 192x169 is that
+     ratio at the exact size slot renders. Point Skyscraper at this
      with artworkXml="artwork-gb-labels.xml" for the gb and gbc platforms. -->
 <artwork>
-  <output type="cover" width="168" height="148">
-    <layer resource="cover" width="168" height="148"/>
+  <output type="cover" width="192" height="169">
+    <layer resource="cover" width="192" height="169"/>
   </output>
 </artwork>

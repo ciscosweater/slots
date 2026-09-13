@@ -68,12 +68,12 @@ System/       the binary, three cores, theme.txt, and selected_core.ini.
 Wallpapers/   .png, one picked at random each boot and drawn behind the shelf.
 ```
 
-Label art is drawn at 196x86, or about 2.28:1. Anything else is scaled to cover that box
+GBA label art is drawn at 176x90, close to the real label's 43:22. Anything else is scaled to cover that box
 and centre cropped, so a square or portrait image loses its top and bottom. Bigger art is
 fine and comes down to size; smaller gets stretched up and shows it.
 
 GB and GBC labels share the real cartridge label's 42:37 aspect ratio. The companion
-`artwork-gb-labels.xml` Skyscraper definition outputs them at 168x148.
+`artwork-gb-labels.xml` Skyscraper definition outputs them at 192x169.
 
 `System/theme.txt` is entirely optional and controls the appearance of the slot:
 

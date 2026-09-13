@@ -19,18 +19,15 @@ pub const GB_LABEL_H: u32 = 169;
 pub const GB_LABEL_X: u32 = (GB_CART_W - GB_LABEL_W) / 2;
 pub const GB_LABEL_Y: u32 = 56;
 
-/// The paper label, inset in the shell rather than covering it: 9% to 91% across and 22.8%
-/// to 86.3% down. The vertical placement is the reference's, and the band it leaves above is
-/// the moulded grip; that asymmetry is most of what makes the face read as a cartridge
-/// rather than a bordered rectangle. The horizontal inset is deliberately tighter than the
-/// reference's 14.1%, which was an icon's proportion rather than a cartridge's: a real
-/// label runs nearly the full width with only a thin edge of plastic beside it.
+/// The paper label, inset beneath the moulded grip at the physical GBA label's roughly
+/// 43:22 aspect. At 176x90 it stays clear of both the ridge and lower thumb arrow while
+/// avoiding the overly panoramic 196x86 window this cart used before.
 pub const fn label_panel(w: u32, h: u32) -> (u32, u32, u32, u32) {
     (
-        (w * 90 + 500) / 1000,
-        (h * 228 + 500) / 1000,
-        (w * 910 + 500) / 1000,
-        (h * 863 + 500) / 1000,
+        (w * 133 + 500) / 1000,
+        (h * 200 + 500) / 1000,
+        (w * 867 + 500) / 1000,
+        (h * 867 + 500) / 1000,
     )
 }
 
