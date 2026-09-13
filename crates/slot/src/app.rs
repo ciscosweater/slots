@@ -1151,7 +1151,7 @@ impl App {
                 Action::ShelfRight | Action::GbaDown(Btn::Right) => self.shelf.hold_right(now),
                 Action::GbaDown(Btn::L1) => self.shelf.previous_letter(),
                 Action::GbaDown(Btn::R1) => self.shelf.next_letter(),
-                Action::GbaDown(Btn::L2) => self.toggle_font(),
+                Action::RewindStart => self.toggle_font(),
                 Action::GbaDown(Btn::Y) => self.toggle_favorite(),
                 Action::OpenAbout => self.phase = Phase::About,
                 // A is two actions and the press cannot tell them apart yet, so the cart

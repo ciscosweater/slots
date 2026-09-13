@@ -580,20 +580,29 @@ fn x_toggles_the_persistent_lcd_effect() {
 }
 
 #[test]
-fn l2_toggles_the_persistent_font() {
-    let (d, mut app) = on_shelf(&["Advance", "Boktai"]);
+fn physical_l2_toggles_the_persistent_font() {
+    let d = common::tmp_root_with_carts(&["Advance", "Boktai"]);
+    write_slot_state(
+        d.path(),
+        &SlotState {
+            clock_set: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let (mut session, _motor) = common::session_with_platform(d.path());
     assert!(read_pixelify(d.path()));
-    let revision = app.font_revision();
+    let revision = session.app().font_revision();
 
-    app.apply(Action::GbaDown(Btn::L2));
+    session.feed([RawEvent::Down(Btn::L2)], 0);
     assert!(!read_pixelify(d.path()));
-    assert_eq!(app.font_revision(), revision + 1);
-    assert_eq!(app.toast(), Some(Toast::FontOriginal));
+    assert_eq!(session.app().font_revision(), revision + 1);
+    assert_eq!(session.app().toast(), Some(Toast::FontOriginal));
 
-    let mut rebooted = App::boot(d.path());
-    rebooted.apply(Action::GbaDown(Btn::L2));
+    let (mut rebooted, _motor) = common::session_with_platform(d.path());
+    rebooted.feed([RawEvent::Down(Btn::L2)], 10);
     assert!(read_pixelify(d.path()));
-    assert_eq!(rebooted.toast(), Some(Toast::FontPixelify));
+    assert_eq!(rebooted.app().toast(), Some(Toast::FontPixelify));
 }
 
 #[test]
