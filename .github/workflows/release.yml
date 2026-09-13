@@ -60,6 +60,8 @@ jobs:
           file "$out/System/mgba_libretro.so" | grep -q aarch64
           file "$out/System/gpsp_libretro.so" | grep -q aarch64
           test -x "$out/System/slot"
+          test -x "$out/.system/h700/paks/MinUI.pak/launch.sh"
+          grep -q 'SLOT_ROOT=' "$out/.system/h700/paks/MinUI.pak/launch.sh"
           # GPL-2.0 section 3(a): the release does not ship without gpSP's corresponding
           # source. `task dist:device` names the file for the commit `core:gpsp` recorded, so
           # that recording is what says which file to look for. The .meta file travels with
@@ -145,7 +147,11 @@ jobs:
         run: |
           set -eu
           cat > notes.md <<NOTES
-          Unzip and copy the contents of \`slot-${GITHUB_REF_NAME}/\` onto SD2.
+          Unzip \`slot-${GITHUB_REF_NAME}/\` and copy its contents to:
+
+          - SD2/TF2 when booting with AGS-102; or
+          - the BASEOS data volume on SD1/TF1 for a one-card BaseOS v1.1.0 setup. Keep the
+            hidden \`.system\` directory. BaseOS also accepts the same tree on TF2.
 
           | | |
           |---|---|

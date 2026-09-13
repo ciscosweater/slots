@@ -289,7 +289,7 @@ tasks:
           "https://github.com/libretro/gpsp/archive/${sha}.tar.gz"
         # A real gpSP checkout, not just a valid tarball: same shape as any GitHub source
         # archive, one top directory named for the commit, and the Makefile lives in it.
-        tar -tzf vendor/gpsp-src.tar.gz | grep -q "^gpsp-${sha}/Makefile$"
+        tar -tzf vendor/gpsp-src.tar.gz "gpsp-${sha}/Makefile" >/dev/null
 
         echo "$sha" > vendor/gpsp-src.sha
         {
@@ -340,7 +340,7 @@ tasks:
       - 'echo "built target-device/release/slot"'
 
   dist:device:
-    desc: Build the SD2 tree for an H700 device, OUT defaults to ./dist-device
+    desc: Build the AGS-102/BaseOS frontend tree for an H700 device, OUT defaults to ./dist-device
     # Both cores now ship: crates/slot/src/core.rs resolves the dylib from a cart's own
     # Core, so a card naming gpsp in System/selected_core.ini gets gpSP for real rather than
     # mGBA wearing its name.
@@ -365,6 +365,12 @@ tasks:
       - file vendor/gpsp_libretro.so | grep -q aarch64
       - cp vendor/mgba_libretro.so {{.OUT}}/System/
       - cp vendor/gpsp_libretro.so {{.OUT}}/System/
+      # BaseOS v1.1.0 hands control to this conventional NextUI entry point on whichever
+      # frontend volume it mounted. With no TF2 that is TF1's own data partition, so the
+      # same tree works in either slot without baking a block-device name into slot.
+      - mkdir -p {{.OUT}}/.system/h700/paks/MinUI.pak
+      - cp platform/baseos/launch.sh {{.OUT}}/.system/h700/paks/MinUI.pak/launch.sh
+      - chmod +x {{.OUT}}/.system/h700/paks/MinUI.pak/launch.sh
       - cp -r licenses {{.OUT}}/System/licenses
       # GPL-2.0 section 3(a): gpSP's corresponding source travels with the binary. It lands
       # inside licenses/ itself, next to the license text that explains it, named for the
@@ -388,7 +394,7 @@ tasks:
         for p in cores/mgba/*.patch; do
           cp "$p" "{{.OUT}}/System/licenses/mgba-$(basename "$p")"
         done
-      - 'echo "device tree ready at {{.OUT}}, copy its contents to SD2"'
+      - 'echo "device tree ready at {{.OUT}}, copy its contents to the BaseOS frontend volume on TF1 or TF2"'
 
   deploy:device:
     desc: Build and push onto a device over adb, then restart it. SD defaults to /mnt/sdcard

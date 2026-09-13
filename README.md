@@ -12,6 +12,7 @@ A bespoke, GBA-only frontend for the Anbernic RG SP.
 | `SELECT` + `Left` / `Right` | Adjust blue light           |
 | `VOL+` / `VOL-`             | Change the volume           |
 | `VOL+` + `VOL-`             | Mute, remembering the level |
+| Hold `POWER`                | Save and power off          |
 
 ### On the carousel
 
@@ -83,22 +84,36 @@ Emerald = gpsp
 
 ## Installing on your RG SP
 
-1. Download the latest [AGS-102](https://github.com/BrandonKowalski/AGS-102) `.img` release.
-2. Use Raspberry PI Imager, RUFUS, et. al. to write the `.img` to an SD Card.
-3. Insert this SD Card into Slot 1 of your RG SP. This is the one on the side of the device next to the volume buttons.
-4. Download the latest slot release from this repo.
-5. Unzip the download
-6. Copy all the contents of the zip to a second SD Card
-7. Add Games, Saves, BIOS (if you like the boot animation), etc.
-8. Insert this SD Card into Slot 2. This is on the side where the power and reset buttons live.
+### AGS-102
+
+1. Flash the latest [AGS-102](https://github.com/BrandonKowalski/AGS-102) `.img` to the card for Slot 1 (TF1).
+2. Unzip the latest slot release and copy its contents to a second card.
+3. Add games, saves, labels, wallpapers and an optional GBA BIOS to their folders.
+4. Put the content card in Slot 2 (TF2) and boot.
+
+AGS-102 continues to launch `System/slot` directly; the additional BaseOS launcher does not
+change this path.
+
+### BaseOS v1.1.0
+
+1. Flash the matching [BaseOS v1.1.0](https://github.com/pvaibhav/BaseOS/releases/tag/v1.1.0) `.img` to the card for Slot 1 (TF1).
+2. Boot it once so BaseOS expands its data partition, then power off.
+3. Connect the card to your computer and copy the contents of the latest slot release onto
+   the `BASEOS` data volume. Keep the hidden `.system` directory: BaseOS launches slot through it.
+4. Add games, saves, labels, wallpapers and an optional GBA BIOS to their folders.
+5. Put the card back in Slot 1 and boot with Slot 2 empty.
+
+BaseOS also supports two cards: when TF2 is present it becomes the frontend volume, so the
+same release tree can live there instead.
 
 ## Updating
 I doubt I am gonna work on this more and add to it but in case I do here is how you update.
 
 1. Power off your RG SP.
-2. Eject SD Card 2.
+2. Eject the card that holds the slot frontend (TF1 in a one-card setup, TF2 in a two-card setup).
 3. Connect to your computer.
-4. Replace the `System` folder with the `System` folder contained in the update zip.
+4. Replace the `System` folder with the one from the update. On BaseOS, also copy the hidden
+   `.system` directory so launcher updates are included.
 5. Done.
 
 
@@ -113,8 +128,8 @@ gpSP's own corresponding source (fetched at build time and shipped alongside the
 GPL-2.0 section 3(a)), are in [`licenses/`](licenses/), which `dist:device` copies into the
 shipped tree alongside the cores they cover.
 
-The device boots [AGS-102](https://github.com/BrandonKowalski/AGS-102), a purpose-made fork
-of [BaseOS](https://github.com/pvaibhav/BaseOS) by @pvaibhav.
+The device boots either [AGS-102](https://github.com/BrandonKowalski/AGS-102) by Brandon T.
+Kowalski or [BaseOS](https://github.com/pvaibhav/BaseOS) by @pvaibhav.
 
 Type is [Open Sans](https://github.com/googlefonts/opensans), under the SIL Open Font
 License, and [Nerd Fonts](https://www.nerdfonts.com) symbols by Ryan L. McIntyre, under MIT.

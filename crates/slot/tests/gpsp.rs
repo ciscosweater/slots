@@ -61,12 +61,16 @@ fn gpsp_is_told_its_serial_mode_before_load() {
         Some("auto".to_string()),
         "auto resolves per ROM, so both devices agree without being told"
     );
+    assert_eq!(
+        core.option("gpsp_color_correction"),
+        Some("enabled".to_string())
+    );
 }
 
-/// mGBA has no `gpsp_serial` option at all; handing it one anyway would be silently ignored
-/// by mGBA today and a landmine the moment mGBA ever grows an option by that name.
+/// Each core receives only its own option names, and mGBA uses the explicit GBA transform
+/// rather than Auto so this GBA-only frontend never depends on content detection.
 #[test]
-fn mgba_is_given_no_options() {
+fn mgba_is_given_its_gba_color_correction_only() {
     let path = dylib_for(Core::Mgba);
     if !path.exists() {
         eprintln!("no mGBA dylib on this host, skipping");
@@ -79,6 +83,10 @@ fn mgba_is_given_no_options() {
         core.option("gpsp_serial"),
         None,
         "mGBA has no such option and must not be handed one"
+    );
+    assert_eq!(
+        core.option("mgba_color_correction"),
+        Some("GBA".to_string())
     );
 }
 

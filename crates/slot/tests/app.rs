@@ -982,41 +982,6 @@ fn carts_standing(out: &[Draw], board: TexId) -> usize {
         .count()
 }
 
-/// A picker still waiting on its cart's faces draws nothing of its own: the shelf is the shelf,
-/// with the highlighted cart standing in the row.
-fn assert_plain_shelf(out: &[Draw], f: &PickerFaces, when: &str) {
-    assert!(
-        !out.iter().any(|d| matches!(d, Draw::Turned { .. })),
-        "a turned face is drawn {when}"
-    );
-    let picker = [
-        f.board,
-        f.lid,
-        f.sockets[0],
-        f.sockets[1],
-        f.chips[0],
-        f.chips[1],
-        f.blank,
-        f.shadow,
-        f.legend[0].0,
-        f.legend[1].0,
-        f.legend[2].0,
-    ];
-    let drawn: Vec<TexId> = out
-        .iter()
-        .filter_map(|d| match *d {
-            Draw::Tex { tex, .. } if picker.contains(&tex) => Some(tex),
-            _ => None,
-        })
-        .collect();
-    assert!(drawn.is_empty(), "the picker drew {drawn:?} {when}");
-    assert_eq!(
-        carts_standing(out, f.board),
-        1,
-        "the highlighted cart is not standing in the row {when}"
-    );
-}
-
 /// Long enough for the lid to come off.
 fn let_it_open(app: &mut App) {
     app.update(0.5);
@@ -1436,26 +1401,27 @@ fn closing_puts_the_cart_back_on_the_shelf() {
     assert_eq!(standing, 1, "the cart did not go back on the shelf");
 }
 
-/// Pressed before the cart's faces are up, the cart stands on the shelf until they arrive and
-/// opens from there. Drawn before them the picker had only bare sockets and a chip to show where
-/// the cart had been, and an open timed from the press would have spent the wait as animation
-/// that never reached the panel.
+/// START responds immediately even before the detailed faces arrive. The shelf's own cart face
+/// is a truthful fallback lid, and the worker's detailed board replaces it in place.
 #[test]
-fn the_open_waits_on_the_shelf_for_its_faces() {
+fn the_open_starts_with_the_shelf_face_while_its_faces_are_built() {
     let (_d, mut app) = on_shelf(&["Emerald", "Zzz"]);
     let f = fake_boot_faces(&mut app);
     app.apply(Action::GbaDown(Btn::Start));
     app.update(0.3);
-    assert_plain_shelf(&frame(&app), &f, "while its faces are built");
+    assert_eq!(
+        carts_standing(&frame(&app), f.board),
+        0,
+        "START left the highlighted cart standing on the shelf"
+    );
 
     app.set_core_board_faces(f.board, f.lid);
     app.update(0.016);
     let out = frame(&app);
-    let shelf = grown(shelf_cart(), TURN_PAD as f32);
     let (_, lid, _) = turned_at(&out, f.lid).expect("no lid once the faces arrived");
     assert!(
-        near(lid, [shelf.x, shelf.y, shelf.w, shelf.h]),
-        "the open used up the wait: the lid is at {lid:?}"
+        lid[1] < shelf_cart().y,
+        "the lid did not keep opening: {lid:?}"
     );
     assert_eq!(
         carts_standing(&out, f.board),
@@ -1473,10 +1439,8 @@ fn the_open_waits_on_the_shelf_for_its_faces() {
     );
 }
 
-/// A face that never comes cannot freeze the picker: past `FACES_WAIT_MS` the cart opens anyway.
-/// The only faces on the GPU are the other cart's, built while the caret passed over it on the
-/// way back to this one, and the fallback open never wears them: it has nothing of its own to
-/// show and draws nothing rather than borrow theirs.
+/// A face that never comes cannot freeze the picker. The only detailed faces on the GPU are the
+/// other cart's, and the fallback open never borrows them.
 #[test]
 fn the_open_starts_anyway_when_the_faces_never_come() {
     let (_d, mut app) = on_shelf(&["Emerald", "Zzz"]);
@@ -1489,14 +1453,11 @@ fn the_open_starts_anyway_when_the_faces_never_come() {
     assert_eq!(app.selected_stem(), Some("Emerald"));
 
     app.apply(Action::GbaDown(Btn::Start));
-    app.update(1.499);
-    assert_plain_shelf(&frame(&app), &f, "a hair under the cap");
-
     app.update(0.002);
     assert_eq!(
         carts_standing(&frame(&app), f.board),
         0,
-        "the open never started once the cap ran out"
+        "the open did not start immediately"
     );
 
     let_it_open(&mut app);
@@ -1564,11 +1525,10 @@ fn the_real_faces_replace_the_fallback_once_they_arrive() {
     );
 }
 
-/// The chip is already in the cart's own socket when the cart opens. Arrows pressed while the cart
-/// still stands on the shelf waiting for its faces move nothing, so the `A` that follows writes
-/// only a choice the player saw made.
+/// A quick START then Right must not lose the choice while detailed faces are still building.
+/// This was the device-visible failure: the picker looked inert and discarded the gpSP input.
 #[test]
-fn arrows_pressed_while_the_cart_waits_move_nothing() {
+fn gpsp_can_be_selected_immediately_after_start() {
     let (_d, mut app) = on_shelf(&["Emerald", "Zzz"]);
     let f = fake_boot_faces(&mut app);
     app.apply(Action::GbaDown(Btn::Start));
@@ -1577,18 +1537,18 @@ fn arrows_pressed_while_the_cart_waits_move_nothing() {
     app.update(0.016);
     assert_eq!(
         app.core_picker(),
-        Some(Core::Mgba),
-        "a hop ran while the cart waited"
+        Some(Core::Gpsp),
+        "the gpSP choice was discarded while detailed faces were pending"
     );
 
     let_it_open(&mut app);
     let out = frame(&app);
     assert!(
-        turned_at(&out, f.chips[0]).is_some(),
-        "the chip is not seated in mGBA once the cart is open"
+        turned_at(&out, f.chips[0]).is_none(),
+        "the chip stayed in mGBA"
     );
     assert!(
-        turned_at(&out, f.chips[1]).is_none(),
-        "the chip opened in gpSP"
+        turned_at(&out, f.chips[1]).is_some(),
+        "the chip did not open in gpSP"
     );
 }

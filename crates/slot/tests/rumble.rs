@@ -102,12 +102,10 @@ fn play(s: &mut Session, now: &mut Millis) {
     }
 }
 
-/// The menu replaces the screen but not the phase, so a cart that was buzzing as the button
-/// went down kept buzzing while the user read a question about turning the device off — and
-/// then straight through the shutdown, since `poweroff` ends the process with `exit` and
-/// `Motor`'s own destructor never runs to put it down.
+/// A cart that was buzzing when POWER went down must stop at the hold threshold, before
+/// `poweroff` ends the process without running `Motor`'s destructor.
 #[test]
-fn the_power_menu_takes_the_motor_down() {
+fn the_power_hold_takes_the_motor_down() {
     let d = tmp_root_with_real_carts(&["Advance Wars", "Emerald"]);
     let (mut s, motor) = session_with_platform(d.path());
     let mut now = 0;
@@ -127,10 +125,7 @@ fn the_power_menu_takes_the_motor_down() {
     while now < pressed + POWER_HOLD_MS + FRAME_MS {
         step(&mut s, &mut now);
     }
-    assert_eq!(s.app().power_menu(), Some(0), "the menu never opened");
-    assert_eq!(
-        motor.last(),
-        0,
-        "the cart kept buzzing under the power menu"
-    );
+    assert!(s.app().powering_off(), "the hold did not start shutdown");
+    assert_eq!(s.app().power_menu(), None);
+    assert_eq!(motor.last(), 0, "the cart kept buzzing during shutdown");
 }

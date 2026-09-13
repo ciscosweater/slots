@@ -402,24 +402,18 @@ fn a_live_session_refuses_to_open_the_switcher() {
     );
 }
 
-/// C3: the power menu pauses the core too (`Session::sync_speed` maps `held()`, which an
-/// open menu is one of, to `Speed::Paused`) — the same hazard as the switcher, reached
-/// through `PowerHold` instead.
+/// A hold commits to shutdown even during a link. The session must end before the core is
+/// paused for shutdown, as libretro's netpacket contract requires.
 #[test]
-fn a_live_session_refuses_to_open_the_power_menu() {
+fn a_power_hold_ends_a_live_session_and_powers_off() {
     let d = tmp_root_with_carts(&["Emerald"]);
     let mut a = app_playing_in(d.path(), "Emerald");
     a.begin_link(0);
 
     a.apply(Action::PowerHold);
-    assert!(
-        a.power_menu().is_none(),
-        "the power menu pauses the core, which a session forbids"
-    );
-    assert!(
-        a.refusal_active(a.now()),
-        "a refused power-menu open must shake"
-    );
+    assert!(!a.link_active(), "the link survived the shutdown request");
+    assert!(a.powering_off(), "the hold did not commit to power off");
+    assert_eq!(a.power_menu(), None);
 }
 
 /// I3: `eject` used to leave `self.link` untouched. Proven the way the reviewer proved it —

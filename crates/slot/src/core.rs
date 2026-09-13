@@ -111,11 +111,16 @@ pub fn open_core_for(root: &Path, core: Core, paths: &[PathBuf]) -> Box<dyn Retr
 ///
 /// `auto` resolves the serial protocol from the ROM, so two devices running the same game
 /// agree on a mode without either being told which. Anything more deliberate belongs to a
-/// link session, which knows what the other end picked. mGBA gets nothing: it has no
-/// `gpsp_serial` option, and handing it one anyway is a landmine the day it grows one.
+/// link session, which knows what the other end picked. Colour correction is enabled in each
+/// core rather than duplicated in the frontend shader: each core owns the transform matching
+/// its native pixel format and emulated GBA output.
 pub fn apply_core_options(core: &mut LibretroCore, which: Core) {
-    if which == Core::Gpsp {
-        core.set_option("gpsp_serial", "auto");
+    match which {
+        Core::Mgba => core.set_option("mgba_color_correction", "GBA"),
+        Core::Gpsp => {
+            core.set_option("gpsp_serial", "auto");
+            core.set_option("gpsp_color_correction", "enabled");
+        }
     }
 }
 

@@ -127,12 +127,6 @@ const LID_SHADOW_W: f32 = 168.0;
 const LID_SHADOW_H: f32 = 18.0;
 const LID_SHADOW_DROP: f32 = 29.0;
 const LID_SHADOW_ALPHA: f32 = 0.8;
-/// The longest the cart stands on the shelf waiting for its faces before it opens anyway, so a
-/// face that never comes cannot freeze the picker. A fast scroll can leave the worker still
-/// finishing the cart it was already building before it starts on this one, so the cap has to
-/// cover that wait too, not just this cart's own build.
-const FACES_WAIT_MS: Millis = 1500;
-
 /// How far through a refused cart's exit the alert holds at full, and where it has finished
 /// going. Fractions of that exit rather than seconds, because a cart refused early has a
 /// short way to come back and the symbol has to fit inside it either way. It is gone before
@@ -989,9 +983,11 @@ impl App {
                 return self.flush_resume();
             }
             Action::PowerTap => return self.power_press(),
-            Action::PowerHold => return self.open_power_menu(),
-            // The release no longer means anything once the menu is what a hold raises:
-            // the choice is the commitment, and it is made with A.
+            // The hold is the commitment: state was flushed on PowerPress, and the normal
+            // frame loop now gets a short window to present the shutdown screen before the
+            // platform asks init to power off.
+            Action::PowerHold => return self.begin_power_off(),
+            // The hold already committed, so releasing it adds nothing.
             Action::PowerOff => return,
             _ => {}
         }
@@ -1254,14 +1250,6 @@ impl App {
         // their own.
         self.poll_link();
         let now = self.now();
-        // The cart opens once its board is on the GPU, so a slow build is a pause on the shelf
-        // rather than an animation spent before its first frame.
-        let ready = self.core_faces_ready();
-        if let Some(picker) = &mut self.core_picker {
-            if picker.waiting() && (ready || picker.waited(now) >= FACES_WAIT_MS) {
-                picker.start(now);
-            }
-        }
         // The lid is back on, so the shelf is the shelf again.
         if self.core_picker.is_some_and(|p| p.finished(now)) {
             self.core_picker = None;
@@ -1849,11 +1837,10 @@ impl App {
     /// lid slid off it and lifted away with the cart's own face on it, and the legend. Over the
     /// shelf and under the HUD: brightness and blue light are still answered while it is up.
     ///
-    /// `ready` is this cart's own board and lid, not merely whatever is on the GPU: a picker
-    /// that started on `FACES_WAIT_MS`'s cap has neither yet, and must never wear a build left
-    /// over from the cart the caret was on before — showing nothing is the only honest choice
-    /// until this cart's own faces land, so the board, the sockets, the chip and the chip's own
-    /// shadow wait for `ready` and the lid falls back to the shelf's plain face for this cart.
+    /// `ready` is this cart's own board and lid, not merely whatever is on the GPU. A picker
+    /// opened before those arrive must never wear a build left over from the cart the caret was
+    /// on before, so the board, sockets, chip and its shadow wait for `ready`; the lid falls
+    /// back to the shelf's plain face for this cart.
     fn draw_core_picker(&self, picker: &CorePicker, out: &mut Vec<Draw>) {
         let now = self.now();
         let progress = picker.openness(now);
@@ -2287,35 +2274,6 @@ impl App {
         }
     }
 
-    /// A held button powers off, through the OS rather than the PMIC. The PMIC's own
-    /// six-second hold cuts the rails in hardware with no sync, no unmount and no driver
-    /// teardown; the software path unloads the GPU module first, which is the difference
-    /// between a machine that stops and one that hangs with the rails up draining the
-    /// battery. Six seconds remains the emergency underneath, and needs no help from here.
-    ///
-    /// Not an eject: the cart stays in the slot so the next boot resumes it. The flush is
-    /// a no-op after a doze, which has already written the same file.
-    /// The hold threshold raises the menu and nothing else. Every outcome from here is one
-    /// the user chose rather than one the button committed them to, which is what makes the
-    /// hold safe to discover by accident.
-    fn open_power_menu(&mut self) {
-        if self.power_menu.is_some() {
-            return;
-        }
-        // Same hazard as the switcher: the menu pauses the core too — `Session::sync_speed`
-        // maps `held()`, which the menu is one of, to `Speed::Paused` — one of the exact
-        // manipulations libretro's netpacket contract forbids while a session is live. Unlike
-        // `PowerPress` this button does not end the session for the player; it just declines,
-        // the same shake every other "nothing doing" action in this file answers with.
-        if self.link_active() {
-            return self.refuse();
-        }
-        // Durable before the menu is even on screen: from here the user may hold on to the
-        // PMIC's own six second cutoff, which takes the rails away whatever we wanted.
-        self.flush_resume();
-        self.power_menu = Some(0);
-    }
-
     /// Up and down move, A commits, B leaves. Nothing times out: a menu that closed itself
     /// would do it exactly when the user looked away to think.
     fn power_menu_input(&mut self, action: Action) {
@@ -2364,9 +2322,10 @@ impl App {
         let seat = slot_store::core_for(&root, &cart.stem);
         let now = self.now();
         let mut picker = CorePicker::open(seat, now);
-        if self.core_faces_ready() {
-            picker.start(now);
-        }
+        // Do not make START look dead while this cart's detailed board is still rasterising.
+        // Its shelf face is already available as a truthful fallback lid; the detailed board
+        // replaces it as soon as the worker hands it back.
+        picker.start(now);
         self.core_picker = Some(picker);
         // Whatever the shelf had armed before START belonged to the shelf that was showing,
         // not to the cart now open over it: a held direction would keep repeating underneath
@@ -2594,6 +2553,10 @@ impl App {
             self.end_link();
         }
         self.close_game_menu();
+        // PowerPress normally flushed at the first edge, but every other route into this
+        // chokepoint (critical battery and doze timeout included) gets the same durability.
+        // Repeating a flush is harmless and keeps PowerHold correct when exercised directly.
+        self.flush_resume();
         self.powering_off = true;
         self.act_at = self.now() + SHUTDOWN_SHOW_MS;
         self.set_led(LedState::Off);

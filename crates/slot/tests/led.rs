@@ -7,7 +7,6 @@ use common::{
 };
 use slot_input::{Action, Btn};
 use slot_power::LedState;
-use slot_ui::PowerChoice;
 
 /// The final whole-branch review found that deleting `power.set_led(state)` from the fast
 /// tick left every one of the (then) 504 tests green: both fakes recorded nothing, and the
@@ -135,21 +134,8 @@ fn power_off_leaves_the_led_off_rather_than_lit_through_shutdown() {
         led_code(LedState::Off),
         "the rig should start lit, or this test proves nothing"
     );
-    // The hold only raises the menu, and a menu the user may still cancel is not a shutdown:
-    // darkening the case light there would report a state the device is not in.
+    // The hold commits immediately, so the case light reports shutdown immediately too.
     a.apply(Action::PowerHold);
-    assert_ne!(
-        led.load(Ordering::Relaxed),
-        led_code(LedState::Off),
-        "the menu is a question, not a shutdown"
-    );
-
-    // Walked to the row by its own position rather than by a count of presses: what this
-    // test is about is what Power Off does to the case light, not where Power Off sits.
-    for _ in 0..PowerChoice::PowerOff.index() {
-        a.apply(Action::GbaDown(Btn::Down));
-    }
-    a.apply(Action::GbaDown(Btn::A));
     assert_eq!(
         led.load(Ordering::Relaxed),
         led_code(LedState::Off),
