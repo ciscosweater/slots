@@ -45,8 +45,9 @@ pub fn run() {
             return;
         }
         frontend.advance(&mut input);
-        // NextUI's core and swap live on one thread. This acknowledgement gives our worker
-        // the same clock boundary without giving up the isolation that keeps audio stable.
+        // NextUI's core and swap live on one thread. This acknowledgement releases one core
+        // frame and waits until it has been published, preserving that ordering without
+        // giving up the worker isolation that keeps audio stable.
         frontend.presented();
         if frontend.restarting() {
             frontend.restart();

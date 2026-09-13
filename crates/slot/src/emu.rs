@@ -245,7 +245,20 @@ impl EmuHandle {
     }
 
     pub fn presented(&self) {
+        #[cfg(feature = "device")]
+        let published = self.shared.published.load(Ordering::Acquire);
         self.shared.presents.fetch_add(1, Ordering::Release);
+        #[cfg(feature = "device")]
+        while Speed::from_u8(self.shared.speed.load(Ordering::Relaxed)) != Speed::Paused
+            && !self.shared.stop.load(Ordering::Relaxed)
+            && self.shared.state.load(Ordering::Relaxed) != CoreState::Failed as u8
+            && self.shared.published.load(Ordering::Acquire) == published
+        {
+            // The core normally owns several milliseconds of this interval. A short sleep
+            // avoids burning the other H700 core while keeping the handoff well below a
+            // scanline; rendering only begins once this present's frame exists.
+            std::thread::sleep(Duration::from_micros(50));
+        }
     }
 
     /// What the worker will read on its next pass. The far side of the one boundary a
@@ -614,8 +627,11 @@ impl Worker {
                     // difference. Nothing was being replayed faithfully; it was being
                     // re-played.
                     core.run_frame(ButtonMask(0));
-                    self.publish(core.video_xrgb8888());
                 }
+                // Publish even at the bottom of the rewind ring. The display-side barrier
+                // still needs an acknowledgement for this present, and repeating the last
+                // valid picture is the honest result when there is no older state.
+                self.publish(core.video_xrgb8888());
                 self.shared
                     .rewind_fill
                     .store(rewind.fill(), Ordering::Relaxed);
