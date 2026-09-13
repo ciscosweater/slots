@@ -108,12 +108,43 @@ impl Shelf {
         self.category
     }
 
+    pub fn category_available(&self, category: usize) -> bool {
+        match category {
+            0 | 1 => true,
+            2 => self
+                .all_carts
+                .iter()
+                .any(|cart| cart.platform == slot_store::Platform::Gba),
+            3 => self
+                .all_carts
+                .iter()
+                .any(|cart| cart.platform == slot_store::Platform::Gb),
+            4 => self
+                .all_carts
+                .iter()
+                .any(|cart| cart.platform == slot_store::Platform::Gbc),
+            _ => false,
+        }
+    }
+
     pub fn previous_category(&mut self) {
-        self.set_category((self.category + CATEGORY_COUNT - 1) % CATEGORY_COUNT);
+        for distance in 1..CATEGORY_COUNT {
+            let category = (self.category + CATEGORY_COUNT - distance) % CATEGORY_COUNT;
+            if self.category_available(category) {
+                self.set_category(category);
+                break;
+            }
+        }
     }
 
     pub fn next_category(&mut self) {
-        self.set_category((self.category + 1) % CATEGORY_COUNT);
+        for distance in 1..CATEGORY_COUNT {
+            let category = (self.category + distance) % CATEGORY_COUNT;
+            if self.category_available(category) {
+                self.set_category(category);
+                break;
+            }
+        }
     }
 
     /// Filename stems in most-recent-first order. Rebuild the current category because a

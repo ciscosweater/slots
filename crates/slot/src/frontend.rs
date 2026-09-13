@@ -9,9 +9,9 @@ use slot_input::{InputSource, Millis};
 use slot_power::{Platform, Power};
 use slot_store::format_stamp;
 use slot_ui::{
-    arrows_hint_face, badge_face, cart_face, cart_shadow, cart_shadow_for, chip_face,
-    chip_shadow_face, clean_label, favorite_mark_face, hhmm, hint_face, icon_face, menu_face,
-    photo_face, set_clock_hint_face, socket_face, sticker_face, title_face, toast_face,
+    arrows_hint_face, badge_face, cart_face, cart_shadow, cart_shadow_for, category_face,
+    chip_face, chip_shadow_face, clean_label, favorite_mark_face, hhmm, hint_face, icon_face,
+    menu_face, photo_face, set_clock_hint_face, socket_face, sticker_face, title_face, toast_face,
     wallpaper_face, word_face, Icon, LinkBadge, PowerChoice, Printed, StickerFields, StickerPage,
     Toast, ALERT_PX, BOLT_PX, EMPTY_SHELF, HUD_ICON_PX, HUD_INK, LEGEND,
 };
@@ -208,22 +208,16 @@ impl Frontend {
             .map(|f| (compositor.create_texture(f.w, f.h, &f.rgba), f.w))
             .collect();
         self.session.app_mut().set_shelf_idle_faces(idle);
-        let category_faces = [
-            "[ALL] - REC - GBA - GB - GBC",
-            "ALL - [REC] - GBA - GB - GBC",
-            "ALL - REC - [GBA] - GB - GBC",
-            "ALL - REC - GBA - [GB] - GBC",
-            "ALL - REC - GBA - GB - [GBC]",
-        ]
-        .into_iter()
-        .map(|label| {
-            let face = word_face(label);
-            Printed::new(
-                compositor.create_texture(face.w, face.h, &face.rgba),
-                face.w,
-            )
-        })
-        .collect();
+        let category_faces = ["ALL", "REC", "GBA", "GB", "GBC"]
+            .into_iter()
+            .map(|label| {
+                let face = category_face(label);
+                Printed::new(
+                    compositor.create_texture(face.w, face.h, &face.rgba),
+                    face.w,
+                )
+            })
+            .collect();
         self.session
             .app_mut()
             .set_shelf_category_faces(category_faces);

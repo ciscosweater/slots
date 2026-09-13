@@ -43,6 +43,7 @@ const LABEL_PX: f32 = 16.0;
 const LABEL_MIN_PX: f32 = 10.0;
 const TITLE_PX: f32 = 20.0;
 const TITLE_MIN_PX: f32 = 12.0;
+const CATEGORY_PX: f32 = 20.0;
 
 pub struct UndoFace {
     pub rgba: Vec<u8>,
@@ -132,6 +133,24 @@ pub fn word_face(text: &str) -> UndoFace {
         let layout = text::fit(font, text, w as f32, 1, LABEL_PX, LABEL_MIN_PX);
         text::draw_centred(&mut rgba, w, HINT_H, &layout, INK);
     }
+    UndoFace { rgba, w, h: HINT_H }
+}
+
+/// A shelf category at display size, independent from the smaller key-hint labels. Each tab
+/// gets its own face, so adding another category can never make the existing ones shrink.
+pub fn category_face(text: &str) -> UndoFace {
+    let Some(font) = text::label_font() else {
+        return UndoFace {
+            rgba: vec![0; (LABEL_MAX_W as u32 * HINT_H * 4) as usize],
+            w: LABEL_MAX_W as u32,
+            h: HINT_H,
+        };
+    };
+    let tracking = (CATEGORY_PX * 0.10).round();
+    let w = text::line_width(font, text, CATEGORY_PX, tracking).ceil() as u32 + 2 * EDGE;
+    let mut rgba = vec![0u8; (w * HINT_H * 4) as usize];
+    let layout = text::fit(font, text, w as f32, 1, CATEGORY_PX, CATEGORY_PX);
+    text::draw_centred(&mut rgba, w, HINT_H, &layout, INK);
     UndoFace { rgba, w, h: HINT_H }
 }
 

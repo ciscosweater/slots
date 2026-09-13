@@ -82,6 +82,27 @@ fn favorites_do_not_override_recent_order() {
     );
 }
 
+#[test]
+fn platform_categories_without_roms_are_skipped() {
+    let mut shelf = shelf_with(3);
+    shelf.next_category();
+    assert_eq!(shelf.category(), 1, "REC is always available");
+    shelf.next_category();
+    assert_eq!(shelf.category(), 2, "the library contains GBA games");
+    shelf.next_category();
+    assert_eq!(
+        shelf.category(),
+        0,
+        "empty GB and GBC categories were not skipped"
+    );
+    shelf.previous_category();
+    assert_eq!(
+        shelf.category(),
+        2,
+        "reverse navigation did not skip GB and GBC"
+    );
+}
+
 fn placed(s: &Shelf) -> Vec<(f32, f32)> {
     let mut out = Vec::new();
     s.draw_row(None, 0.0, 0.0, 1.0, &mut out);

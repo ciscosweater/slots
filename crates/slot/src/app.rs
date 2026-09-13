@@ -123,6 +123,14 @@ const CORE_LEGEND_Y: f32 = 386.0;
 /// long enough that browsing never flashes it.
 const IDLE_HINT_MS: Millis = 4000;
 const IDLE_HINT_ALPHA: f32 = 0.45;
+/// Separate tabs stay at the label font's full size. The old single string was fitted as one
+/// face, which made the whole row tiny and eventually clipped GBC off the right edge.
+const CATEGORY_GAP: f32 = 24.0;
+const CATEGORY_Y: f32 = 8.0;
+const CATEGORY_IDLE_ALPHA: f32 = 0.42;
+const CATEGORY_RULE_W_INSET: f32 = 5.0;
+const CATEGORY_RULE_H: f32 = 2.0;
+const CATEGORY_RULE_GAP: f32 = 2.0;
 /// Top of the link screen's one line of text: its baseline lands near y 74.
 const LINK_TEXT_Y: f32 = 44.0;
 /// The legend, centred on the console strip (y 388–480).
@@ -812,12 +820,48 @@ impl App {
     }
 
     fn draw_shelf_captions(&self, out: &mut Vec<Draw>) {
-        if let Some(face) = self
+        let tabs_w = self
             .shelf_category_faces
-            .get(self.shelf.category())
-            .copied()
-        {
-            draw_printed((OUT_W as f32 - face.w as f32) / 2.0, 8.0, face, out);
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| self.shelf.category_available(*i))
+            .map(|(_, face)| face.w as f32)
+            .sum::<f32>()
+            + CATEGORY_GAP
+                * self
+                    .shelf_category_faces
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| self.shelf.category_available(*i))
+                    .count()
+                    .saturating_sub(1) as f32;
+        let mut tab_x = ((OUT_W as f32 - tabs_w) / 2.0).round();
+        for (i, face) in self.shelf_category_faces.iter().copied().enumerate() {
+            if !self.shelf.category_available(i) {
+                continue;
+            }
+            let selected = i == self.shelf.category();
+            if let Some(tex) = face.face {
+                out.push(Draw::Tex {
+                    x: tab_x,
+                    y: CATEGORY_Y,
+                    w: face.w as f32,
+                    h: HINT_H as f32,
+                    tex,
+                    alpha: if selected { 1.0 } else { CATEGORY_IDLE_ALPHA },
+                });
+            }
+            if selected {
+                let w = (face.w as f32 - CATEGORY_RULE_W_INSET * 2.0).max(10.0);
+                out.push(Draw::Rect {
+                    x: (tab_x + (face.w as f32 - w) / 2.0).round(),
+                    y: CATEGORY_Y + HINT_H as f32 + CATEGORY_RULE_GAP,
+                    w,
+                    h: CATEGORY_RULE_H,
+                    colour: [0.965, 0.957, 0.937, 0.9],
+                });
+            }
+            tab_x += face.w as f32 + CATEGORY_GAP;
         }
         if self.shelf.carts.is_empty() {
             let caption = if self.shelf.category() == 1 {
