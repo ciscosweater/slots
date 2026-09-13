@@ -1,7 +1,9 @@
 mod common;
 
+use std::collections::BTreeSet;
+
 use common::tmp_root;
-use slot_store::scan;
+use slot_store::{scan, write_favorites};
 use tempfile::TempDir;
 
 fn write_rom(d: &TempDir, name: &str, title: &str) {
@@ -71,4 +73,23 @@ fn a_header_title_that_is_not_text_is_dropped_rather_than_mangled() {
 fn a_root_with_no_games_directory_scans_as_empty() {
     let d = tempfile::tempdir().unwrap();
     assert!(scan(d.path()).unwrap().is_empty());
+}
+
+#[test]
+fn favorites_are_shelved_first_and_each_group_stays_alphabetical() {
+    let d = tmp_root();
+    for name in ["Advance.gba", "Boktai.gba", "Crash.gba", "Zelda.gba"] {
+        write_rom(&d, name, "GAME");
+    }
+    write_favorites(
+        d.path(),
+        &BTreeSet::from(["Boktai".to_string(), "Zelda".to_string()]),
+    )
+    .unwrap();
+    let stems: Vec<_> = scan(d.path())
+        .unwrap()
+        .into_iter()
+        .map(|cart| cart.stem)
+        .collect();
+    assert_eq!(stems, ["Boktai", "Zelda", "Advance", "Crash"]);
 }

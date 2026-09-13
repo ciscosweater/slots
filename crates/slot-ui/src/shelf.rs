@@ -81,6 +81,48 @@ impl Shelf {
         self.step(1);
     }
 
+    /// Move to the first cart whose initial differs from the selected cart's. Carts are
+    /// sorted by stem, so this skips the rest of the current letter in one press. The row is
+    /// circular just like ordinary browsing: right from the last letter reaches the first,
+    /// and left from the first reaches the last.
+    pub fn next_letter(&mut self) {
+        self.jump_letter(1);
+    }
+
+    pub fn previous_letter(&mut self) {
+        self.jump_letter(-1);
+    }
+
+    /// Put favourites first without losing the texture paired with each cart or changing
+    /// which cart is selected. The jump is immediate because the row itself was reordered;
+    /// animating through every cart between the old and new indices would imply browsing.
+    pub fn sort_by_favorites(&mut self, favorites: &BTreeSet<String>) {
+        let selected = self.carts.get(self.index).map(|cart| cart.stem.clone());
+        let have_faces = self.faces.len() == self.carts.len();
+        let faces = have_faces.then(|| std::mem::take(&mut self.faces));
+        let mut paired: Vec<_> = std::mem::take(&mut self.carts)
+            .into_iter()
+            .enumerate()
+            .map(|(i, cart)| (cart, faces.as_ref().and_then(|faces| faces.get(i).copied())))
+            .collect();
+        paired.sort_by(|(a, _), (b, _)| {
+            favorites
+                .contains(&b.stem)
+                .cmp(&favorites.contains(&a.stem))
+                .then_with(|| a.stem.cmp(&b.stem))
+        });
+        self.carts = paired.iter().map(|(cart, _)| cart.clone()).collect();
+        if have_faces {
+            self.faces = paired.iter().filter_map(|(_, face)| *face).collect();
+        }
+        self.index = selected
+            .and_then(|stem| self.carts.iter().position(|cart| cart.stem == stem))
+            .unwrap_or(0);
+        self.scroll = self.index as f32;
+        self.vel = 0.0;
+        self.held = None;
+    }
+
     pub fn hold_left(&mut self, now: Millis) {
         self.hold(-1, now);
     }
@@ -136,6 +178,42 @@ impl Shelf {
             return;
         }
         self.index = (self.index as i32 + by).rem_euclid(n as i32) as usize;
+    }
+
+    fn jump_letter(&mut self, by: i32) {
+        let n = self.carts.len();
+        if n < 2 {
+            return;
+        }
+        let initial = |i: usize| {
+            self.carts[i]
+                .stem
+                .chars()
+                .next()
+                .map(|c| c.to_ascii_uppercase())
+        };
+        let current = initial(self.index);
+        for distance in 1..n {
+            let mut candidate =
+                (self.index as i32 + by * distance as i32).rem_euclid(n as i32) as usize;
+            if initial(candidate) != current {
+                // Going left first encounters the end of the previous letter's run. Land on
+                // its beginning, matching the first cart R1 reaches when travelling right.
+                if by < 0 {
+                    let letter = initial(candidate);
+                    loop {
+                        let before = (candidate + n - 1) % n;
+                        if before == self.index || initial(before) != letter {
+                            break;
+                        }
+                        candidate = before;
+                    }
+                }
+                self.index = candidate;
+                self.held = None;
+                return;
+            }
+        }
     }
 
     /// Where the spring is heading, in the continuous coordinate `scroll` lives in. The row
@@ -275,3 +353,4 @@ impl Shelf {
 fn recede_alpha(face_alpha: f32) -> f32 {
     (face_alpha / SIDE_ALPHA).clamp(0.0, 1.0)
 }
+use std::collections::BTreeSet;

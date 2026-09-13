@@ -16,8 +16,10 @@ pub struct GamePass {
     mask: gl::types::GLuint,
     u_rect: gl::types::GLint,
     u_bright: gl::types::GLint,
+    u_lcd: gl::types::GLint,
     /// A compositor with nobody driving it is a screen that is on.
     power: f32,
+    lcd: bool,
 }
 
 impl GamePass {
@@ -32,7 +34,7 @@ impl GamePass {
             gl::RGBA,
             Some(&mask_texture_rgba8()),
         );
-        let (u_rect, u_bright);
+        let (u_rect, u_bright, u_lcd);
         unsafe {
             // The other two are fixed for the life of the program: the mask always tiles once
             // per source pixel and the target is always the offscreen frame.
@@ -51,6 +53,7 @@ impl GamePass {
             );
             u_rect = crate::gl::uniform_location(prog, "u_rect");
             u_bright = crate::gl::uniform_location(prog, "u_bright");
+            u_lcd = crate::gl::uniform_location(prog, "u_lcd");
         }
         Ok(GamePass {
             prog,
@@ -58,12 +61,18 @@ impl GamePass {
             mask,
             u_rect,
             u_bright,
+            u_lcd,
             power: 1.0,
+            lcd: true,
         })
     }
 
     pub fn set_power(&mut self, t: f32) {
         self.power = t.clamp(0.0, 1.0);
+    }
+
+    pub fn set_lcd(&mut self, enabled: bool) {
+        self.lcd = enabled;
     }
 
     pub fn upload(&mut self, xrgb8888: &[u8]) {
@@ -104,6 +113,7 @@ impl GamePass {
             gl::UseProgram(self.prog);
             gl::Uniform4f(self.u_rect, x, y, w, h);
             gl::Uniform1f(self.u_bright, screen_brightness(self.power));
+            gl::Uniform1f(self.u_lcd, if self.lcd { 1.0 } else { 0.0 });
             gl::ActiveTexture(gl::TEXTURE0);
             gl::BindTexture(gl::TEXTURE_2D, tex);
             gl::ActiveTexture(gl::TEXTURE1);

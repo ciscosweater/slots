@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use slot_gfx::{OUT_H, OUT_W};
@@ -5,8 +6,9 @@ use slot_input::{Action, Btn, MUTE_CHORD_MS};
 use slot_power::{Battery, Charge, LedState, LidPolicy, Power};
 use slot_retro::LinkChannel;
 use slot_store::{
-    format_stamp, read_slot_state, scan, write_slot_state, Cart, Core, SlotState, StateEntry,
-    StateRing, Theme, BLUE_LIGHT_MAX, BRIGHTNESS_MAX, RING_MAX, VOLUME_MAX,
+    format_stamp, read_favorites, read_lcd, read_slot_state, scan, write_favorites, write_lcd,
+    write_slot_state, Cart, Core, SlotState, StateEntry, StateRing, Theme, BLUE_LIGHT_MAX,
+    BRIGHTNESS_MAX, RING_MAX, VOLUME_MAX,
 };
 use slot_ui::{
     board_at, board_zoom, draw_backdrop, draw_empty_slot, draw_footer, draw_sticker, ease, grown,
@@ -408,6 +410,8 @@ pub struct App {
     act_at: Millis,
     /// `None` outside the binary, where there is no content root and nothing persists.
     root: Option<PathBuf>,
+    favorites: BTreeSet<String>,
+    lcd: bool,
     state: SlotState,
     /// The volume and the silence as they stood before each of the last two volume presses,
     /// oldest first. The mute chord is delivered behind the two presses that make it, so
@@ -526,6 +530,8 @@ impl App {
             restarting: false,
             act_at: 0,
             root: None,
+            favorites: BTreeSet::new(),
+            lcd: true,
             state: SlotState::default(),
             vol_before: Vec::new(),
             snapshot: None,
@@ -568,6 +574,8 @@ impl App {
         slot_ui::set_theme(Theme::read(root));
         let mut app = App::new(scan(root).unwrap_or_default());
         app.root = Some(root.to_path_buf());
+        app.favorites = read_favorites(root);
+        app.lcd = read_lcd(root);
         app.state = read_slot_state(root);
         if app.state.clock_set {
             app.start();
@@ -940,6 +948,44 @@ impl App {
             .map(|c| c.stem.as_str())
     }
 
+    fn toggle_favorite(&mut self) {
+        let Some(stem) = self.selected_stem().map(str::to_owned) else {
+            return;
+        };
+        let toast = if self.favorites.remove(&stem) {
+            Toast::Unfavorited
+        } else {
+            self.favorites.insert(stem);
+            Toast::Favorited
+        };
+        if let Some(root) = &self.root {
+            if let Err(e) = write_favorites(root, &self.favorites) {
+                eprintln!("slot: favorites: {e}");
+            }
+        }
+        self.shelf.sort_by_favorites(&self.favorites);
+        self.hud.toast(toast, self.now());
+    }
+
+    fn toggle_lcd(&mut self) {
+        self.lcd = !self.lcd;
+        if let Some(root) = &self.root {
+            if let Err(e) = write_lcd(root, self.lcd) {
+                eprintln!("slot: lcd: {e}");
+            }
+        }
+        let toast = if self.lcd {
+            Toast::LcdOn
+        } else {
+            Toast::LcdOff
+        };
+        self.hud.toast(toast, self.now());
+    }
+
+    pub fn lcd_enabled(&self) -> bool {
+        self.lcd
+    }
+
     /// The cached reading. `None` until the first slow tick, and on any device with no gauge.
     pub fn battery(&self) -> Option<Battery> {
         self.battery
@@ -1007,6 +1053,11 @@ impl App {
         if self.adjust(action) {
             return;
         }
+        if action == Action::GbaDown(Btn::X)
+            && matches!(self.phase, Phase::Shelf | Phase::Playing { .. })
+        {
+            return self.toggle_lcd();
+        }
         // The release reaches the shelf whatever is on screen. A direction let go of during
         // an insert would otherwise still be held when the cart comes back out.
         match action {
@@ -1040,6 +1091,9 @@ impl App {
                 _ if self.core_picker.is_some() => self.core_picker_input(action),
                 Action::ShelfLeft | Action::GbaDown(Btn::Left) => self.shelf.hold_left(now),
                 Action::ShelfRight | Action::GbaDown(Btn::Right) => self.shelf.hold_right(now),
+                Action::GbaDown(Btn::L1) => self.shelf.previous_letter(),
+                Action::GbaDown(Btn::R1) => self.shelf.next_letter(),
+                Action::GbaDown(Btn::Y) => self.toggle_favorite(),
                 Action::OpenAbout => self.phase = Phase::About,
                 // A is two actions and the press cannot tell them apart yet, so the cart
                 // goes in on the release. The hold has already taken it if it got there

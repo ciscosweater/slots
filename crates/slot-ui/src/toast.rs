@@ -13,10 +13,22 @@ pub enum Toast {
     StateSaved,
     StateLoaded,
     NeedsGpsp,
+    Favorited,
+    Unfavorited,
+    LcdOn,
+    LcdOff,
 }
 
 impl Toast {
-    pub const ALL: [Toast; 3] = [Toast::StateSaved, Toast::StateLoaded, Toast::NeedsGpsp];
+    pub const ALL: [Toast; 7] = [
+        Toast::StateSaved,
+        Toast::StateLoaded,
+        Toast::NeedsGpsp,
+        Toast::Favorited,
+        Toast::Unfavorited,
+        Toast::LcdOn,
+        Toast::LcdOff,
+    ];
 
     /// Position in `ALL`, which is the order faces are uploaded in.
     pub fn index(self) -> usize {
@@ -28,6 +40,10 @@ impl Toast {
             Toast::StateSaved => "State Saved",
             Toast::StateLoaded => "State Loaded",
             Toast::NeedsGpsp => "Please switch to gpSP",
+            Toast::Favorited => "Added to Favorites",
+            Toast::Unfavorited => "Removed from Favorites",
+            Toast::LcdOn => "LCD Effect On",
+            Toast::LcdOff => "LCD Effect Off",
         }
     }
 }

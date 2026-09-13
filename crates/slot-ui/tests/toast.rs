@@ -6,6 +6,18 @@ fn saving_and_loading_say_which_one_happened() {
     assert_eq!(Toast::StateLoaded.text(), "State Loaded");
 }
 
+#[test]
+fn favorite_changes_say_which_way_the_toggle_went() {
+    assert_eq!(Toast::Favorited.text(), "Added to Favorites");
+    assert_eq!(Toast::Unfavorited.text(), "Removed from Favorites");
+}
+
+#[test]
+fn lcd_changes_say_which_way_the_toggle_went() {
+    assert_eq!(Toast::LcdOn.text(), "LCD Effect On");
+    assert_eq!(Toast::LcdOff.text(), "LCD Effect Off");
+}
+
 /// The link shortcut on a core that cannot link says which one can, in the same banner.
 #[test]
 fn the_link_shortcut_on_the_wrong_core_says_to_switch() {

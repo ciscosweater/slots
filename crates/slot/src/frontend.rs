@@ -291,6 +291,7 @@ impl Frontend {
         // Set every frame rather than on the edge: the grade is part of the final blit, so
         // it has to be right whether or not anything just changed it.
         compositor.set_blue_light(self.session.app().blue_light());
+        compositor.set_lcd(self.session.app().lcd_enabled());
         compositor.set_shake(self.session.app().screen_shake());
         compositor.set_screen_power(self.session.app().screen_power());
         compositor.begin_frame();

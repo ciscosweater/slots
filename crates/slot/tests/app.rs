@@ -6,11 +6,11 @@ use slot::app::{App, Phase, EJECT_S, INSERT_S, SEATED_AT};
 use slot::audio::Sfx;
 use slot::session::Session;
 use slot_input::{Action, Btn, RawEvent};
-use slot_store::{write_slot_state, Cart, Core, SlotState};
+use slot_store::{read_favorites, read_lcd, write_slot_state, Cart, Core, SlotState};
 use slot_ui::{
-    board_at, grown, lid_at, on_board, opening, shelf_cart, Draw, Placed, TexId, BOARD_W, CART_W,
-    CHIP_H, CHIP_U, CHIP_V, CHIP_W, HINT_EDGE, HINT_H, LID_TURN, SLIDE_UP, SOCKET_H, SOCKET_U,
-    SOCKET_V, SOCKET_W, TURN_PAD,
+    board_at, grown, lid_at, on_board, opening, shelf_cart, Draw, Placed, TexId, Toast, BOARD_W,
+    CART_W, CHIP_H, CHIP_U, CHIP_V, CHIP_W, HINT_EDGE, HINT_H, LID_TURN, SLIDE_UP, SOCKET_H,
+    SOCKET_U, SOCKET_V, SOCKET_W, TURN_PAD,
 };
 
 /// A tap of A, which is what plays a cart. The press alone is not enough: held, it means
@@ -18,6 +18,15 @@ use slot_ui::{
 fn play(a: &mut App) {
     a.apply(Action::GbaDown(Btn::A));
     a.apply(Action::GbaUp(Btn::A));
+}
+
+#[test]
+fn shoulders_jump_between_letters_on_the_shelf() {
+    let mut app = app_with_carts(&["Advance", "Astro", "Boktai", "Castlevania", "Crash"]);
+    app.apply(Action::GbaDown(Btn::R1));
+    assert_eq!(app.selected_stem(), Some("Boktai"));
+    app.apply(Action::GbaDown(Btn::L1));
+    assert_eq!(app.selected_stem(), Some("Advance"));
 }
 
 fn app_with_carts(stems: &[&str]) -> App {
@@ -528,6 +537,43 @@ fn on_shelf(stems: &[&str]) -> (tempfile::TempDir, App) {
     .unwrap();
     let app = App::boot(d.path());
     (d, app)
+}
+
+#[test]
+fn y_toggles_a_persistent_favorite_and_moves_it_to_the_front() {
+    let (d, mut app) = on_shelf(&["Advance", "Boktai", "Crash"]);
+    app.apply(Action::GbaDown(Btn::Right));
+    app.apply(Action::GbaDown(Btn::Right));
+    assert_eq!(app.selected_stem(), Some("Crash"));
+
+    app.apply(Action::GbaDown(Btn::Y));
+    assert_eq!(app.selected_stem(), Some("Crash"));
+    assert_eq!(app.toast(), Some(Toast::Favorited));
+    assert!(read_favorites(d.path()).contains("Crash"));
+
+    let mut rebooted = App::boot(d.path());
+    assert_eq!(rebooted.selected_stem(), Some("Crash"));
+    rebooted.apply(Action::GbaDown(Btn::Y));
+    assert_eq!(rebooted.toast(), Some(Toast::Unfavorited));
+    assert!(read_favorites(d.path()).is_empty());
+}
+
+#[test]
+fn x_toggles_the_persistent_lcd_effect() {
+    let (d, mut app) = on_shelf(&["Advance", "Boktai"]);
+    assert!(app.lcd_enabled());
+
+    app.apply(Action::GbaDown(Btn::X));
+    assert!(!app.lcd_enabled());
+    assert_eq!(app.toast(), Some(Toast::LcdOff));
+    assert!(!read_lcd(d.path()));
+
+    let mut rebooted = App::boot(d.path());
+    assert!(!rebooted.lcd_enabled());
+    rebooted.apply(Action::GbaDown(Btn::X));
+    assert!(rebooted.lcd_enabled());
+    assert_eq!(rebooted.toast(), Some(Toast::LcdOn));
+    assert!(read_lcd(d.path()));
 }
 
 /// Long enough for the close to put the lid back, with room to spare.

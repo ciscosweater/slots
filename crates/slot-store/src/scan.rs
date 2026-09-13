@@ -2,6 +2,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 use crate::gba::{header_code, header_title};
+use crate::read_favorites;
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Cart {
@@ -61,7 +62,13 @@ pub fn scan(root: &Path) -> Result<Vec<Cart>, StoreError> {
             rom,
         });
     }
-    carts.sort_by(|a, b| a.stem.cmp(&b.stem));
+    let favorites = read_favorites(root);
+    carts.sort_by(|a, b| {
+        favorites
+            .contains(&b.stem)
+            .cmp(&favorites.contains(&a.stem))
+            .then_with(|| a.stem.cmp(&b.stem))
+    });
     Ok(carts)
 }
 

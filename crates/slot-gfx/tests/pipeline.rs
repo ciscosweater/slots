@@ -52,6 +52,27 @@ fn game_pass_multiplies_every_output_cell_by_the_lcd3x_mask() {
     assert!(worst <= 1, "max channel deviation {worst} from the mask");
 }
 
+#[test]
+fn disabling_lcd_bypasses_the_cell_mask() {
+    let Some((_g, _s, mut c)) = compositor() else {
+        return;
+    };
+    let grey = vec![0x80u8; (SRC_W * SRC_H * 4) as usize];
+    c.set_lcd(false);
+    c.begin_frame();
+    c.upload_game(&grey);
+    c.draw_game();
+    let frame = c.read_frame();
+
+    let worst = frame
+        .chunks_exact(4)
+        .flat_map(|pixel| pixel[..3].iter())
+        .map(|channel| (128i32 - *channel as i32).abs())
+        .max()
+        .unwrap_or_default();
+    assert!(worst <= 1, "max channel deviation {worst} with lcd off");
+}
+
 /// The FBO is stored bottom up and the source is top down, so a missing flip anywhere in
 /// upload, draw or readback shows up as a frame that is upside down or mirrored.
 #[test]

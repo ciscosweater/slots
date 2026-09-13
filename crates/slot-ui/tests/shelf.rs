@@ -87,6 +87,40 @@ fn the_shelf_wraps_at_both_ends() {
     );
 }
 
+#[test]
+fn shoulders_jump_between_initial_letters_and_wrap() {
+    let carts = ["Advance", "Astro", "Boktai", "Castlevania", "Crash"]
+        .into_iter()
+        .map(|stem| Cart {
+            stem: stem.into(),
+            rom: format!("Games/{stem}.gba").into(),
+            label: None,
+            code: String::new(),
+            title: stem.to_uppercase(),
+        })
+        .collect();
+    let mut s = Shelf::new(carts);
+
+    s.next_letter();
+    assert_eq!(s.index, 2, "R1 did not skip the rest of A");
+    s.next_letter();
+    assert_eq!(s.index, 3);
+    s.next_letter();
+    assert_eq!(s.index, 0, "R1 did not wrap from C to A");
+    s.previous_letter();
+    assert_eq!(s.index, 3, "L1 did not wrap to the beginning of C");
+    s.previous_letter();
+    assert_eq!(s.index, 2);
+}
+
+#[test]
+fn shoulders_are_inert_when_every_cart_has_the_same_initial() {
+    let mut s = shelf_with(4);
+    s.next_letter();
+    s.previous_letter();
+    assert_eq!(s.index, 0);
+}
+
 /// The spring chases `scroll`. If wrapping is a bare index change it unwinds the whole row.
 #[test]
 fn wrapping_animates_one_step_not_the_long_way_back() {

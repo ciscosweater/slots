@@ -19,6 +19,9 @@ A bespoke, GBA-only frontend for the Anbernic RG SP.
 | Input     | Action                              |
 |-----------|-------------------------------------|
 | `L` / `R` | Browse the carousel                 |
+| `L1` / `R1` | Jump to the previous / next letter |
+| `Y`       | Add or remove the game from favorites |
+| `X`       | Toggle the LCD effect on or off        |
 | Tap `A`   | Resume the last save state          |
 | Hold `A`  | Start the game fresh                |
 | `MENU`    | Open the about screen               |
@@ -36,6 +39,7 @@ A bespoke, GBA-only frontend for the Anbernic RG SP.
 | Hold `L2`                 | Rewind                                                                                           |
 | Hold `R2`                 | Fast-forward                                                                                     |
 | Double tap `R2`           | Lock fast-forward on. Press again to unlock                                                      |
+| `X`                       | Toggle the LCD effect on or off                                                                  |
 
 A `/` means either one. A `+` means both together.
 
