@@ -103,6 +103,13 @@ unsafe extern "C" fn set_rumble_state(port: c_uint, effect: c_uint, strength: u1
 
 unsafe extern "C" fn environment(cmd: c_uint, data: *mut c_void) -> bool {
     match cmd {
+        GET_CAN_DUPE => {
+            if data.is_null() {
+                return false;
+            }
+            *(data as *mut bool) = true;
+            true
+        }
         SET_PIXEL_FORMAT => {
             if data.is_null() {
                 return false;
@@ -468,10 +475,23 @@ impl LibretroCore {
     }
 
     pub fn open_with(dylib: &Path, system_dir: &Path, save_dir: &Path) -> Result<Self, CoreError> {
+        Self::open_with_options(dylib, system_dir, save_dir, &[])
+    }
+
+    /// Same as `open_with`, but the core can `GET_VARIABLE` these during `retro_init`.
+    /// Gambatte reads `gambatte_gb_bootloader` there and nowhere else: seeding after
+    /// `open_with` returns is too late for the boot logo, even though it is in time for
+    /// options the core rereads at `retro_load_game`.
+    pub fn open_with_options(
+        dylib: &Path,
+        system_dir: &Path,
+        save_dir: &Path,
+        options: &[(&str, &str)],
+    ) -> Result<Self, CoreError> {
         if LIVE.swap(true, Ordering::SeqCst) {
             return Err(CoreError::Unsupported("a core is already open".into()));
         }
-        Self::open_inner(dylib, system_dir, save_dir)
+        Self::open_inner(dylib, system_dir, save_dir, options)
             .inspect_err(|_| LIVE.store(false, Ordering::SeqCst))
     }
 
@@ -517,12 +537,24 @@ impl LibretroCore {
             .map(|s| s.to_string())
     }
 
-    fn open_inner(dylib: &Path, system_dir: &Path, save_dir: &Path) -> Result<Self, CoreError> {
+    fn open_inner(
+        dylib: &Path,
+        system_dir: &Path,
+        save_dir: &Path,
+        options: &[(&str, &str)],
+    ) -> Result<Self, CoreError> {
         let lib = unsafe { Library::new(dylib) }.map_err(|e| CoreError::Load(e.to_string()))?;
         let api = unsafe { Api::load(&lib) }?;
         let version = unsafe { (api.api_version)() };
         if version != API_VERSION {
             return Err(CoreError::Unsupported(format!("libretro api {version}")));
+        }
+        let mut seeded = std::collections::HashMap::new();
+        for (key, value) in options {
+            let Ok(value) = CString::new(*value) else {
+                continue;
+            };
+            seeded.insert((*key).to_string(), value);
         }
         let mut host = Box::new(Host {
             video: vec![0; VIDEO_BYTES],
@@ -536,7 +568,7 @@ impl LibretroCore {
             netpacket: None,
             net: Link::default(),
             net_peer: None,
-            options: std::collections::HashMap::new(),
+            options: seeded,
             options_dirty: false,
         });
         unsafe {
@@ -790,6 +822,20 @@ mod tests {
 
         assert!(!ok);
         assert!(var.value.is_null());
+    }
+
+    /// Gambatte's `retro_load_game` asks this before it will touch a ROM. The default arm
+    /// of `environment` used to return false, which left `can_dupe` false and made every
+    /// GB/GBC insert fail with "core refused" while GBA (mGBA never asks) kept working.
+    #[test]
+    fn get_can_dupe_tells_the_core_the_frontend_can_repeat_frames() {
+        let mut host = host_with(HashMap::new(), false);
+        let _active = Active::bind(&mut host);
+
+        let mut can_dupe = false;
+        let ok = unsafe { environment(GET_CAN_DUPE, &mut can_dupe as *mut bool as *mut c_void) };
+        assert!(ok);
+        assert!(can_dupe);
     }
 
     /// `set_option` is what marks `options_dirty`, so the core knows to re-ask; this is the

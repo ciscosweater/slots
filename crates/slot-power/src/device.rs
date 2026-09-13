@@ -4,7 +4,7 @@ use std::io::Write;
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::{Battery, Charge, LedState, Platform};
 
@@ -13,13 +13,31 @@ use crate::{Battery, Charge, LedState, Platform};
 /// 100 on others.
 const TOP_STEP: u32 = 9;
 
+/// Perceptual brightness curve in H700's native eight-bit units. Human brightness perception
+/// is not linear, so spend more of the nine visible levels at the dark end where equal raw
+/// increments are useful and spread them increasingly far apart toward full brightness.
+const BACKLIGHT_CURVE: [u32; 10] = [0, 1, 4, 10, 22, 42, 72, 112, 172, 255];
+
+/// Turn the frontend's nine visible levels into the panel's native range. Scale the curve
+/// against the range reported by other kernels, keeping every lit step non-zero even on a
+/// particularly narrow backlight range.
+fn backlight_value(step: u32, max: u32) -> u32 {
+    let step = step.min(TOP_STEP) as usize;
+    let value = u64::from(max) * u64::from(BACKLIGHT_CURVE[step]) / 255;
+    if step == 0 || max == 0 {
+        0
+    } else {
+        value.max(1) as u32
+    }
+}
+
 /// Where the event nodes live. Only the motor is opened from here; the buttons are the
 /// binary's own business.
 const DEV_INPUT: &str = "/dev/input";
 
 const EV_FF: u16 = 0x15;
 const FF_RUMBLE: u16 = 0x50;
-const I2C_SLAVE: c_ulong = 0x0703;
+const I2C_SLAVE_FORCE: c_ulong = 0x0706;
 const AXP_ADDR: c_int = 0x34;
 /// `_IOW('E', 0x80, struct ff_effect)`. The struct is 48 bytes once the union's eight byte
 /// alignment is counted, which is where the size in the middle of this comes from.
@@ -421,35 +439,56 @@ fn active_charge(battery: &Path, charger: Option<&Path>) -> Charge {
     }
 }
 
-fn axp_i2c_device() -> PathBuf {
-    if let Ok(entries) = fs::read_dir("/sys/bus/i2c/devices") {
-        for entry in entries.flatten() {
-            let leaf = entry.file_name().to_string_lossy().into_owned();
-            let Some((bus, address)) = leaf.split_once('-') else {
-                continue;
-            };
-            if address != "0034" && address != "34" {
-                continue;
-            }
-            if fs::read_to_string(entry.path().join("name"))
-                .is_ok_and(|n| n.trim_start().starts_with("axp"))
-            {
-                return PathBuf::from(format!("/dev/i2c-{bus}"));
-            }
+/// Sysfs node for the PMIC, e.g. `/sys/bus/i2c/devices/5-0034`.
+fn axp_i2c_sysfs() -> Option<PathBuf> {
+    let entries = fs::read_dir("/sys/bus/i2c/devices").ok()?;
+    for entry in entries.flatten() {
+        let leaf = entry.file_name().to_string_lossy().into_owned();
+        let Some((_, address)) = leaf.split_once('-') else {
+            continue;
+        };
+        if address != "0034" && address != "34" {
+            continue;
+        }
+        if fs::read_to_string(entry.path().join("name"))
+            .is_ok_and(|n| n.trim_start().starts_with("axp"))
+        {
+            return Some(entry.path());
         }
     }
-    PathBuf::from("/dev/i2c-5")
+    None
+}
+
+fn axp_i2c_devnode(sysfs: Option<&Path>) -> PathBuf {
+    sysfs
+        .and_then(|p| p.file_name())
+        .and_then(|n| n.to_str())
+        .and_then(|leaf| {
+            leaf.split_once('-')
+                .map(|(bus, _)| format!("/dev/i2c-{bus}"))
+        })
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/dev/i2c-5"))
+}
+
+/// `I2C_SLAVE` is EBUSY here: the kernel axp2202 driver already owns 0x34. Unbinding that
+/// driver to free the address hung the process in D-state (the shutdown trace stopped at
+/// "trying AXP2202 rail cut" and the panel sat on Powering Down until a 10 s hardware hold).
+/// `I2C_SLAVE_FORCE` is what `i2cset -f` uses — talk to the chip without ripping the MFD out.
+fn claim_axp_i2c() -> std::io::Result<std::fs::File> {
+    let path = axp_i2c_devnode(axp_i2c_sysfs().as_deref());
+    let bus = OpenOptions::new().read(true).write(true).open(&path)?;
+    if unsafe { ioctl(bus.as_raw_fd(), I2C_SLAVE_FORCE, AXP_ADDR) } < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(bus)
 }
 
 /// The stock H700 kernel's generic AXP power-off register is wrong for the AXP2202. Quiesce
 /// pending wake IRQs before asking its real soft-power register to cut the rails; otherwise
 /// a held button or attached charger can turn a black-screen shutdown straight back on.
 fn axp2202_poweroff() -> std::io::Result<()> {
-    let path = axp_i2c_device();
-    let mut bus = OpenOptions::new().read(true).write(true).open(&path)?;
-    if unsafe { ioctl(bus.as_raw_fd(), I2C_SLAVE, AXP_ADDR) } < 0 {
-        return Err(std::io::Error::last_os_error());
-    }
+    let mut bus = claim_axp_i2c()?;
     let mut register = |reg: u8, value: u8| bus.write_all(&[reg, value]);
     for reg in 0x40..=0x44 {
         register(reg, 0x00)?;
@@ -462,6 +501,32 @@ fn axp2202_poweroff() -> std::io::Result<()> {
     register(0x27, 0x01)
 }
 
+/// I2C can block uninterruptibly. A hung write must not pin the shutdown screen forever;
+/// init still has a chance if this gives up.
+fn axp2202_poweroff_or_timeout() -> std::io::Result<()> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::Builder::new()
+        .name("axp-poweroff".into())
+        .spawn(move || {
+            let _ = tx.send(axp2202_poweroff());
+        })
+        .map_err(std::io::Error::other)?;
+    rx.recv_timeout(Duration::from_secs(2))
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "AXP I2C did not return"))?
+}
+
+/// How long Super Standby may last before the rails are cut. The dark-panel grace is
+/// `Power`'s own timeout (five minutes of 400-700 mA); this is the second stage, spent
+/// inside `echo mem`.
+const SUPER_STANDBY: Duration = Duration::from_secs(300);
+
+/// Anbernic's `os_sleep` is Super Standby's auto-off, in minutes. Round up so a remainder
+/// of ninety seconds still asks the PMIC for two, and never write zero — that would mean
+/// "no timeout" on this node and sleep until a button.
+fn os_sleep_minutes(remaining: Duration) -> u64 {
+    remaining.as_secs().div_ceil(60).max(1)
+}
+
 impl Platform for DevicePlatform {
     /// Step 0 is the panel off rather than the panel dim: it is what the lid closes with, and
     /// any floor under it lights a shut clamshell.
@@ -469,8 +534,7 @@ impl Platform for DevicePlatform {
         let Some(backlight) = &self.backlight else {
             return;
         };
-        let step = u32::from(step).min(TOP_STEP);
-        let value = self.max_brightness * step / TOP_STEP;
+        let value = backlight_value(u32::from(step), self.max_brightness);
         // A node that was found and will not take a write is a different fault from one that
         // was never there, and from outside they are the same dark panel.
         let write = |file: PathBuf, body: String| {
@@ -530,9 +594,20 @@ impl Platform for DevicePlatform {
         let _ = fs::write(&work_led, "0");
         let _ = Command::new("sync").status();
 
+        let started = Instant::now();
         loop {
+            let remaining = SUPER_STANDBY.saturating_sub(started.elapsed());
+            if remaining.is_zero() {
+                // Five minutes in Super Standby with the lid still shut: cut the rails.
+                // resume.state was written before this loop, so the next boot seats the cart.
+                let _ = fs::write(&work_led, "1");
+                return false;
+            }
             if os_sleep.is_file() {
-                let _ = fs::write(&os_sleep, "16");
+                // Anbernic's node is Super Standby's auto-off, in minutes. Writing the
+                // remainder is what asks the PMIC to wake us (or cut the rails) instead of
+                // sleeping until a button, which this board's RTC cannot do.
+                let _ = fs::write(&os_sleep, os_sleep_minutes(remaining).to_string());
             }
             let status = Command::new("sh")
                 .args(["-c", "echo mem > /sys/power/state"])
@@ -541,7 +616,8 @@ impl Platform for DevicePlatform {
                 let _ = fs::write(&work_led, "1");
                 return false;
             }
-            // A pocketed power press can wake the kernel. Do not light a closed clamshell.
+            // A pocketed power press can wake the kernel. Do not light a closed clamshell:
+            // go back to sleep for whatever of the five minutes is left.
             if fs::read_to_string(&hall).map_or(true, |v| v.trim() != "0") {
                 break;
             }
@@ -589,7 +665,7 @@ impl Platform for DevicePlatform {
         self.breadcrumb("poweroff: reached slot, about to sync");
         let _ = Command::new("sync").status();
         self.breadcrumb("poweroff: sync returned, trying AXP2202 rail cut");
-        match axp2202_poweroff() {
+        match axp2202_poweroff_or_timeout() {
             Ok(()) => {
                 // A successful PMIC write normally never reaches the end of this sleep.
                 std::thread::sleep(Duration::from_secs(1));
@@ -673,5 +749,31 @@ impl Platform for DevicePlatform {
         if let Some(on) = motor_change(strength, motor.running) {
             motor.play(on);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn axp_i2c_devnode_reads_the_bus_out_of_the_sysfs_leaf() {
+        assert_eq!(
+            axp_i2c_devnode(Some(Path::new("/sys/bus/i2c/devices/5-0034"))),
+            PathBuf::from("/dev/i2c-5")
+        );
+        assert_eq!(
+            axp_i2c_devnode(None),
+            PathBuf::from("/dev/i2c-5"),
+            "the H700 fallback is bus 5"
+        );
+    }
+
+    #[test]
+    fn os_sleep_minutes_rounds_up_and_never_writes_zero() {
+        assert_eq!(os_sleep_minutes(Duration::from_secs(300)), 5);
+        assert_eq!(os_sleep_minutes(Duration::from_secs(61)), 2);
+        assert_eq!(os_sleep_minutes(Duration::from_secs(1)), 1);
+        assert_eq!(os_sleep_minutes(Duration::ZERO), 1);
     }
 }

@@ -52,14 +52,37 @@ fn platform(d: &TempDir) -> DevicePlatform {
 }
 
 #[test]
-fn the_backlight_steps_span_whatever_range_the_kernel_reports() {
+fn the_backlight_steps_follow_the_perceptual_curve() {
     let d = sysfs("255", "87");
     let mut p = platform(&d);
     p.set_backlight(9);
     assert_eq!(brightness(&d), 255);
     p.set_backlight(5);
-    let mid = brightness(&d);
-    assert!((110..=160).contains(&mid), "step 5 of 9 wrote {mid} of 255");
+    assert_eq!(brightness(&d), 42);
+    p.set_backlight(2);
+    assert_eq!(brightness(&d), 4);
+}
+
+/// H700 accepts the whole 0..255 range. Keeping the frontend's linear mapping at the bottom
+/// would make the first lit level 28, even though the panel can run substantially dimmer.
+#[test]
+fn the_first_lit_step_uses_the_panels_lowest_nonzero_value() {
+    for max in [100, 255] {
+        let d = sysfs(&max.to_string(), "87");
+        let mut p = platform(&d);
+        p.set_backlight(1);
+        assert_eq!(brightness(&d), 1, "step 1 with a maximum of {max}");
+    }
+}
+
+#[test]
+fn the_curve_scales_to_the_range_the_kernel_reports() {
+    let d = sysfs("100", "87");
+    let mut p = platform(&d);
+    p.set_backlight(5);
+    assert_eq!(brightness(&d), 16);
+    p.set_backlight(9);
+    assert_eq!(brightness(&d), 100);
 }
 
 /// Step 0 is the one the lid closes with, so it has to be the panel actually off. Any floor
@@ -214,6 +237,12 @@ fn a_tree_with_no_backlight_class_drives_the_panel_through_dispdbg() {
         "top step is not full brightness"
     );
     assert_eq!(dispdbg(&d, "start"), "1", "the write was never committed");
+    p.set_backlight(1);
+    assert_eq!(
+        dispdbg(&d, "param"),
+        "1",
+        "the first lit step did not reach H700's extra-dim range"
+    );
     p.set_backlight(0);
     assert_eq!(dispdbg(&d, "param"), "0", "step zero has to be dark");
 }

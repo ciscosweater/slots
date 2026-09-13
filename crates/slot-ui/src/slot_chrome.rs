@@ -4,7 +4,7 @@ use slot_gfx::{Draw, TexId, OUT_H, OUT_W};
 use slot_store::Cart;
 use slot_store::Theme;
 
-use crate::cart::{label_colour, label_text, CART_H, CART_W};
+use crate::cart::{label_colour, label_text, CART_H, CART_W, GB_CART_H, GB_CART_W};
 use crate::icon::icon_box;
 
 /// Big enough to read as a symbol on a 240 px cart rather than as a mark on its label.
@@ -95,22 +95,7 @@ pub fn recess() -> [f32; 4] {
 
 const LIP_Y: f32 = BAND_Y;
 
-/// Where a cart stands before it is pushed in. Same place the shelf draws the selected cart,
-/// so the handoff out of the shelf is not a jump.
-const REST_Y: f32 = (OUT_H - CART_H) as f32 / 2.0;
-
-/// Where the cart stops. In means *in*, not gone: it comes to rest filling the opening, so
-/// the base of the slot is covered by the cart rather than going dark again. Four pixels
-/// below the top of the recess, which leaves the far wall showing above the cart's rounded
-/// top edge instead of butting it flat against the lip.
 const SEATED_Y: f32 = BAY_Y + 4.0;
-const CART_X: f32 = (OUT_W - CART_W) as f32 / 2.0;
-
-/// How far into the travel the cart's bottom edge reaches the lip. Derived rather than
-/// tuned, because it is where the catch has to be to read as one.
-const CATCH_AT: f32 = (LIP_Y - CART_H as f32 - REST_Y) / (SEATED_Y - REST_Y);
-/// The seat either side of the catch. It opens a little before halfway because the cart is
-/// resting on the lip for the whole of it, and the push comes after.
 const CATCH_IN: f32 = 0.42;
 const CATCH_OUT: f32 = 0.62;
 /// How far the cart creeps while it is caught. Not zero: a dead stop reads as a dropped
@@ -159,8 +144,18 @@ impl SlotChrome<'_> {
         // on the way through rather than sliding behind a painted bar.
         draw_slot_back(chrome, out);
 
-        let x = CART_X;
-        let y = REST_Y + (SEATED_Y - REST_Y) * travel(seat);
+        let (cart_w, cart_h) = match self.cart.platform {
+            slot_store::Platform::Gba => (CART_W as f32, CART_H as f32),
+            slot_store::Platform::Gb | slot_store::Platform::Gbc => {
+                (GB_CART_W as f32, GB_CART_H as f32)
+            }
+        };
+        let rest_x = (OUT_W as f32 - cart_w) / 2.0;
+        let rest_y = (OUT_H as f32 - cart_h) / 2.0;
+        let catch_at = (LIP_Y - cart_h - rest_y) / (SEATED_Y - rest_y);
+
+        let x = rest_x;
+        let y = rest_y + (SEATED_Y - rest_y) * travel(seat, catch_at);
         // The cart fades with the case rather than through it. A seated cart is really in the
         // slot and has to be drawn, so the whole device face has to leave as one object as the
         // picture takes over. Held at full while the screen is off, which is all of the travel.
@@ -169,8 +164,8 @@ impl SlotChrome<'_> {
             Some(tex) => Draw::Tex {
                 x,
                 y,
-                w: CART_W as f32,
-                h: CART_H as f32,
+                w: cart_w,
+                h: cart_h,
                 tex,
                 alpha: cart_alpha,
             },
@@ -179,8 +174,8 @@ impl SlotChrome<'_> {
                 Draw::Rect {
                     x,
                     y,
-                    w: CART_W as f32,
-                    h: CART_H as f32,
+                    w: cart_w,
+                    h: cart_h,
                     colour: [
                         c[0] as f32 / 255.0,
                         c[1] as f32 / 255.0,
@@ -197,8 +192,8 @@ impl SlotChrome<'_> {
             let (w, h) = icon_box(ALERT_PX);
             let (w, h) = (w as f32, h as f32);
             out.push(Draw::Tex {
-                x: x + (CART_W as f32 - w) / 2.0,
-                y: y + (CART_H as f32 - h) / 2.0,
+                x: x + (cart_w - w) / 2.0,
+                y: y + (cart_h - h) / 2.0,
                 w,
                 h,
                 tex,
@@ -320,13 +315,13 @@ pub fn draw_empty_slot(out: &mut Vec<Draw>) {
 /// The travel, in three parts: the cart falls to the lip, rests on it, then is pushed
 /// through and settles. A single ease covers the same ground but arrives seated without ever
 /// having met anything, which is what makes it read as a card going down a chute.
-fn travel(seat: f32) -> f32 {
+fn travel(seat: f32, catch_at: f32) -> f32 {
     if seat < CATCH_IN {
-        CATCH_AT * ease(seat / CATCH_IN)
+        catch_at * ease(seat / CATCH_IN)
     } else if seat < CATCH_OUT {
-        CATCH_AT + CREEP * (seat - CATCH_IN) / (CATCH_OUT - CATCH_IN)
+        catch_at + CREEP * (seat - CATCH_IN) / (CATCH_OUT - CATCH_IN)
     } else {
-        let caught = CATCH_AT + CREEP;
+        let caught = catch_at + CREEP;
         caught + (1.0 - caught) * ease((seat - CATCH_OUT) / (1.0 - CATCH_OUT))
     }
 }

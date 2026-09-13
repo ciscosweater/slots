@@ -104,8 +104,8 @@ fn a_release_after_the_hold_does_nothing_on_its_own() {
 }
 
 /// A dark panel is a grace period, not a state: the machine is still running flat out behind
-/// it at 400-700 mA. When it runs out the device stops for real, because the one thing it
-/// cannot do is wake itself back up from a sleep.
+/// it at 400-700 mA. The stub has no Super Standby, so when the grace runs out the device
+/// stops for real.
 #[test]
 fn an_idle_doze_times_out_into_a_power_off() {
     let d = tmp_root_with_carts(&["Emerald"]);

@@ -318,6 +318,29 @@ fn the_selected_cart_is_centred_and_full_size() {
 }
 
 #[test]
+fn the_selected_gb_cart_is_vertically_centred() {
+    let gb_cart = Cart {
+        stem: "Red".into(),
+        rom: "Games/Red.gb".into(),
+        label: None,
+        code: String::new(),
+        title: "POKEMON RED".into(),
+        platform: slot_store::Platform::Gb,
+    };
+    let s = Shelf::new(vec![gb_cart]);
+    let mut out = Vec::new();
+    s.draw_row(None, 0.0, 0.0, 1.0, &mut out);
+    let Draw::Rect { y, h, .. } = out[0] else {
+        panic!()
+    };
+    let centre_y = y + h / 2.0;
+    assert!(
+        (centre_y - 240.0).abs() < 0.5,
+        "GB cart centre is {centre_y}, expected 240.0"
+    );
+}
+
+#[test]
 fn holding_a_direction_repeats_after_a_delay() {
     let mut s = shelf_with(6);
     s.hold_right(0);

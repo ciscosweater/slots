@@ -97,25 +97,25 @@ impl StickerPage {
 ///
 /// This is what README.md credits, in the space a label has for it.
 pub const CREDITS: [&str; 10] = [
-    "EMULATION POWERED BY MGBA",
-    "AND GPSP. AGS-102 IS A FORK OF",
-    "BASEOS BY PVAIBHAV. TYPE IS",
-    "PIXELIFY AND NERD FONTS",
-    "SYMBOLS BY RYAN L MCINTYRE.",
-    "THE PANEL MASK IS DERIVED",
-    "FROM GIGAHERZ'S LCD3X. THE",
-    "CART SOUNDS ARE MY CHILDHOOD",
-    "GAMEBOY. I WASTED WATER",
-    "BUILDING THIS WITH CLAUDE.",
+    "EMULATION POWERED BY MGBA,",
+    "GPSP AND GAMBATTE. AGS-102",
+    "IS A FORK OF BASEOS BY",
+    "PVAIBHAV. TYPE IS PIXELIFY",
+    "AND NERD FONTS SYMBOLS BY",
+    "RYAN L MCINTYRE. THE PANEL",
+    "MASK IS GIGAHERZ'S LCD3X.",
+    "CART SOUNDS ARE MY",
+    "CHILDHOOD GAMEBOY. I",
+    "WASTED WATER WITH CLAUDE.",
 ];
 
 /// The other face of the same plate: how the device is actually used. Same ten lines, same
 /// column, so turning it over does not reflow the sticker.
 pub const CONTROLS: [&str; 10] = [
-    "SHELF. A RESUMES. HOLD A",
-    "STARTS FRESH. START OPENS",
-    "THE CART TO PICK A CORE.",
-    "Y FAVORITES. L2 THE FONT.",
+    "SHELF. A OPENS. HOLD A",
+    "STARTS FRESH. START PICKS",
+    "THE CORE. Y FAVORITES.",
+    "SELECT FONT. L2 R2 CATEGORY.",
     "X THE LCD. MENU THIS LABEL.",
     "IN GAME. HOLD MENU EJECTS.",
     "DOUBLE TAP MENU FOR STATES.",

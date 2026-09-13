@@ -625,6 +625,47 @@ fn idle_hints_stay_off_an_empty_shelf() {
 }
 
 #[test]
+fn idle_hints_stay_off_for_gb_and_gbc_carts() {
+    let mut app = App::new(vec![
+        Cart {
+            stem: "Tetris".into(),
+            rom: "Games/Tetris.gb".into(),
+            label: None,
+            code: String::new(),
+            title: "TETRIS".into(),
+            platform: slot_store::Platform::Gb,
+        },
+        Cart {
+            stem: "Zelda".into(),
+            rom: "Games/Zelda.gbc".into(),
+            label: None,
+            code: String::new(),
+            title: "ZELDA".into(),
+            platform: slot_store::Platform::Gbc,
+        },
+    ]);
+    app.set_shelf_idle_faces(vec![(TexId::from_raw(7), 40), (TexId::from_raw(8), 50)]);
+    app.update(5.0);
+    let mut out = Vec::new();
+    app.draw(&mut out);
+    assert!(
+        !out.iter()
+            .any(|d| matches!(d, Draw::Tex { tex, .. } if *tex == TexId::from_raw(7))),
+        "GB cart showed idle hints which would overlap the ROM title"
+    );
+
+    app.apply(Action::GbaDown(Btn::Right));
+    app.update(5.0);
+    out.clear();
+    app.draw(&mut out);
+    assert!(
+        !out.iter()
+            .any(|d| matches!(d, Draw::Tex { tex, .. } if *tex == TexId::from_raw(7))),
+        "GBC cart showed idle hints which would overlap the ROM title"
+    );
+}
+
+#[test]
 fn about_shows_the_clock_hint_when_the_rtc_is_dead() {
     let d = common::tmp_root_with_carts(&["Emerald", "Fusion"]);
     write_slot_state(

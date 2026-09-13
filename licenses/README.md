@@ -1,6 +1,6 @@
 # Third-party licenses
 
-`slot` itself is MIT (see the repo's top-level `LICENSE`). The release also distributes two
+`slot` itself is MIT (see the repo's top-level `LICENSE`). The release also distributes three
 compiled libretro cores it did not write:
 
 | Core            | Source                                   | License  | Text here                |

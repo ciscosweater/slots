@@ -95,8 +95,8 @@ fn lid_close_over_the_switcher_wakes_into_the_game() {
 }
 
 /// A dozing app is still ticking, which is the only clock the timeout has — and still
-/// drawing 400-700 mA behind the dark panel, which is why the timeout ends in a real power
-/// off rather than a sleep this board could never wake itself from.
+/// drawing 400-700 mA behind the dark panel. The stub has no Super Standby, so the timeout
+/// ends in a real power off.
 #[test]
 fn a_doze_that_outlasts_the_timeout_powers_off_by_itself() {
     let d = tmp_root_with_carts(&["Emerald"]);
@@ -120,6 +120,33 @@ fn a_stray_doze_timeout_does_not_power_off_a_running_game() {
     a.on_doze_timeout();
     assert!(!a.powering_off());
     assert!(matches!(a.phase(), Phase::Playing { .. }));
+}
+
+/// Super Standby that returns is a wake, not a shutdown. The rails stay up and the cart
+/// is still in the slot.
+#[test]
+fn a_successful_suspend_wakes_instead_of_powering_off() {
+    let d = tmp_root_with_carts(&["Emerald"]);
+    let mut a = app_playing_in(d.path(), "Emerald");
+    a.set_power(common::panel_that_wakes(d.path(), Duration::from_secs(2)));
+    a.apply(Action::LidClose);
+    assert!(matches!(a.phase(), Phase::Doze { .. }));
+    a.on_doze_timeout();
+    assert!(
+        !a.powering_off(),
+        "a wake from Super Standby is not a shutdown"
+    );
+    assert!(
+        matches!(a.phase(), Phase::Playing { .. }),
+        "the cart is still seated"
+    );
+    assert!(
+        StateRing::new(d.path(), Core::Mgba, "Emerald")
+            .read_resume()
+            .unwrap()
+            .is_some(),
+        "resume.state from the doze is what the next boot would load"
+    );
 }
 
 /// The panel comes up at the level the card remembers, not at whatever the kernel left it.
@@ -288,8 +315,8 @@ fn the_shutdown_screen_is_up_before_the_machine_may_stop() {
 ///
 /// `doze_expired` is a level rather than an edge, and `begin_power_off` leaves the phase on
 /// `Doze`, so `timers` re-armed the shutdown every frame and `act_at` walked ahead of the
-/// clock forever. The 250 ms the screen is meant to be up became a deadline that could never
-/// arrive.
+/// clock forever. The three seconds the screen is meant to be up became a deadline that
+/// could never arrive.
 #[test]
 fn a_dozing_device_powers_off_by_itself_rather_than_waiting_for_the_lid() {
     let d = tmp_root_with_carts(&["Emerald"]);
@@ -304,8 +331,15 @@ fn a_dozing_device_powers_off_by_itself_rather_than_waiting_for_the_lid() {
         "three seconds is past the two second timeout"
     );
     assert!(
+        !a.ready_to_power_off(),
+        "Powering Down still has two of its three seconds left"
+    );
+    for _ in 0..180 {
+        a.update(1.0 / 60.0);
+    }
+    assert!(
         a.ready_to_power_off(),
-        "the shutdown screen has had its 250 ms and the machine is still not allowed to stop"
+        "the shutdown screen has had its three seconds and the machine may stop"
     );
 }
 
@@ -322,6 +356,48 @@ fn a_committed_shutdown_holds_the_core_still() {
     assert!(s.app().powering_off(), "the hold did not commit");
     s.update(DT);
     await_paused(&mut s);
+}
+
+/// The shutdown screen turns the LED off immediately. Leaving the codec open behind that is
+/// a hiss with the case already dark, and if init then fails to cut the rails the machine
+/// sits there "off" still making noise.
+#[test]
+fn a_committed_shutdown_closes_the_audio_device() {
+    let d = tmp_root_with_real_carts(&["Advance Wars", "Emerald"]);
+    let (mut s, _motor) = session_with_platform(d.path());
+    let mut now = 0;
+    play(&mut s, &mut now);
+    hold_power(&mut s, &mut now);
+    assert!(s.app().powering_off(), "the hold did not commit");
+    s.update(DT);
+    assert!(
+        !s.audio_device_open(),
+        "the codec was still open after the LED went off"
+    );
+}
+
+/// Same hiss, earlier: a shut lid blanks the panel and the amp has to follow, not wait for
+/// the suspend timeout. Wake puts the device back only if it was running before.
+#[test]
+fn doze_closes_the_audio_device() {
+    let d = tmp_root_with_carts(&["Emerald"]);
+    let (mut s, _motor) = session_with_platform(d.path());
+    s.update(DT);
+    let had = s.audio_device_open();
+    s.feed([RawEvent::Down(Btn::Lid)], 0);
+    s.update(DT);
+    assert!(
+        !s.audio_device_open(),
+        "the codec stayed open behind a dark panel"
+    );
+    s.feed([RawEvent::Up(Btn::Lid)], FRAME_MS);
+    s.update(DT);
+    if had {
+        assert!(
+            s.audio_device_open(),
+            "wake did not reopen a codec that was running before the doze"
+        );
+    }
 }
 
 /// Waits for the worker to report that it read `Paused`, rather than for the frame count to

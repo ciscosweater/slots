@@ -30,6 +30,8 @@ jobs:
       gpsp_head: ${{ steps.package.outputs.gpsp_head }}
       gpsp_anchor: ${{ steps.package.outputs.gpsp_anchor }}
       gpsp_method: ${{ steps.package.outputs.gpsp_method }}
+      gambatte_sha: ${{ steps.package.outputs.gambatte_sha }}
+      gambatte_head: ${{ steps.package.outputs.gambatte_head }}
     steps:
       - uses: actions/checkout@v7
 
@@ -59,6 +61,7 @@ jobs:
           file "$out/System/slot" | grep -q aarch64
           file "$out/System/mgba_libretro.so" | grep -q aarch64
           file "$out/System/gpsp_libretro.so" | grep -q aarch64
+          file "$out/System/gambatte_libretro.so" | grep -q aarch64
           test -x "$out/System/slot"
           test -x "$out/.system/h700/paks/MinUI.pak/launch.sh"
           grep -q 'SLOT_ROOT=' "$out/.system/h700/paks/MinUI.pak/launch.sh"
@@ -69,6 +72,11 @@ jobs:
           gpsp_src_sha="$(cat vendor/gpsp-src.sha)"
           test -f "$out/System/licenses/gpsp-${gpsp_src_sha}.tar.gz"
           test -f "$out/System/licenses/gpsp-${gpsp_src_sha}.meta"
+          # Same obligation for Gambatte. The pin in taskfile.yml is the commit
+          # cores/gambatte/build.sh recorded; dist names the archive for that commit.
+          gambatte_src_commit="$(grep '^commit=' vendor/gambatte_libretro.so.meta | cut -d= -f2)"
+          test -f "$out/System/licenses/gambatte-${gambatte_src_commit}.tar.gz"
+          test -f "$out/System/licenses/gambatte-${gambatte_src_commit}.meta"
           # MPL-2.0: mGBA ships patched, so what changed travels with it. `task dist:device`
           # names the .meta for the commit cores/mgba/build.sh recorded, and every patch that
           # build applied ships beside it.
@@ -89,10 +97,12 @@ jobs:
             echo "zip=$zip"
             # gpSP is recorded rather than pinned: it is whatever the buildbot was serving as
             # latest when this ran, and a release should be able to say which one that was.
-            # mGBA is built from the pin in taskfile.yml instead. Both are hashed, so a card
-            # with a corrupted or substituted core can be checked against the announcement.
+            # mGBA and Gambatte are built from the pins in taskfile.yml instead. All three
+            # are hashed, so a card with a corrupted or substituted core can be checked
+            # against the announcement.
             echo "mgba_sha=$(sha256sum vendor/mgba_libretro.so | cut -d' ' -f1)"
             echo "gpsp_sha=$(sha256sum vendor/gpsp_libretro.so | cut -d' ' -f1)"
+            echo "gambatte_sha=$(sha256sum vendor/gambatte_libretro.so | cut -d' ' -f1)"
             echo "core_date=$(date -u +%Y-%m-%d)"
             # mGBA's source, read back from the .meta cores/mgba/build.sh wrote beside the core
             # that shipped: the libretro/mgba commit, and the patches applied on top of it.
@@ -109,6 +119,7 @@ jobs:
             echo "gpsp_head=$(cat vendor/gpsp-src.sha)"
             echo "gpsp_anchor=$(grep '^binary_date=' vendor/gpsp-src.meta | cut -d= -f2)"
             echo "gpsp_method=$(grep '^resolved_via=' vendor/gpsp-src.meta | cut -d= -f2)"
+            echo "gambatte_head=$(grep '^commit=' vendor/gambatte_libretro.so.meta | cut -d= -f2)"
           } >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@v7
@@ -144,6 +155,8 @@ jobs:
           GPSP_HEAD: ${{ needs.build.outputs.gpsp_head }}
           GPSP_ANCHOR: ${{ needs.build.outputs.gpsp_anchor }}
           GPSP_METHOD: ${{ needs.build.outputs.gpsp_method }}
+          GAMBATTE_SHA: ${{ needs.build.outputs.gambatte_sha }}
+          GAMBATTE_HEAD: ${{ needs.build.outputs.gambatte_head }}
         run: |
           set -eu
           cat > notes.md <<NOTES
@@ -158,15 +171,20 @@ jobs:
           | \`System/slot\` | aarch64, built against glibc 2.31 |
           | \`System/mgba_libretro.so\` | built from libretro/mgba @ \`${MGBA_HEAD}\` with \`${MGBA_PATCHES}\` applied, sha256 \`${MGBA_SHA}\` |
           | \`System/gpsp_libretro.so\` | libretro buildbot nightly, fetched ${CORE_DATE}, sha256 \`${GPSP_SHA}\` |
+          | \`System/gambatte_libretro.so\` | built from libretro/gambatte-libretro @ \`${GAMBATTE_HEAD}\`, sha256 \`${GAMBATTE_SHA}\` |
           | \`System/licenses/mgba-${MGBA_HEAD}.meta\` | mGBA's source commit and the patches applied, which ship beside it as \`mgba-*.patch\` |
           | \`System/licenses/gpsp-${GPSP_HEAD}.tar.gz\` | gpSP source, libretro/gpsp \`master\` @ \`${GPSP_HEAD}\` |
           | \`System/licenses/gpsp-${GPSP_HEAD}.meta\` | anchor \`${GPSP_ANCHOR}\`, resolved via \`${GPSP_METHOD}\` |
+          | \`System/licenses/gambatte-${GAMBATTE_HEAD}.tar.gz\` | Gambatte source, libretro/gambatte-libretro @ \`${GAMBATTE_HEAD}\` |
+          | \`System/licenses/gambatte-${GAMBATTE_HEAD}.meta\` | the pin \`cores/gambatte/build.sh\` recorded |
 
-          mGBA is MPL-2.0 and gpSP is GPL-2.0, both credited with their license text under
-          \`System/licenses/\`. mGBA ships patched: libretro/mgba had not picked up upstream
-          mGBA's fix for the Classic NES Series audio, so the core is built from libretro/mgba at
-          \`${MGBA_HEAD}\` with that fix applied. The patch ships under \`System/licenses/\`, and
-          the rest of mGBA's source is public at that commit. gpSP ships as the unmodified
+          mGBA is MPL-2.0; gpSP and Gambatte are GPL-2.0. All three are credited with their
+          license text under \`System/licenses/\`. mGBA ships patched: libretro/mgba had not
+          picked up upstream mGBA's fix for the Classic NES Series audio, so the core is built
+          from libretro/mgba at \`${MGBA_HEAD}\` with that fix applied. The patch ships under
+          \`System/licenses/\`, and the rest of mGBA's source is public at that commit. Gambatte
+          is built from the pinned commit above; its corresponding source ships beside it, per
+          GPL-2.0 section 3(a). gpSP ships as the unmodified
           buildbot nightly, and its corresponding
           source ships in this zip too, per GPL-2.0 section 3(a): the buildbot does not publish
           which commit a nightly was built from, so what ships is \`master\` as of

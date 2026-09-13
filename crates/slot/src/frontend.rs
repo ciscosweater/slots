@@ -25,15 +25,17 @@ use crate::link_start::{LinkFail, LinkStep};
 use crate::session::Session;
 use crate::wallpaper;
 
-/// How long a dark panel waits before the machine actually stops. The dark is immediate —
-/// the lid or the button kills the backlight on the edge — but the device is still running
-/// flat out behind it at 400-700 mA, so this is the window in which the user might come
-/// straight back, not a power saving.
+/// How long a dark panel waits before Super Standby. The dark is immediate — the lid or
+/// the button kills the backlight on the edge — but the device is still running flat out
+/// behind it at 400-700 mA, so this is the window in which the user might come straight
+/// back, not a power saving.
 ///
-/// Three minutes, and then the device powers off rather than sleeping. It cannot wake itself
-/// from a sleep — the RTC alarm never fires on this board — so a standby would be a leak with
-/// no end, and a power off is the honest version of putting it down.
-const DOZE_TIMEOUT: Duration = Duration::from_secs(180);
+/// Five minutes, and then the device asks the H700 for Super Standby. Five more minutes
+/// in that state with the lid still shut cuts the rails; resume.state was written when the
+/// panel went dark, so the next boot seats the cart. Open the lid or press POWER inside
+/// that Super Standby window and you're back in the game. A platform without working
+/// suspend, or a suspend that fails, falls back to a real power off immediately.
+const DOZE_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// A hitch longer than this would jump the shelf spring and the insert. The emu paces itself
 /// on its own thread; this is only the UI clock.
@@ -207,7 +209,7 @@ impl Frontend {
                 compositor.create_texture(empty_recents.w, empty_recents.h, &empty_recents.rgba),
                 empty_recents.w,
             ));
-        let idle = [hint_face("A", "Resume"), hint_face("START", "Core")]
+        let idle = [hint_face("A", "Open"), hint_face("START", "Core")]
             .into_iter()
             .map(|f| (compositor.create_texture(f.w, f.h, &f.rgba), f.w))
             .collect();
@@ -518,12 +520,15 @@ impl Frontend {
     }
 
     pub fn restart(&mut self) {
+        self.session.silence();
         self.session.app_mut().restart();
     }
 
     /// The state was flushed on the edge that set `powering_off`, so there is nothing left to
-    /// do but go.
+    /// do but go. The PCM is dropped first: `poweroff` does not return, and an open H700
+    /// codec is a hiss behind a dark panel if init then sits on the rails.
     pub fn poweroff(&mut self) {
+        self.session.silence();
         self.session.app_mut().poweroff();
     }
 }

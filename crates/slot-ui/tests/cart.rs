@@ -333,3 +333,34 @@ fn the_cart_shadow_is_the_cart_in_black() {
         "the shadow is transparent everywhere, so it backs nothing"
     );
 }
+
+#[test]
+fn game_boy_dmg_cart_has_lock_notch() {
+    let s = slot_ui::cart_shadow_for(slot_store::Platform::Gb);
+    assert_eq!((s.w, s.h), (slot_ui::GB_CART_W, slot_ui::GB_CART_H));
+    let pixel_alpha = |x: u32, y: u32| s.rgba[((y * s.w + x) * 4 + 3) as usize];
+    // In the notch area on top-right, alpha should be 0 (cutout)
+    assert_eq!(pixel_alpha(230, 8), 0, "DMG lock notch is not cut out");
+    // While the main top body is solid
+    assert!(pixel_alpha(200, 8) > 250, "DMG top body is not solid");
+    // Bottom corners are rounded
+    assert_eq!(
+        pixel_alpha(0, slot_ui::GB_CART_H - 1),
+        0,
+        "bottom-left corner is not rounded"
+    );
+}
+
+#[test]
+fn game_boy_color_cart_has_no_lock_notch() {
+    let s = slot_ui::cart_shadow_for(slot_store::Platform::Gbc);
+    assert_eq!((s.w, s.h), (slot_ui::GB_CART_W, slot_ui::GB_CART_H));
+    let pixel_alpha = |x: u32, y: u32| s.rgba[((y * s.w + x) * 4 + 3) as usize];
+    // On GBC, the top right is solid (no lock notch)
+    assert!(pixel_alpha(225, 14) > 250, "GBC top right should be solid");
+    // Center top rises high
+    assert!(
+        pixel_alpha(120, 2) > 250,
+        "GBC center crown should be solid"
+    );
+}

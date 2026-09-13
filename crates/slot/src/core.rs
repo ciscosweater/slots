@@ -27,7 +27,7 @@ pub fn allow_mock_for_tests() {
 /// anyone who forgot it was set.
 const CORE_ENV: &str = "SLOT_CORE";
 
-/// Which dylib backs a core. The device keeps both in `System/`, so this is a filename
+/// Which dylib backs a core. The device keeps all three in `System/`, so this is a filename
 /// rather than a search: whichever the cart asked for is either there or it is not.
 pub fn dylib_name(core: Core) -> String {
     format!(
@@ -91,21 +91,23 @@ pub fn open_core(root: &Path, core: Core) -> Option<Box<dyn RetroCore>> {
 ///
 /// `core` is redundant with `paths` in production — `open_core` derived both from the same
 /// `Core` — but this function stays the seam that takes `paths` explicitly, because tests
-/// plant a dylib somewhere `candidates` would not otherwise look. `apply_core_options` needs
+/// plant a dylib somewhere `candidates` would not otherwise look. `core_options` needs
 /// `core` too, and only `open_core_for` ever holds a concrete `slot_retro::LibretroCore` to
-/// call it on: everything above here deals in `Box<dyn RetroCore>`, which has no `set_option`.
-/// That is also why the call sits here rather than at a caller — after `open_with` succeeds,
-/// before the `Box<dyn RetroCore>` is handed back and `load` becomes reachable at all.
+/// seed them on: everything above here deals in `Box<dyn RetroCore>`, which has no
+/// `set_option`. Options are handed to `open_with_options` rather than applied after
+/// `open_with` returns because Gambatte reads `gambatte_gb_bootloader` during `retro_init`
+/// and never again; mGBA already defaults to the official GBA intro when `gba_bios.bin` is
+/// in this folder, and is left alone.
 pub fn open_core_for(root: &Path, core: Core, paths: &[PathBuf]) -> Option<Box<dyn RetroCore>> {
     let bios = root::bios_dir(root);
     let saves = root::saves_dir(root);
+    let options = core_options(core);
     for path in paths {
         if !path.exists() {
             continue;
         }
-        match LibretroCore::open_with(path, &bios, &saves) {
-            Ok(mut opened) => {
-                apply_core_options(&mut opened, core);
+        match LibretroCore::open_with_options(path, &bios, &saves, &options) {
+            Ok(opened) => {
                 eprintln!("slot: core {}", path.display());
                 return Some(Box::new(opened));
             }
@@ -125,30 +127,44 @@ pub fn open_core_for(root: &Path, core: Core, paths: &[PathBuf]) -> Option<Box<d
 }
 
 /// Options a core needs before `load`, because libretro cores read them during
-/// `retro_load_game` rather than continuously.
+/// `retro_load_game` rather than continuously. Gambatte's bootloader flag is the
+/// exception: it is read at `retro_init`, so `open_core_for` seeds this list there.
 ///
 /// `auto` resolves the serial protocol from the ROM, so two devices running the same game
 /// agree on a mode without either being told which. Anything more deliberate belongs to a
 /// link session, which knows what the other end picked. Colour correction is enabled in each
 /// core rather than duplicated in the frontend shader: each core owns the transform matching
 /// its native pixel format and emulated GBA output.
-pub fn apply_core_options(core: &mut LibretroCore, which: Core) {
+///
+/// Gambatte's own default for `gambatte_gb_bootloader` is enabled, but a failed
+/// `GET_VARIABLE` turns it off. Seeding `enabled` is what makes `gb_bios.bin` /
+/// `gbc_bios.bin` in `BIOS/` play the Nintendo logo the same way `gba_bios.bin` already
+/// does for mGBA. mGBA is not named here: its C defaults already use a present BIOS and
+/// do not skip the intro.
+pub fn core_options(which: Core) -> Vec<(&'static str, &'static str)> {
     match which {
-        Core::Mgba => core.set_option("mgba_color_correction", "GBA"),
-        Core::Gpsp => {
-            core.set_option("gpsp_serial", "auto");
-            core.set_option("gpsp_color_correction", "enabled");
-        }
-        Core::Gambatte => {
-            core.set_option("gambatte_gb_colorization", "internal");
-            core.set_option("gambatte_gb_internal_palette", "PixelShift - Pack 1");
-            core.set_option(
+        Core::Mgba => vec![("mgba_color_correction", "GBA")],
+        Core::Gpsp => vec![
+            ("gpsp_serial", "auto"),
+            ("gpsp_color_correction", "enabled"),
+        ],
+        Core::Gambatte => vec![
+            ("gambatte_gb_bootloader", "enabled"),
+            ("gambatte_gb_colorization", "internal"),
+            ("gambatte_gb_internal_palette", "PixelShift - Pack 1"),
+            (
                 "gambatte_gb_palette_pixelshift_1",
                 "PixelShift 03 - BGB 0.3 Emulator",
-            );
-            core.set_option("gambatte_gbc_color_correction", "GBC only");
-            core.set_option("gambatte_gbc_color_correction_mode", "Accurate");
-        }
+            ),
+            ("gambatte_gbc_color_correction", "GBC only"),
+            ("gambatte_gbc_color_correction_mode", "Accurate"),
+        ],
+    }
+}
+
+pub fn apply_core_options(core: &mut LibretroCore, which: Core) {
+    for (key, value) in core_options(which) {
+        core.set_option(key, value);
     }
 }
 
@@ -226,5 +242,23 @@ mod tests {
             mgba, gpsp,
             "the override stopped winning for one of the cores"
         );
+    }
+
+    /// Gambatte turns the official boot ROM off unless this is already set when `retro_init`
+    /// runs. The GBA cores must not appear here: mGBA already plays `gba_bios.bin` from its
+    /// own defaults, which is the behaviour this list is not allowed to disturb.
+    #[test]
+    fn gambatte_enables_the_boot_logo_and_gba_cores_do_not_touch_theirs() {
+        assert!(core_options(Core::Gambatte)
+            .iter()
+            .any(|&(k, v)| k == "gambatte_gb_bootloader" && v == "enabled"));
+        for which in [Core::Mgba, Core::Gpsp] {
+            for (key, _) in core_options(which) {
+                assert!(
+                    !key.contains("bios") && !key.contains("boot"),
+                    "{key} would change a GBA intro that already works"
+                );
+            }
+        }
     }
 }

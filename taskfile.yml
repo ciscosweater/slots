@@ -365,7 +365,7 @@ tasks:
 
   dist:device:
     desc: Build the AGS-102/BaseOS frontend tree for an H700 device, OUT defaults to ./dist-device
-    # Both cores now ship: crates/slot/src/core.rs resolves the dylib from a cart's own
+    # All three cores now ship: crates/slot/src/core.rs resolves the dylib from a cart's own
     # Core, so a card naming gpsp in System/selected_core.ini gets gpSP for real rather than
     # mGBA wearing its name.
     deps: [core:device, core:gpsp, core:gambatte:device, build:device]
@@ -384,7 +384,7 @@ tasks:
       # `core:device` and `core:gpsp`'s own arch check only runs on a fresh fetch: their
       # `status` skips the whole task, check included, whenever a file of that name already
       # exists — so a hand-placed x86 `.so` sails through unchecked from here on. Re-checked
-      # now, right before it ships, for both cores.
+      # now, right before it ships, for all three cores.
       - file vendor/mgba_libretro.so | grep -q aarch64
       - file vendor/gpsp_libretro.so | grep -q aarch64
       - file vendor/gambatte_libretro.so | grep -q aarch64
@@ -426,7 +426,7 @@ tasks:
 
   deploy:device:
     desc: Build and push onto a device over adb, then restart it. SD defaults to /mnt/sdcard
-    # See the note on dist:device: both cores are real now, so both are pushed.
+    # See the note on dist:device: all three cores are real now, so all three are pushed.
     deps: [core:device, core:gpsp, core:gambatte:device, build:device]
     vars:
       SD: '{{.SD | default "/mnt/sdcard"}}'

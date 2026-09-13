@@ -2,7 +2,7 @@ mod common;
 
 use slot_store::Core;
 
-/// The device carries both cores in `System/`; a host build carries whichever were fetched.
+/// The device carries all three cores in `System/`; a host build carries whichever were fetched.
 /// Absent means this host cannot run the test, not that the test failed.
 fn dylib_for(core: Core) -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -74,7 +74,7 @@ fn gpsp_is_told_its_serial_mode_before_load() {
 }
 
 /// Each core receives only its own option names, and mGBA uses the explicit GBA transform
-/// rather than Auto so this GBA-only frontend never depends on content detection.
+/// rather than Auto so a GBA cart never depends on content detection.
 #[test]
 fn mgba_is_given_its_gba_color_correction_only() {
     let path = dylib_for(Core::Mgba);
@@ -124,6 +124,11 @@ fn gambatte_is_given_the_requested_gb_palette_and_gbc_correction() {
     assert_eq!(
         core.option("gambatte_gbc_color_correction").as_deref(),
         Some("GBC only")
+    );
+    assert_eq!(
+        core.option("gambatte_gb_bootloader").as_deref(),
+        Some("enabled"),
+        "Gambatte reads this at init; disabled means no Nintendo logo even with BIOS/"
     );
 }
 

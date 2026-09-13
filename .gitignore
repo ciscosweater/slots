@@ -16,5 +16,9 @@
 .DS_Store
 /.idea/
 /target-device
+/target-device-cross
+/target-device-release
 /target-verify
 /dist-device
+/slot-v*/
+/*.zip

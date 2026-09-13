@@ -1,9 +1,13 @@
 use std::sync::OnceLock;
 
-use crate::cart::{CART_H, CART_W};
+use crate::cart::{CART_H, CART_W, GB_CART_H, GB_CART_W};
 
 const CART_SVG: &str = include_str!("../assets/cart.svg");
 const DETAIL_SVG: &str = include_str!("../assets/cart_detail.svg");
+const CART_GB_SVG: &str = include_str!("../assets/cart_gb.svg");
+const DETAIL_GB_SVG: &str = include_str!("../assets/cart_gb_detail.svg");
+const CART_GBC_SVG: &str = include_str!("../assets/cart_gbc.svg");
+const DETAIL_GBC_SVG: &str = include_str!("../assets/cart_gbc_detail.svg");
 
 /// Coverage of the cart outline, one byte per pixel, row major.
 pub fn silhouette(w: u32, h: u32) -> Vec<u8> {
@@ -57,19 +61,98 @@ fn depth_map(mask: &[u8], w: usize, h: usize) -> Vec<u8> {
     d
 }
 
+#[derive(Clone)]
+pub(crate) struct DetailMask {
+    pub shadow: Vec<u8>,
+    pub highlight: Vec<u8>,
+}
+
 /// The moulded detail: the grip ridge above the label and the thumb notch at the bottom.
 /// Shaded into the shell rather than drawn in a fixed colour, so it belongs to whatever
 /// colour the cart is.
-pub(crate) fn detail_mask() -> &'static [u8] {
+pub(crate) fn detail_mask() -> &'static DetailMask {
+    static MASK: OnceLock<DetailMask> = OnceLock::new();
+    MASK.get_or_init(|| {
+        rasterise_detail_svg(DETAIL_SVG, CART_W, CART_H).unwrap_or_else(|| DetailMask {
+            shadow: vec![0; (CART_W * CART_H) as usize],
+            highlight: vec![0; (CART_W * CART_H) as usize],
+        })
+    })
+}
+
+pub(crate) fn gb_cart_mask() -> &'static [u8] {
     static MASK: OnceLock<Vec<u8>> = OnceLock::new();
     MASK.get_or_init(|| {
-        rasterise_svg(DETAIL_SVG, CART_W, CART_H)
-            .unwrap_or_else(|| vec![0; (CART_W * CART_H) as usize])
+        rasterise_svg(CART_GB_SVG, GB_CART_W, GB_CART_H)
+            .unwrap_or_else(|| vec![255; (GB_CART_W * GB_CART_H) as usize])
+    })
+}
+
+pub(crate) fn gb_cart_depth() -> &'static [u8] {
+    static DEPTH: OnceLock<Vec<u8>> = OnceLock::new();
+    DEPTH.get_or_init(|| depth_map(gb_cart_mask(), GB_CART_W as usize, GB_CART_H as usize))
+}
+
+pub(crate) fn gb_detail_mask() -> &'static DetailMask {
+    static MASK: OnceLock<DetailMask> = OnceLock::new();
+    MASK.get_or_init(|| {
+        rasterise_detail_svg(DETAIL_GB_SVG, GB_CART_W, GB_CART_H).unwrap_or_else(|| DetailMask {
+            shadow: vec![0; (GB_CART_W * GB_CART_H) as usize],
+            highlight: vec![0; (GB_CART_W * GB_CART_H) as usize],
+        })
+    })
+}
+
+pub(crate) fn gbc_cart_mask() -> &'static [u8] {
+    static MASK: OnceLock<Vec<u8>> = OnceLock::new();
+    MASK.get_or_init(|| {
+        rasterise_svg(CART_GBC_SVG, GB_CART_W, GB_CART_H)
+            .unwrap_or_else(|| vec![255; (GB_CART_W * GB_CART_H) as usize])
+    })
+}
+
+pub(crate) fn gbc_cart_depth() -> &'static [u8] {
+    static DEPTH: OnceLock<Vec<u8>> = OnceLock::new();
+    DEPTH.get_or_init(|| depth_map(gbc_cart_mask(), GB_CART_W as usize, GB_CART_H as usize))
+}
+
+pub(crate) fn gbc_detail_mask() -> &'static DetailMask {
+    static MASK: OnceLock<DetailMask> = OnceLock::new();
+    MASK.get_or_init(|| {
+        rasterise_detail_svg(DETAIL_GBC_SVG, GB_CART_W, GB_CART_H).unwrap_or_else(|| DetailMask {
+            shadow: vec![0; (GB_CART_W * GB_CART_H) as usize],
+            highlight: vec![0; (GB_CART_W * GB_CART_H) as usize],
+        })
     })
 }
 
 fn rasterise(w: u32, h: u32) -> Option<Vec<u8>> {
     rasterise_svg(CART_SVG, w, h)
+}
+
+fn rasterise_detail_svg(svg: &str, w: u32, h: u32) -> Option<DetailMask> {
+    let tree = usvg::Tree::from_str(svg, &usvg::Options::default()).ok()?;
+    let mut pixmap = resvg::tiny_skia::Pixmap::new(w, h)?;
+    let size = tree.size();
+    let scale =
+        resvg::tiny_skia::Transform::from_scale(w as f32 / size.width(), h as f32 / size.height());
+    resvg::render(&tree, scale, &mut pixmap.as_mut());
+    let mut shadow = Vec::with_capacity((w * h) as usize);
+    let mut highlight = Vec::with_capacity((w * h) as usize);
+    for px in pixmap.data().chunks_exact(4) {
+        let (r, g, b, a) = (px[0], px[1], px[2], px[3]);
+        if a == 0 {
+            shadow.push(0);
+            highlight.push(0);
+        } else if r > 180 && g > 180 && b > 180 {
+            shadow.push(0);
+            highlight.push(a);
+        } else {
+            shadow.push(a);
+            highlight.push(0);
+        }
+    }
+    Some(DetailMask { shadow, highlight })
 }
 
 fn rasterise_svg(svg: &str, w: u32, h: u32) -> Option<Vec<u8>> {

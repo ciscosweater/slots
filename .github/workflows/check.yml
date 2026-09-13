@@ -1,0 +1,36 @@
+name: check
+
+# Everything `task check` already names as a CI run: fmt, host clippy, device clippy, tests.
+# The release workflow still builds the aarch64 card tree; this one gates the PR.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: task check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: '1.96'
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install Task and native libs
+        run: |
+          set -eu
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libasound2-dev libudev-dev libxkbcommon-dev libwayland-dev libx11-dev pkg-config
+          curl -fsSL https://taskfile.dev/install.sh | sh -s -- -b /usr/local/bin
+
+      - name: Check
+        run: task check

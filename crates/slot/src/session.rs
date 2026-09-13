@@ -19,8 +19,15 @@ pub struct Session {
     app: App,
     emu: Option<EmuHandle>,
     /// Opened once and outliving every cart. The cart clicks home while it is still on its
-    /// way in, which is exactly when there is no core to own a sink.
+    /// way in, which is exactly when there is no core to own a sink. Closed while the panel
+    /// is dark or the machine is shutting down: an open H700 PCM leaves the speaker amp
+    /// biased, which is a hiss with the screen and LED already off.
     sink: Box<dyn AudioSink>,
+    sink_open: bool,
+    /// Last `want` `sync_sink` acted on. Open is attempted on the rising edge, not every
+    /// frame a failed open leaves the device silent — ALSA `snd_pcm_open` on a dead host
+    /// blocks, and retrying it from `update` drowned the rewind tests in the same error.
+    sink_wanted: bool,
     gestures: Gestures,
     pad: Pad,
     rewinding: bool,
@@ -35,14 +42,20 @@ impl Session {
         let mut sink: Box<dyn AudioSink> = open_sink();
         // A frontend for one console knows the rate before it knows the cart. A device that
         // refuses it still opens, and the worker resamples to whatever it did take.
-        if let Err(e) = sink.open(GBA_HZ) {
-            eprintln!("slot: audio: {e}");
-        }
+        let sink_open = match sink.open(GBA_HZ) {
+            Ok(()) => true,
+            Err(e) => {
+                eprintln!("slot: audio: {e}");
+                false
+            }
+        };
         Session {
             app: App::boot(&root),
             root,
             emu: None,
             sink,
+            sink_open,
+            sink_wanted: true,
             gestures: Gestures::new(),
             pad: Pad::default(),
             rewinding: false,
@@ -241,16 +254,15 @@ impl Session {
     }
 
     pub fn update(&mut self, dt: f32) {
-        let crossing_suspend = self.app.suspending_now();
-        if crossing_suspend {
-            self.sink.close();
-        }
+        // Before `update`: a doze that is about to cross into kernel suspend must not still
+        // hold the PCM. The H700 codec stays powered for as long as `plug:default` is open,
+        // which is the hiss behind a dark panel.
+        self.sync_sink();
         self.bridge_link(|app| app.update(dt));
-        if crossing_suspend && !self.app.powering_off() {
-            if let Err(e) = self.sink.open(GBA_HZ) {
-                eprintln!("slot: audio after resume: {e}");
-            }
-        }
+        // After: a successful suspend woke into Playing and needs the device back; a
+        // shutdown that started inside `update` (doze timeout, critical battery) needs it
+        // dropped before `poweroff` blocks on init.
+        self.sync_sink();
         // The wire a link that just came up runs over. `App` holds a session's own
         // bookkeeping and never a transport (see `App::link`), so this is the hop that
         // carries one to the emulator thread — the mirror of `bridge_link`'s own hop for the
@@ -372,6 +384,44 @@ impl Session {
 
     fn dozing(&self) -> bool {
         matches!(self.app.phase(), Phase::Doze { .. })
+    }
+
+    /// The H700 speaker amp stays live for as long as `plug:default` is open, even when the
+    /// ring is feeding it silence. Close on a dark panel or a committed shutdown; open again
+    /// only when the machine is actually going to make sound. The open is edge-triggered:
+    /// a failed codec is not retried every frame.
+    fn sync_sink(&mut self) {
+        let want = !self.app.shutting_down() && !self.dozing();
+        if want == self.sink_wanted {
+            return;
+        }
+        if want {
+            match self.sink.open(GBA_HZ) {
+                Ok(()) => self.sink_open = true,
+                Err(e) => {
+                    eprintln!("slot: audio: {e}");
+                    self.sink_open = false;
+                }
+            }
+        } else if self.sink_open {
+            self.sink.close();
+            self.sink_open = false;
+        }
+        self.sink_wanted = want;
+    }
+
+    /// Drop the PCM before `poweroff`/`restart` block on init. Those calls do not return, so
+    /// `Drop` on the sink is not a path the device actually takes.
+    pub fn silence(&mut self) {
+        self.sink.close();
+        self.sink_open = false;
+        self.sink_wanted = false;
+    }
+
+    /// Whether the hardware callback is still running. Tests use this to prove a doze or a
+    /// shutdown actually released the codec, not just paused the emulator into silence.
+    pub fn audio_device_open(&self) -> bool {
+        self.sink_open
     }
 
     fn ejecting(&self) -> bool {

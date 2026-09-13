@@ -80,8 +80,9 @@ pub trait Platform: Send {
     /// already taken the louder.
     fn set_rumble(&mut self, strength: u16);
 
-    /// Suspend-to-RAM and return after wake. `false` means unsupported or failed, so the
-    /// caller can retain the existing safe power-off fallback.
+    /// Suspend-to-RAM and return after wake. `false` means unsupported, failed, or the Super
+    /// Standby window ran out with the lid still shut, so the caller can cut the rails.
+    /// resume.state is already on the card from the doze that led here.
     fn suspend(&mut self) -> bool {
         false
     }
@@ -96,10 +97,10 @@ pub trait Platform: Send {
 
 /// Lid close and lid wake are one code path, parameterised.
 ///
-/// There is no sleep here any more. This board can suspend, and does it well — under 45 mA —
-/// but it cannot wake itself: the RTC alarm arms, reads back, and never fires, measured on a
-/// fully awake machine as well as a suspended one. A standby nothing can end is a slow leak
-/// wearing a better name, so the lid and the button run a timer and then power off properly.
+/// The lid's dark wait becomes H700 Super Standby after five minutes: this board suspends
+/// well, under 45 mA. Five more minutes in that state with the lid still shut cuts the
+/// rails; resume.state was written when the panel went dark. Open the lid or press POWER
+/// inside that window and you're back in the game. Holding POWER is still off.
 pub trait LidPolicy {
     fn on_close(&mut self);
     fn on_open(&mut self);

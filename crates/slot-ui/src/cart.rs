@@ -2,19 +2,22 @@ use slot_store::Cart;
 
 use crate::art;
 use crate::shell::{shell_for, Finish, Shell};
-use crate::silhouette::{cart_depth, cart_mask, detail_mask};
+use crate::silhouette::{
+    cart_depth, cart_mask, detail_mask, gb_cart_depth, gb_cart_mask, gb_detail_mask,
+    gbc_cart_depth, gbc_cart_mask, gbc_detail_mask, DetailMask,
+};
 use crate::text;
 
 /// The traced outline's own aspect, so `cart.svg` rasterises unstretched. Three across a
 /// 720 wide row exactly, so the shelf can show a neighbour either side of the selection.
 pub const CART_W: u32 = 240;
 pub const CART_H: u32 = 135;
-pub const GB_CART_W: u32 = 200;
-pub const GB_CART_H: u32 = 228;
-pub const GB_LABEL_W: u32 = 148;
-pub const GB_LABEL_H: u32 = 130;
+pub const GB_CART_W: u32 = 240;
+pub const GB_CART_H: u32 = 274;
+pub const GB_LABEL_W: u32 = 192;
+pub const GB_LABEL_H: u32 = 169;
 pub const GB_LABEL_X: u32 = (GB_CART_W - GB_LABEL_W) / 2;
-pub const GB_LABEL_Y: u32 = 52;
+pub const GB_LABEL_Y: u32 = 56;
 
 /// The paper label, inset in the shell rather than covering it: 9% to 91% across and 22.8%
 /// to 86.3% down. The vertical placement is the reference's, and the band it leaves above is
@@ -90,78 +93,75 @@ pub fn cart_face(cart: &Cart) -> CartFace {
 }
 
 pub fn cart_shadow_for(platform: slot_store::Platform) -> CartFace {
-    if platform == slot_store::Platform::Gba {
-        return cart_shadow();
-    }
-    let mut rgba = Vec::with_capacity((GB_CART_W * GB_CART_H * 4) as usize);
-    for y in 0..GB_CART_H {
-        for x in 0..GB_CART_W {
-            rgba.extend_from_slice(&[0, 0, 0, if gb_inside(x, y) { 255 } else { 0 }]);
+    match platform {
+        slot_store::Platform::Gba => cart_shadow(),
+        slot_store::Platform::Gb => {
+            let mut rgba = Vec::with_capacity((GB_CART_W * GB_CART_H * 4) as usize);
+            for cover in gb_cart_mask() {
+                rgba.extend_from_slice(&[0, 0, 0, *cover]);
+            }
+            CartFace {
+                rgba,
+                w: GB_CART_W,
+                h: GB_CART_H,
+            }
+        }
+        slot_store::Platform::Gbc => {
+            let mut rgba = Vec::with_capacity((GB_CART_W * GB_CART_H * 4) as usize);
+            for cover in gbc_cart_mask() {
+                rgba.extend_from_slice(&[0, 0, 0, *cover]);
+            }
+            CartFace {
+                rgba,
+                w: GB_CART_W,
+                h: GB_CART_H,
+            }
         }
     }
-    CartFace {
-        rgba,
-        w: GB_CART_W,
-        h: GB_CART_H,
-    }
-}
-
-fn gb_inside(x: u32, y: u32) -> bool {
-    let shoulder = 9u32;
-    if y >= shoulder {
-        return x >= 2 && x + 2 < GB_CART_W;
-    }
-    let inset = shoulder - y;
-    x >= inset && x + inset < GB_CART_W
 }
 
 fn gb_cart_face(cart: &Cart) -> CartFace {
-    let base: [u8; 3] = match cart.platform {
-        slot_store::Platform::Gb => [0x9b, 0x9c, 0x96],
-        slot_store::Platform::Gbc => [0x49, 0x70, 0x83],
+    let (shell, mask, depth, detail) = match cart.platform {
+        slot_store::Platform::Gb => (
+            Shell {
+                colour: [0x9b, 0x9c, 0x96],
+                finish: Finish::Solid,
+            },
+            gb_cart_mask(),
+            gb_cart_depth(),
+            gb_detail_mask(),
+        ),
+        slot_store::Platform::Gbc => (
+            Shell {
+                colour: [0x49, 0x70, 0x83],
+                finish: Finish::Translucent,
+            },
+            gbc_cart_mask(),
+            gbc_cart_depth(),
+            gbc_detail_mask(),
+        ),
         slot_store::Platform::Gba => unreachable!(),
     };
-    let mut rgba = vec![0u8; (GB_CART_W * GB_CART_H * 4) as usize];
-    for y in 0..GB_CART_H {
-        for x in 0..GB_CART_W {
-            if !gb_inside(x, y) {
-                continue;
-            }
-            let i = ((y * GB_CART_W + x) * 4) as usize;
-            let edge = x < 6 || x + 6 >= GB_CART_W || y < 6 || y + 6 >= GB_CART_H;
-            let c = if edge {
-                base.map(|v| v.saturating_add(24))
-            } else {
-                base
-            };
-            rgba[i..i + 3].copy_from_slice(&c);
-            rgba[i + 3] = 255;
-        }
-    }
-    let label = cart
+
+    let mut face = shell_face_custom(&shell, GB_CART_W, GB_CART_H, depth);
+    let label = match cart
         .label
         .as_deref()
         .and_then(|p| art::cover(p, GB_LABEL_W, GB_LABEL_H))
-        .unwrap_or_else(|| generated_label_sized(&label_text(cart), GB_LABEL_W, GB_LABEL_H));
-    for y in 0..GB_LABEL_H {
-        for x in 0..GB_LABEL_W {
-            let s = ((y * GB_LABEL_W + x) * 4) as usize;
-            let d = (((y + GB_LABEL_Y) * GB_CART_W + x + GB_LABEL_X) * 4) as usize;
-            rgba[d..d + 4].copy_from_slice(&label[s..s + 4]);
-        }
-    }
-    // Moulded top band and the characteristic lower thumb arrow.
-    for y in 27..31 {
-        for x in 18..GB_CART_W - 18 {
-            let i = ((y * GB_CART_W + x) * 4) as usize;
-            rgba[i..i + 3].copy_from_slice(&base.map(|v| (v as f32 * 0.68) as u8));
-        }
-    }
-    CartFace {
-        rgba,
-        w: GB_CART_W,
-        h: GB_CART_H,
-    }
+    {
+        Some(rgba) => rgba,
+        None => generated_label_sized(&label_text(cart), GB_LABEL_W, GB_LABEL_H),
+    };
+
+    mould_detail_custom(&mut face, &shell, detail);
+    recess_label_custom(
+        &mut face, &shell, GB_LABEL_X, GB_LABEL_Y, GB_LABEL_W, GB_LABEL_H,
+    );
+    paste_label_custom(
+        &mut face, &label, GB_LABEL_X, GB_LABEL_Y, GB_LABEL_W, GB_LABEL_H,
+    );
+    clip_to_silhouette_custom(&mut face, mask);
+    face
 }
 
 fn generated_label_sized(title: &str, w: u32, h: u32) -> Vec<u8> {
@@ -187,7 +187,11 @@ fn generated_label_sized(title: &str, w: u32, h: u32) -> Vec<u8> {
 /// Colour is left alone and only alpha is cut, because the sprite pass blends straight
 /// alpha rather than premultiplied.
 fn clip_to_silhouette(face: &mut CartFace) {
-    for (px, cover) in face.rgba.chunks_exact_mut(4).zip(cart_mask()) {
+    clip_to_silhouette_custom(face, cart_mask());
+}
+
+fn clip_to_silhouette_custom(face: &mut CartFace, mask: &[u8]) {
+    for (px, cover) in face.rgba.chunks_exact_mut(4).zip(mask) {
         px[3] = ((px[3] as u32 * *cover as u32 + 127) / 255) as u8;
     }
 }
@@ -277,20 +281,152 @@ pub fn label_tags(stem: &str) -> Vec<String> {
 }
 
 fn shell_face(shell: &Shell) -> CartFace {
-    let mut rgba = Vec::with_capacity((CART_W * CART_H * 4) as usize);
+    shell_face_custom(shell, CART_W, CART_H, cart_depth())
+}
+
+fn gbc_board() -> &'static [u8] {
+    static BOARD: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
+    BOARD.get_or_init(|| generate_gbc_board(GB_CART_W, GB_CART_H))
+}
+
+fn generate_gbc_board(w: u32, h: u32) -> Vec<u8> {
+    let mut rgba = vec![0u8; (w * h * 4) as usize];
+    let mut put = |x: u32, y: u32, c: [u8; 3]| {
+        if x < w && y < h {
+            let i = ((y * w + x) * 4) as usize;
+            rgba[i] = c[0];
+            rgba[i + 1] = c[1];
+            rgba[i + 2] = c[2];
+            rgba[i + 3] = 255;
+        }
+    };
+
+    // 1. Base PCB green
+    for y in 16..262 {
+        for x in 12..228 {
+            if y < 28 && !(24..=216).contains(&x) {
+                continue;
+            }
+            put(x, y, [0x1e, 0x54, 0x32]);
+        }
+    }
+
+    // 2. Subtle PCB traces in top-left
+    for y in 18..54 {
+        for x in 28..115 {
+            if (x + y) % 6 == 0 {
+                put(x, y, [0x28, 0x6e, 0x40]);
+            }
+        }
+    }
+
+    // 3. Small SMT components on top-left
+    for y in 24..28 {
+        for x in 45..52 {
+            put(x, y, [0x70, 0x65, 0x50]);
+        }
+    }
+    for y in 34..38 {
+        for x in 40..48 {
+            put(x, y, [0x85, 0x78, 0x55]);
+        }
+    }
+    for y in 44..50 {
+        for x in 55..70 {
+            put(x, y, [0x15, 0x15, 0x18]);
+        }
+    }
+    for px in (56..69).step_by(3) {
+        put(px, 43, [0xc0, 0xc0, 0xc8]);
+        put(px, 50, [0xc0, 0xc0, 0xc8]);
+    }
+
+    // 4. Silver coin-cell battery (CR2025)
+    let (cx, cy, r): (i32, i32, i32) = (158, 36, 19);
+    for y in (cy - r - 2)..=(cy + r + 2) {
+        for x in (cx - r - 2)..=(cx + r + 2) {
+            let dx = x - cx;
+            let dy = y - cy;
+            let d_sq = dx * dx + dy * dy;
+            if d_sq <= r * r {
+                let grad = (210 - dx * 3 / 2 + dy).clamp(160, 235) as u8;
+                put(
+                    x as u32,
+                    y as u32,
+                    [grad, grad.saturating_add(2), grad.saturating_add(6)],
+                );
+            } else if d_sq <= (r + 1) * (r + 1) {
+                put(x as u32, y as u32, [130, 132, 138]);
+            }
+        }
+    }
+    // Battery solder tab
+    for y in 34..38 {
+        for x in 115..158 {
+            put(x, y, [190, 192, 198]);
+        }
+    }
+    for y in 32..40 {
+        for x in 112..118 {
+            put(x, y, [210, 210, 218]);
+        }
+    }
+
+    // 5. 32 Gold connector pins at bottom (y=224..258)
+    for i in 0..32 {
+        let px0 = (28.0 + i as f32 * 5.75).round() as u32;
+        let px1 = px0 + 4;
+        for y in 224..258 {
+            let sh: u32 = if y > 226 && y < 255 { 210 } else { 170 };
+            for x in px0..px1.min(228) {
+                put(
+                    x,
+                    y,
+                    [sh as u8, (sh * 82 / 100) as u8, (sh * 35 / 100) as u8],
+                );
+            }
+            if y == 223 {
+                for x in (px0 + 1)..px1.saturating_sub(1) {
+                    put(x, y, [150, 120, 40]);
+                }
+            }
+        }
+    }
+
+    rgba
+}
+
+fn shell_face_custom(shell: &Shell, w: u32, h: u32, depth: &[u8]) -> CartFace {
+    let mut rgba = Vec::with_capacity((w * h * 4) as usize);
     let edge = rim_colour(shell.colour);
-    for depth in cart_depth() {
-        let c = match shell.finish {
+    let board = match shell.finish {
+        Finish::Translucent if w == GB_CART_W && h == GB_CART_H => Some(gbc_board()),
+        _ => None,
+    };
+
+    for (i, d) in depth.iter().enumerate() {
+        let plastic_base = match shell.finish {
             Finish::Solid => shell.colour,
-            Finish::Translucent => lerp(edge, shell.colour, (*depth as u32).min(RIM), RIM),
+            Finish::Translucent => lerp(edge, shell.colour, (*d as u32).min(RIM), RIM),
         };
+
+        let c = if let Some(b) = board {
+            let bi = i * 4;
+            if b[bi + 3] > 0 {
+                let p_rgb = [b[bi], b[bi + 1], b[bi + 2]];
+                let rim_factor = (*d as u32).min(RIM);
+                let opacity_num = 55 + (RIM - rim_factor) * 45 / RIM;
+                lerp(p_rgb, plastic_base, opacity_num, 100)
+            } else {
+                plastic_base
+            }
+        } else {
+            plastic_base
+        };
+
         rgba.extend_from_slice(&[c[0], c[1], c[2], 255]);
     }
-    CartFace {
-        rgba,
-        w: CART_W,
-        h: CART_H,
-    }
+    CartFace { rgba, w, h }
 }
 
 /// Light through the plastic reads as a lighter, less saturated edge. Desaturating as well
@@ -320,23 +456,46 @@ const BEVEL: u32 = 3;
 /// The grip ridge and the thumb notch, cut into the shell. Darkened rather than coloured:
 /// moulded plastic is the same plastic, just turned away from the light.
 fn mould_detail(face: &mut CartFace, shell: &Shell) {
+    mould_detail_custom(face, shell, detail_mask());
+}
+
+fn mould_detail_custom(face: &mut CartFace, shell: &Shell, detail: &DetailMask) {
     let dark = [
-        (shell.colour[0] as f32 * 0.62) as u8,
-        (shell.colour[1] as f32 * 0.62) as u8,
-        (shell.colour[2] as f32 * 0.62) as u8,
+        (shell.colour[0] as f32 * 0.60) as u8,
+        (shell.colour[1] as f32 * 0.60) as u8,
+        (shell.colour[2] as f32 * 0.60) as u8,
     ];
-    for (px, cover) in face.rgba.chunks_exact_mut(4).zip(detail_mask()) {
-        let a = *cover as u32;
-        if a == 0 {
-            continue;
+    let lit = [
+        (shell.colour[0] as f32 * 1.35).min(255.0) as u8,
+        (shell.colour[1] as f32 * 1.35).min(255.0) as u8,
+        (shell.colour[2] as f32 * 1.35).min(255.0) as u8,
+    ];
+    for ((px, s), h) in face
+        .rgba
+        .chunks_exact_mut(4)
+        .zip(&detail.shadow)
+        .zip(&detail.highlight)
+    {
+        let sa = *s as u32;
+        if sa > 0 {
+            for c in 0..3 {
+                px[c] = ((dark[c] as u32 * sa + px[c] as u32 * (255 - sa) + 127) / 255) as u8;
+            }
         }
-        for c in 0..3 {
-            px[c] = ((dark[c] as u32 * a + px[c] as u32 * (255 - a) + 127) / 255) as u8;
+        let ha = *h as u32;
+        if ha > 0 {
+            for c in 0..3 {
+                px[c] = ((lit[c] as u32 * ha + px[c] as u32 * (255 - ha) + 127) / 255) as u8;
+            }
         }
     }
 }
 
 fn recess_label(face: &mut CartFace, shell: &Shell) {
+    recess_label_custom(face, shell, LABEL_X, LABEL_Y, LABEL_W, LABEL_H);
+}
+
+fn recess_label_custom(face: &mut CartFace, shell: &Shell, lx: u32, ly: u32, lw: u32, lh: u32) {
     let shade = |c: [u8; 3], f: f32| -> [u8; 3] {
         [
             (c[0] as f32 * f).clamp(0.0, 255.0) as u8,
@@ -347,21 +506,20 @@ fn recess_label(face: &mut CartFace, shell: &Shell) {
     let dark = shade(shell.colour, 0.55);
     let lit = shade(shell.colour, 1.45);
 
-    let (x0, y0) = (LABEL_X - BEVEL, LABEL_Y - BEVEL);
-    let (x1, y1) = (LABEL_X + LABEL_W + BEVEL, LABEL_Y + LABEL_H + BEVEL);
+    let (x0, y0) = (lx.saturating_sub(BEVEL), ly.saturating_sub(BEVEL));
+    let (x1, y1) = (lx + lw + BEVEL, ly + lh + BEVEL);
     let mut put = |x: u32, y: u32, c: [u8; 3]| {
-        if x >= CART_W || y >= CART_H {
+        if x >= face.w || y >= face.h {
             return;
         }
-        let d = ((y * CART_W + x) * 4) as usize;
+        let d = ((y * face.w + x) * 4) as usize;
         face.rgba[d] = c[0];
         face.rgba[d + 1] = c[1];
         face.rgba[d + 2] = c[2];
     };
     for y in y0..y1 {
         for x in x0..x1 {
-            let inside = (LABEL_X..LABEL_X + LABEL_W).contains(&x)
-                && (LABEL_Y..LABEL_Y + LABEL_H).contains(&y);
+            let inside = (lx..lx + lw).contains(&x) && (ly..ly + lh).contains(&y);
             if inside {
                 continue;
             }
@@ -380,14 +538,18 @@ fn recess_label(face: &mut CartFace, shell: &Shell) {
 /// Source over, so a label with an alpha channel shows the shell through it rather than
 /// punching a hole in the cart.
 fn paste_label(face: &mut CartFace, label: &[u8]) {
-    for y in 0..LABEL_H {
-        for x in 0..LABEL_W {
-            let s = ((y * LABEL_W + x) * 4) as usize;
+    paste_label_custom(face, label, LABEL_X, LABEL_Y, LABEL_W, LABEL_H);
+}
+
+fn paste_label_custom(face: &mut CartFace, label: &[u8], lx: u32, ly: u32, lw: u32, lh: u32) {
+    for y in 0..lh {
+        for x in 0..lw {
+            let s = ((y * lw + x) * 4) as usize;
             let a = label[s + 3] as u32;
             if a == 0 {
                 continue;
             }
-            let d = (((y + LABEL_Y) * CART_W + x + LABEL_X) * 4) as usize;
+            let d = (((y + ly) * face.w + x + lx) * 4) as usize;
             for c in 0..3 {
                 face.rgba[d + c] =
                     ((label[s + c] as u32 * a + face.rgba[d + c] as u32 * (255 - a) + 127) / 255)

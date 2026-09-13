@@ -5,11 +5,10 @@ use crate::text;
 /// "off, then find the button again" — and off, which is the only other thing this hardware
 /// can honestly do.
 ///
-/// There is no Standby. The board suspends well, under 45 mA, but it cannot wake itself: the
-/// RTC alarm arms, reads back, and never fires — measured on a fully awake machine as well as
-/// a suspended one, and unrelated to Super Standby, which was the first two things I blamed.
-/// A standby nothing can end is a slow leak with a nicer name, so the lid and the button run
-/// a timer and then power off properly instead.
+/// There is no Standby in this menu. The lid's five-minute dark wait becomes H700 Super
+/// Standby, and five more minutes of that with the lid still shut cuts the rails. Open the
+/// lid or press POWER inside that window and you're back in the game. Holding POWER is
+/// therefore off, not another path into the same sleep.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum PowerChoice {
     Restart,

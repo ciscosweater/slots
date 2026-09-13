@@ -20,7 +20,7 @@ A bespoke GBA, Game Boy and Game Boy Color frontend for the Anbernic RG SP.
 |-----------|-------------------------------------|
 | `L` / `R` | Browse the carousel                 |
 | `L1` / `R1` | Jump to the previous / next letter |
-| `L2` / `R2` | Previous / next platform category (`ALL`, `GBA`, `GB`, `GBC`) |
+| `L2` / `R2` | Previous / next platform category (`ALL`, `REC`, `GBA`, `GB`, `GBC`) |
 | `SELECT`  | Toggle between Pixelify and the original font |
 | `Y`       | Add or remove the game from favorites |
 | `X`       | Toggle the LCD effect on or off        |
@@ -46,10 +46,12 @@ A bespoke GBA, Game Boy and Game Boy Color frontend for the Anbernic RG SP.
 A `/` means either one. A `+` means both together.
 
 Closing the lid writes a save state and turns off the display. Open it again during the
-three-minute grace period and you're back in the game. After that the RG SP enters H700
-Super Standby; press POWER to wake it. A wake while the lid is still shut suspends again.
-On a platform where suspend is unavailable or fails, slot powers off and resumes from the
-same save state on the next boot.
+five-minute grace period and you're back in the game. After that the RG SP enters H700
+Super Standby. Open the lid or press POWER within five minutes of that and you're back
+in the game. A wake while the lid is still shut suspends again, until those five minutes
+run out; then slot powers off. The next boot resumes from the same save state.
+On a platform where suspend is unavailable or fails, slot powers off as soon as the
+dark-panel grace ends.
 
 External power keeps a dark unit out of deep sleep, and an enumerated USB debugging session
 does the same. Holding POWER still requests a real shutdown, including while charging.
@@ -57,12 +59,12 @@ does the same. Holding POWER still requests a real shutdown, including while cha
 ## SD Card Layout
 
 ```
-BIOS/         gba_bios.bin, optional. Absent means mGBA's own high level BIOS.
+BIOS/         gba_bios.bin, gb_bios.bin, gbc_bios.bin, optional. Present files play that system's boot logo; absent means the core's own high-level BIOS.
 Games/        .gba, .gb and .gbc roms.
 Labels/       <rom stem>.png, drawn on the cartridge face. Absent means a text only label.
 Saves/        .sav and .srm battery saves.
 States/       <core>/<rom stem>/, save state rings ten deep per cart.
-System/       the binary, both cores, theme.txt, and selected_core.ini.
+System/       the binary, three cores, theme.txt, and selected_core.ini.
 Wallpapers/   .png, one picked at random each boot and drawn behind the shelf.
 ```
 
@@ -83,9 +85,9 @@ edge    #4d4d57
 ```
 
 `System/selected_core.ini` is entirely optional and names which core a cart's save states
-belong to, one `<rom stem> = <core>` per line. Every cart defaults to mGBA, and states are
+belong to, one `<rom stem> = <core>` per line. Every GBA cart defaults to mGBA, and states are
 kept apart per core under `States/<core>/<rom stem>/` so switching cores later never mixes
-one core's save with another's. Both cores ship in `System/`, so naming `gpsp` actually
+one core's save with another's. All three cores ship in `System/`, so naming `gpsp` actually
 switches emulators for that cart — gpSP exists for the serial link hardware mGBA's libretro
 build does not carry:
 
@@ -102,7 +104,7 @@ GB and GBC games always use Gambatte. GB is presented with PixelShift Pack 1's
 
 1. Flash the latest [AGS-102](https://github.com/BrandonKowalski/AGS-102) `.img` to the card for Slot 1 (TF1).
 2. Unzip the latest slot release and copy its contents to a second card.
-3. Add games, saves, labels, wallpapers and an optional GBA BIOS to their folders.
+3. Add games, saves, labels, wallpapers and optional BIOS files to their folders.
 4. Put the content card in Slot 2 (TF2) and boot.
 
 AGS-102 continues to launch `System/slot` directly; the additional BaseOS launcher does not
@@ -114,7 +116,7 @@ change this path.
 2. Boot it once so BaseOS expands its data partition, then power off.
 3. Connect the card to your computer and copy the contents of the latest slot release onto
    the `BASEOS` data volume. Keep the hidden `.system` directory: BaseOS launches slot through it.
-4. Add games, saves, labels, wallpapers and an optional GBA BIOS to their folders.
+4. Add games, saves, labels, wallpapers and optional BIOS files to their folders.
 5. Put the card back in Slot 1 and boot with Slot 2 empty.
 
 BaseOS also supports two cards: when TF2 is present it becomes the frontend volume, so the
@@ -133,21 +135,23 @@ I doubt I am gonna work on this more and add to it but in case I do here is how 
 
 ## Credits
 
-Emulation is [mGBA](https://mgba.io) by endrift, and [gpSP](https://github.com/libretro/gpsp)
-by Gilead "Exophase" Kutnick — a cart's `System/selected_core.ini` picks between them, gpSP
-for the serial link hardware mGBA's libretro build does not carry — both through
-[libretro](https://www.libretro.com). The release ships both cores' compiled libretro
-binaries unmodified: mGBA's under MPL-2.0, gpSP's under GPL-2.0. Their license texts, and
-gpSP's own corresponding source (fetched at build time and shipped alongside the binary, per
-GPL-2.0 section 3(a)), are in [`licenses/`](licenses/), which `dist:device` copies into the
-shipped tree alongside the cores they cover.
+Emulation is [mGBA](https://mgba.io) by endrift, [gpSP](https://github.com/libretro/gpsp)
+by Gilead "Exophase" Kutnick, and [Gambatte](https://github.com/libretro/gambatte-libretro)
+— a GBA cart's `System/selected_core.ini` picks between mGBA and gpSP, gpSP for the serial
+link hardware mGBA's libretro build does not carry; GB and GBC always use Gambatte — all
+through [libretro](https://www.libretro.com). The release ships all three cores' compiled
+libretro binaries: mGBA under MPL-2.0 (patched; see [`licenses/`](licenses/)), gpSP and
+Gambatte under GPL-2.0. Their license texts, and the GPL cores' corresponding source
+(fetched or pinned at build time and shipped alongside the binary, per GPL-2.0 section
+3(a)), are in [`licenses/`](licenses/), which `dist:device` copies into the shipped tree
+alongside the cores they cover.
 
 The device boots either [AGS-102](https://github.com/BrandonKowalski/AGS-102) by Brandon T.
 Kowalski or [BaseOS](https://github.com/pvaibhav/BaseOS) by @pvaibhav.
 
 Type is [Pixelify Sans](https://github.com/googlefonts/pixelify) (the default) and the original
 label font, under the SIL Open Font License, and [Nerd Fonts](https://www.nerdfonts.com)
-symbols by Ryan L. McIntyre, under MIT. L2 on the carousel toggles between them.
+symbols by Ryan L. McIntyre, under MIT. SELECT on the carousel toggles between them.
 
 The panel mask is derived from LCD3x, a public-domain shader by Gigaherz in the libretro
 shader collection. At exactly 3x it reduces to a 3 by 3 table, which is what ships here
@@ -161,9 +165,10 @@ The Rust frontend was put together by Claude Opus. I reviewed everything that wa
 produced. This documentation is 100% free-range, meatbag prose.
 
 The project is extremely low stakes. I wanted a bespoke frontend for my RG SP and thought
-that something this focused on GBA would be kind of neat.
+that something this focused on GBA, GB and GBC would be kind of neat.
 
-This is just a glorified wrapper around mGBA, which is the real star of the show.
+This is just a glorified wrapper around mGBA, gpSP and Gambatte, which are the real stars
+of the show.
 
 Provided without support. I will selectively address filed issues and PRs.
 

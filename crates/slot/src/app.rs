@@ -98,12 +98,14 @@ const PLAY_HOLD_MS: Millis = 500;
 /// How far apart the menu's rows sit, and what marks the one in hand. The pitch clears the
 /// 40 px face with a little air; the bar is drawn to the face's own width, padding included,
 /// so it wraps the words rather than the panel.
-/// How long the shutdown screen is on the panel before the machine is allowed to stop. Only
-/// needs to outlast a couple of frames — it exists so the ordinary loop presents the screen,
-/// rather than the binary rendering one out of band on a GPU that is about to go away.
-const SHUTDOWN_SHOW_MS: Millis = 250;
-
 const POWER_MENU_PITCH: f32 = 44.0;
+/// How long Restarting stays on the panel before reboot. Only needs to outlast a couple of
+/// frames — it exists so the ordinary loop presents the screen, rather than the binary
+/// rendering one out of band on a GPU that is about to go away.
+const SHUTDOWN_SHOW_MS: Millis = 250;
+/// How long Powering Down stays on the panel before the PMIC cuts the rails. Long enough to
+/// read, short enough that it does not feel like a hang.
+const POWEROFF_SHOW_MS: Millis = 3000;
 /// How much shorter the bar is than the row it marks, top and bottom. Enough that the rows
 /// stay separate things rather than one continuous block when the selection moves.
 const POWER_MENU_BAR_INSET: f32 = 4.0;
@@ -431,7 +433,7 @@ pub struct App {
     empty_recents_caption: Printed,
     /// Last input on the shelf, for the idle hint. Reset whenever the row is used.
     shelf_idle_at: Millis,
-    /// `A` Resume and `START` Core, uploaded once.
+    /// `A` Open and `START` Core, uploaded once.
     shelf_idle_faces: Vec<(TexId, u32)>,
     shelf_category_faces: Vec<Printed>,
     about_page: StickerPage,
@@ -883,33 +885,41 @@ impl App {
         } else {
             letter
         };
-        let group_y = if self
+        let (group_y, title_y) = if self
             .shelf
             .carts
             .get(self.shelf.index)
             .is_some_and(|cart| cart.platform != slot_store::Platform::Gba)
         {
-            44.0
+            (58.0, 390.0)
         } else {
-            132.0
+            (132.0, 316.0)
         };
         draw_printed((OUT_W as f32 - group.w as f32) / 2.0, group_y, group, out);
-        draw_printed((OUT_W as f32 - title.w as f32) / 2.0, 316.0, title, out);
+        draw_printed((OUT_W as f32 - title.w as f32) / 2.0, title_y, title, out);
     }
 
     fn draw_idle_hints(&self, out: &mut Vec<Draw>) {
         if self.core_picker.is_some() || self.shelf.carts.is_empty() {
             return;
         }
+        if self
+            .shelf
+            .carts
+            .get(self.shelf.index)
+            .is_some_and(|cart| cart.platform != slot_store::Platform::Gba)
+        {
+            return;
+        }
         if self.now().saturating_sub(self.shelf_idle_at) < IDLE_HINT_MS {
             return;
         }
-        if let [resume, core] = self.shelf_idle_faces.as_slice() {
+        if let [open, core] = self.shelf_idle_faces.as_slice() {
             let seen = |w: u32| w.saturating_sub(HINT_EDGE) as f32;
             let gap = 40.0;
-            let total = seen(resume.1) + gap + seen(core.1);
+            let total = seen(open.1) + gap + seen(core.1);
             let mut x = (OUT_W as f32 - total) / 2.0;
-            for (tex, w) in [resume, core] {
+            for (tex, w) in [open, core] {
                 out.push(Draw::Tex {
                     x: x.round(),
                     y: CORE_LEGEND_Y,
@@ -2628,10 +2638,12 @@ impl App {
         }
     }
 
-    /// Escalate the dark-panel grace period into H700 suspend-to-RAM. External power keeps
+    /// Escalate the dark-panel grace period into H700 Super Standby. External power keeps
     /// the unit in screen-off instead: charging and an enumerated debug cable are deliberate
-    /// uses, not abandonment. A platform without working suspend retains the proven power-off
-    /// fallback, and a failed suspend never leaves the board burning power behind a black LCD.
+    /// uses, not abandonment. A successful suspend that returns (lid opened, or POWER with
+    /// the lid open) wakes back into the game. Five minutes in Super Standby with the lid
+    /// still shut, a failed suspend, or a platform without one, cuts the rails; resume.state
+    /// is already on the card from `doze`.
     pub fn on_doze_timeout(&mut self) {
         if !matches!(self.phase, Phase::Doze { .. }) {
             return;
@@ -2959,7 +2971,7 @@ impl App {
         // Repeating a flush is harmless and keeps PowerHold correct when exercised directly.
         self.flush_resume();
         self.powering_off = true;
-        self.act_at = self.now() + SHUTDOWN_SHOW_MS;
+        self.act_at = self.now() + POWEROFF_SHOW_MS;
         self.set_led(LedState::Off);
     }
 

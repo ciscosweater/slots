@@ -45,8 +45,9 @@ pub fn migrate(root: &Path) {
     }
 }
 
-/// Reported to the core as the libretro system directory. `gba_bios.bin` present means the
-/// real BIOS, absent means mGBA's HLE BIOS. Neither is an error.
+/// Reported to the core as the libretro system directory. `gba_bios.bin`, `gb_bios.bin`
+/// and `gbc_bios.bin` present means that system's real BIOS and its boot logo; absent
+/// means the core's own high-level BIOS. Neither is an error.
 pub fn bios_dir(root: &Path) -> PathBuf {
     root.join("BIOS")
 }

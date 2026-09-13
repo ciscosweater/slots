@@ -254,6 +254,10 @@ pub struct StubPlatform {
     /// How many times `set_led` was called. `led` alone cannot catch a write that repeats the
     /// same state every tick forever: the value does not move, only the count would.
     led_writes: Arc<AtomicUsize>,
+    /// `true` stands in for a board that woke from Super Standby with the lid open. The
+    /// default is `false`: no suspend, so a doze timeout cuts the rails, which is the host
+    /// and the fallback the device uses when `echo mem` fails.
+    suspend: bool,
 }
 
 /// `LedState` has no `Copy`-friendly integer form of its own — it is deliberately opaque to
@@ -280,6 +284,13 @@ pub const CLOCK_IS_SET: i64 = 1_786_568_000;
 pub fn panel(root: &Path, timeout: Duration) -> (Power, Arc<AtomicU8>) {
     let (power, backlight, _, _, _) = rig_with_charge(root, timeout, CLOCK_IS_SET, 0, 50);
     (power, backlight)
+}
+
+/// Same as `panel`, but Super Standby returns: the lid opened (or POWER with the lid open).
+/// `on_doze_timeout` must wake rather than cut the rails.
+pub fn panel_that_wakes(root: &Path, timeout: Duration) -> Power {
+    let (power, _, _, _, _, _, _) = rig_with_suspend(root, timeout, CLOCK_IS_SET, 0, 50, true);
+    power
 }
 
 /// `panel`, but with the charge state and percent chosen instead of a healthy default — what
@@ -337,6 +348,26 @@ fn rig_with_led(
     Arc<AtomicU8>,
     Arc<AtomicUsize>,
 ) {
+    rig_with_suspend(root, timeout, secs, charge, percent, false)
+}
+
+#[allow(clippy::type_complexity)]
+fn rig_with_suspend(
+    root: &Path,
+    timeout: Duration,
+    secs: i64,
+    charge: u8,
+    percent: u8,
+    suspend: bool,
+) -> (
+    Power,
+    Arc<AtomicU8>,
+    Clock,
+    Arc<AtomicU8>,
+    Arc<AtomicU8>,
+    Arc<AtomicU8>,
+    Arc<AtomicUsize>,
+) {
     let backlight = Arc::new(AtomicU8::new(0));
     let clock = Clock::at(secs);
     let charge = Arc::new(AtomicU8::new(charge));
@@ -353,6 +384,7 @@ fn rig_with_led(
         percent: percent.clone(),
         led: led.clone(),
         led_writes: led_writes.clone(),
+        suspend,
     };
     (
         Power::new(Box::new(platform), timeout),
@@ -442,6 +474,10 @@ impl Platform for StubPlatform {
     /// No motor. `tests/rumble.rs` is the only test that reads one back and it runs over
     /// `SimPlatform`, which records it.
     fn set_rumble(&mut self, _strength: u16) {}
+
+    fn suspend(&mut self) -> bool {
+        self.suspend
+    }
 }
 
 /// Says the clock has already been confirmed. A root with no `clock_set` stops on the clock

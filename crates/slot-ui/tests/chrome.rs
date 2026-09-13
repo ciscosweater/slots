@@ -234,6 +234,45 @@ fn an_unseated_cart_stands_where_the_shelf_left_it() {
     );
 }
 
+#[test]
+fn gb_cart_stands_where_the_shelf_left_it_and_keeps_its_dimensions() {
+    let gb_cart = Cart {
+        stem: "Red".into(),
+        rom: "Games/Red.gb".into(),
+        label: None,
+        code: String::new(),
+        title: "POKEMON RED".into(),
+        platform: slot_store::Platform::Gb,
+    };
+    let mut shelf = Vec::new();
+    Shelf::new(vec![gb_cart.clone()]).draw_row(None, 0.0, 0.0, 1.0, &mut shelf);
+    let on_shelf = quad(&shelf[0]);
+
+    let mut out = Vec::new();
+    SlotChrome {
+        cart: &gb_cart,
+        face: None,
+        seat: 0.0,
+        alert: None,
+        dim: 0.0,
+        screen: 0.0,
+        game: false,
+    }
+    .draw(&mut out);
+    let in_slot = quad(
+        out.iter()
+            .find(|d| (quad(d).w - slot_ui::GB_CART_W as f32).abs() < 0.01)
+            .unwrap(),
+    );
+
+    assert_eq!(in_slot.w, slot_ui::GB_CART_W as f32);
+    assert_eq!(in_slot.h, slot_ui::GB_CART_H as f32);
+    assert!(
+        (on_shelf.x - in_slot.x).abs() < 0.01 && (on_shelf.y - in_slot.y).abs() < 0.01,
+        "GB cart jumps from {on_shelf:?} to {in_slot:?} on insert"
+    );
+}
+
 /// In means *in*. The cart comes to rest filling the opening, so the base of the slot ends up
 /// covered by the cart rather than going dark again. It used to travel until it had gone
 /// entirely, which reads as a cart falling past a window rather than seating in a slot.

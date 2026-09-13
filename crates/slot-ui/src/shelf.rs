@@ -439,7 +439,8 @@ impl Shelf {
                 continue;
             }
             let x = x + shake;
-            let y = FOOT_Y - h;
+            let foot_y = (OUT_H + base_h) as f32 / 2.0;
+            let y = foot_y - h;
             // Black in the cart's own shape, under the dimmed face. Without it the dimming is
             // transparency, and over a wallpaper the row reads as ghosts of carts.
             if alpha < 1.0 {
