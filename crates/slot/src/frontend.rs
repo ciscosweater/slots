@@ -138,6 +138,10 @@ impl Frontend {
         }
     }
 
+    pub fn presented(&self) {
+        self.session.presented();
+    }
+
     /// Everything that never changes: the carts, the HUD glyphs and the key caps. All of it
     /// needs a live context, so it happens after the compositor and not at boot.
     pub fn upload_faces(&mut self, compositor: &mut Compositor) {

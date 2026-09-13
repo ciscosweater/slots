@@ -3,7 +3,9 @@ use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, AtomicU8, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+#[cfg(not(feature = "device"))]
+use std::time::Instant;
 
 use slot_retro::{
     ButtonMask, Link, LinkChannel, RetroCore, Rumble, GBA_H, GBA_W, NETPACKET_RELIABLE,
@@ -134,6 +136,9 @@ struct Shared {
     /// The transport's far end went away during a session. Cleared when a session begins or
     /// ends. See `EmuHandle::link_lost`.
     link_lost: AtomicBool,
+    /// Completed display swaps. A device core advances from this clock, not from a second
+    /// sleep-based clock that can drift in and out of phase with the LCD.
+    presents: AtomicU64,
 }
 
 impl EmuHandle {
@@ -172,6 +177,7 @@ impl EmuHandle {
             resume_refused: AtomicBool::new(false),
             sav_refused: AtomicBool::new(false),
             link_lost: AtomicBool::new(false),
+            presents: AtomicU64::new(0),
         });
         let (tx, rx) = channel();
         let worker = Worker {
@@ -236,6 +242,10 @@ impl EmuHandle {
 
     pub fn set_input(&self, mask: ButtonMask) {
         self.shared.input.store(mask.0, Ordering::Relaxed);
+    }
+
+    pub fn presented(&self) {
+        self.shared.presents.fetch_add(1, Ordering::Release);
     }
 
     /// What the worker will read on its next pass. The far side of the one boundary a
@@ -394,6 +404,54 @@ struct Worker {
 }
 
 impl Worker {
+    fn handle_cmd(
+        &self,
+        cmd: Cmd,
+        core: &mut dyn RetroCore,
+        transport: &mut Option<Box<dyn LinkChannel>>,
+        link: &Link,
+    ) {
+        match cmd {
+            Cmd::Save(reply) => match core.serialize() {
+                Ok(state) => {
+                    let _ = reply.send(Some(state));
+                }
+                Err(e) => {
+                    eprintln!("slot: {e}");
+                    let _ = reply.send(None);
+                }
+            },
+            Cmd::Load(state, reply) => {
+                let ok = core.unserialize(&state).map(|_| true).unwrap_or_else(|e| {
+                    eprintln!("slot: {e}");
+                    false
+                });
+                let _ = reply.send(ok);
+            }
+            Cmd::Sav(reply) => {
+                let _ = reply.send(core.save_ram());
+            }
+            Cmd::Thumb(reply) => {
+                let _ = reply.send(crate::thumb::png(core.video_xrgb8888()));
+            }
+            Cmd::BeginLink(client_id, t) => {
+                self.shared.link_lost.store(false, Ordering::Relaxed);
+                core.start_link(client_id);
+                link.set_active(true);
+                *transport = Some(t);
+            }
+            Cmd::EndLink => {
+                self.shared.link_lost.store(false, Ordering::Relaxed);
+                core.stop_link();
+                *transport = None;
+                // Clear before publishing inactive: an Acquire reader that sees false must
+                // also see queues that cannot leak into the next session.
+                link.clear();
+                link.set_active(false);
+            }
+        }
+    }
+
     fn run(
         self,
         mut core: Box<dyn RetroCore>,
@@ -461,76 +519,36 @@ impl Worker {
         let mut muted_at = Speed::Normal;
         let rewind = RewindThread::spawn(REWIND_BYTES);
         let mut since_snapshot = 0;
+        #[cfg(not(feature = "device"))]
         let mut deadline = Instant::now();
+        #[cfg(feature = "device")]
+        let mut seen_present = self.shared.presents.load(Ordering::Acquire);
         let mut paced = 0u64;
         // `None` until a session begins. Held here rather than on `Shared`: the transport is
         // not `Sync`-shaped state a render-thread read would make sense of, only something
         // this loop drains and feeds once a frame.
         let mut transport: Option<Box<dyn LinkChannel>> = None;
         while !self.shared.stop.load(Ordering::Relaxed) {
-            for cmd in self.cmds.try_iter() {
-                match cmd {
-                    Cmd::Save(reply) => match core.serialize() {
-                        Ok(state) => {
-                            let _ = reply.send(Some(state));
-                        }
-                        Err(e) => {
-                            eprintln!("slot: {e}");
-                            let _ = reply.send(None);
-                        }
-                    },
-                    Cmd::Load(state, reply) => {
-                        let ok = match core.unserialize(&state) {
-                            Ok(()) => true,
-                            Err(e) => {
-                                eprintln!("slot: {e}");
-                                false
-                            }
-                        };
-                        let _ = reply.send(ok);
-                    }
-                    Cmd::Sav(reply) => {
-                        let _ = reply.send(core.save_ram());
-                    }
-                    Cmd::Thumb(reply) => {
-                        let _ = reply.send(crate::thumb::png(core.video_xrgb8888()));
-                    }
-                    Cmd::BeginLink(client_id, t) => {
-                        self.shared.link_lost.store(false, Ordering::Relaxed);
-                        core.start_link(client_id);
-                        // Set here as well as by `LibretroCore::start_link` itself: this is
-                        // the thing that actually knows a transport is wired and about to be
-                        // pumped, whatever the concrete core does or does not do with
-                        // `client_id` — the mock, in particular, has no session of its own to
-                        // start and would otherwise leave `is_active` false with real traffic
-                        // already flowing through it.
-                        link.set_active(true);
-                        transport = Some(t);
-                    }
-                    Cmd::EndLink => {
-                        self.shared.link_lost.store(false, Ordering::Relaxed);
-                        // `Cmd::BeginLink`'s counterpart: tells the core the session is over,
-                        // if it registered a `stop` to hear it through (`RetroCore::stop_link`
-                        // — libretro documents `stop` as OPTIONAL, unlike `start`, so this is
-                        // a no-op for a core that never offered one). Without this the core
-                        // keeps believing a session is live and keeps producing packets
-                        // nobody is left to carry.
-                        core.stop_link();
-                        // The drop is what actually closes the wire (see `TcpLink`'s `Drop`);
-                        // this is just letting go of it.
-                        transport = None;
-                        // Cleared *before* the flag flips, not after: `Link::clear` empties
-                        // both queues (a packet that arrived a moment before this command
-                        // would otherwise sit here until the *next* session begins and gets
-                        // fed to a core that never sent or asked for it), and `set_active`'s
-                        // `Release` store only carries a happens-before guarantee for what
-                        // ran on this thread *before* it. Clearing first is what lets a
-                        // reader who observes `is_active() == false` (`Acquire`) also see the
-                        // queues already empty, with no sleep needed to bridge the gap.
-                        link.clear();
-                        link.set_active(false);
-                    }
+            #[cfg(feature = "device")]
+            loop {
+                // Commands remain responsive while no frame is due. In particular, a save
+                // requested by the render thread must not wait for a future present that the
+                // blocked render thread itself would have to issue.
+                while let Ok(cmd) = self.cmds.try_recv() {
+                    self.handle_cmd(cmd, &mut *core, &mut transport, &link);
                 }
+                let presented = self.shared.presents.load(Ordering::Acquire);
+                if presented != seen_present {
+                    seen_present = presented;
+                    break;
+                }
+                if self.shared.stop.load(Ordering::Relaxed) {
+                    break;
+                }
+                std::thread::sleep(Duration::from_micros(200));
+            }
+            for cmd in self.cmds.try_iter() {
+                self.handle_cmd(cmd, &mut *core, &mut transport, &link);
             }
 
             // Pumped every present regardless of speed or phase, not only while the core is
@@ -665,16 +683,18 @@ impl Worker {
                 }
             }
 
-            // The write above holds this thread whenever the device has no room, which is
-            // the backstop. This is the pacing the rest of the time, and the only pacing at
-            // all with no audio to pace against: paused, fast forwarding, rewinding.
-            deadline += PRESENT;
-            let now = Instant::now();
-            match deadline.checked_duration_since(now) {
-                Some(wait) => std::thread::sleep(wait),
-                // Falling behind by more than a frame means a stall, not a slow frame.
-                // Catching up would sprint through frames nobody sees.
-                None => deadline = now,
+            // Desktop has no render-thread feedback, so it retains an absolute nominal
+            // deadline. Device builds are paced at the top of the loop by completed swaps.
+            #[cfg(not(feature = "device"))]
+            {
+                deadline += PRESENT;
+                let now = Instant::now();
+                match deadline.checked_duration_since(now) {
+                    Some(wait) => std::thread::sleep(wait),
+                    // Falling behind by more than a frame means a stall, not a slow frame.
+                    // Catching up would sprint through frames nobody sees.
+                    None => deadline = now,
+                }
             }
         }
         // The ring belongs to the session, so a cart that left while fast forwarding would

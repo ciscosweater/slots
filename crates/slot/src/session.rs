@@ -113,6 +113,13 @@ impl Session {
         self.emu.as_ref().and_then(|e| e.latest_frame())
     }
 
+    /// Releases exactly one device core frame after the LCD accepted the preceding one.
+    pub fn presented(&self) {
+        if let Some(emu) = &self.emu {
+            emu.presented();
+        }
+    }
+
     /// A cart in the slot is a core running, so this is also "is there a game layer".
     pub fn has_core(&self) -> bool {
         self.emu.is_some()

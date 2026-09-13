@@ -80,6 +80,7 @@ pub struct FbdevSurface {
     surface: Ptr,
     context: Ptr,
     size: (u32, u32),
+    vsync: bool,
     _window: Box<FbdevWindow>,
 }
 
@@ -244,7 +245,8 @@ impl FbdevSurface {
             }
             // Present is locked to the panel; the GBA-to-panel drift is absorbed by audio
             // rate control, exactly as it is on the host.
-            if (egl.swap_interval)(display, 1) == 0 {
+            let vsync = (egl.swap_interval)(display, 1) != 0;
+            if !vsync {
                 eprintln!("slot: eglSwapInterval(1) refused; using the panel deadline fallback");
             }
             let size = query_size(&egl, display, surface).unwrap_or(hint);
@@ -255,9 +257,14 @@ impl FbdevSurface {
                 surface,
                 context,
                 size,
+                vsync,
                 _window: window,
             })
         }
+    }
+
+    pub fn vsync_active(&self) -> bool {
+        self.vsync
     }
 }
 

@@ -36,6 +36,7 @@ pub fn run() {
     frontend.upload_faces(&mut compositor);
     let mut input = DeviceInput::open(&root);
     eprintln!("slot: panel clock {PANEL_HZ:.3} Hz");
+    let vsync = surface.vsync_active();
     let mut deadline = Instant::now();
     loop {
         frontend.render(&mut compositor, surface.window_size());
@@ -44,6 +45,9 @@ pub fn run() {
             return;
         }
         frontend.advance(&mut input);
+        // NextUI's core and swap live on one thread. This acknowledgement gives our worker
+        // the same clock boundary without giving up the isolation that keeps audio stable.
+        frontend.presented();
         if frontend.restarting() {
             frontend.restart();
         }
@@ -54,12 +58,14 @@ pub fn run() {
         // eglSwapBuffers is the primary clock.  The absolute deadline is the fallback for
         // Mali drivers that accept swap interval 1 but do not actually block on it; unlike a
         // per-frame elapsed sleep it does not accumulate scheduler error.
-        deadline += PANEL_FRAME;
-        let now = Instant::now();
-        if let Some(left) = deadline.checked_duration_since(now) {
-            std::thread::sleep(left);
-        } else if now.duration_since(deadline) > PANEL_FRAME {
-            deadline = now;
+        if !vsync {
+            deadline += PANEL_FRAME;
+            let now = Instant::now();
+            if let Some(left) = deadline.checked_duration_since(now) {
+                std::thread::sleep(left);
+            } else if now.duration_since(deadline) > PANEL_FRAME {
+                deadline = now;
+            }
         }
     }
 }
