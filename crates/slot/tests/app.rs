@@ -755,6 +755,48 @@ fn x_toggles_the_persistent_lcd_effect() {
 }
 
 #[test]
+fn gb_and_gbc_lock_the_lcd_effect_off_without_changing_the_gba_preference() {
+    for platform in [slot_store::Platform::Gb, slot_store::Platform::Gbc] {
+        let mut app = App::new(vec![
+            Cart {
+                stem: "Tetris".into(),
+                rom: if platform == slot_store::Platform::Gb {
+                    "Games/Tetris.gb".into()
+                } else {
+                    "Games/Tetris.gbc".into()
+                },
+                label: None,
+                code: String::new(),
+                title: "TETRIS".into(),
+                platform,
+            },
+            Cart {
+                stem: "Zzz".into(),
+                rom: "Games/Zzz.gba".into(),
+                label: None,
+                code: String::new(),
+                title: "ZZZ".into(),
+                platform: slot_store::Platform::Gba,
+            },
+        ]);
+
+        assert!(app.lcd_enabled(), "the shelf keeps the saved GBA setting");
+        app.apply(Action::Insert);
+        assert!(!app.lcd_enabled(), "{platform:?} enabled the GBA LCD mask");
+        app.apply(Action::GbaDown(Btn::X));
+        assert!(!app.lcd_enabled(), "{platform:?} let X enable the LCD mask");
+        app.apply(Action::Eject);
+        for _ in 0..120 {
+            app.update(1.0 / 60.0);
+        }
+        assert!(
+            app.lcd_enabled(),
+            "{platform:?} changed the persisted GBA preference"
+        );
+    }
+}
+
+#[test]
 fn select_toggles_the_persistent_font() {
     let d = common::tmp_root_with_carts(&["Advance", "Boktai"]);
     write_slot_state(

@@ -1178,6 +1178,15 @@ impl App {
     }
 
     fn toggle_lcd(&mut self) {
+        // Gambatte already supplies the handheld-specific image treatment for GB/GBC.
+        // Keep the compositor's GBA LCD mask out of that path and leave the persisted GBA
+        // preference untouched if X is pressed while either platform is seated.
+        if matches!(
+            self.game_platform(),
+            Some(slot_store::Platform::Gb | slot_store::Platform::Gbc)
+        ) {
+            return;
+        }
         self.lcd = !self.lcd;
         if let Some(root) = &self.root {
             if let Err(e) = write_lcd(root, self.lcd) {
@@ -1194,6 +1203,10 @@ impl App {
 
     pub fn lcd_enabled(&self) -> bool {
         self.lcd
+            && !matches!(
+                self.game_platform(),
+                Some(slot_store::Platform::Gb | slot_store::Platform::Gbc)
+            )
     }
 
     fn toggle_font(&mut self) {
