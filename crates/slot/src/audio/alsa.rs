@@ -208,6 +208,10 @@ impl AudioSink for AlsaSink {
         }
     }
 
+    fn close(&mut self) {
+        AlsaSink::close(self);
+    }
+
     fn ring(&self) -> Arc<Ring> {
         self.ring.clone()
     }

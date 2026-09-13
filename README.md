@@ -44,12 +44,14 @@ A bespoke, GBA-only frontend for the Anbernic RG SP.
 
 A `/` means either one. A `+` means both together.
 
-Closing the lid writes a save state and turns off the display. Open it again and you're
-back in the game. Leave it shut for three minutes and slot powers off, resuming from that
-save state on the next boot.
+Closing the lid writes a save state and turns off the display. Open it again during the
+three-minute grace period and you're back in the game. After that the RG SP enters H700
+Super Standby; press POWER to wake it. A wake while the lid is still shut suspends again.
+On a platform where suspend is unavailable or fails, slot powers off and resumes from the
+same save state on the next boot.
 
-The lid is not a sleep. The panel goes dark but the board keeps running, which is why the
-three minutes exist rather than an indefinite standby.
+External power keeps a dark unit out of deep sleep, and an enumerated USB debugging session
+does the same. Holding POWER still requests a real shutdown, including while charging.
 
 ## SD Card Layout
 

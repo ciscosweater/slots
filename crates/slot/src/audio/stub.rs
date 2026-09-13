@@ -48,6 +48,8 @@ impl AudioSink for StubSink {
         Ok(())
     }
 
+    fn close(&mut self) {}
+
     fn ring(&self) -> Arc<Ring> {
         self.ring.clone()
     }

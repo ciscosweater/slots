@@ -42,6 +42,18 @@ impl Power {
         self.platform.charge()
     }
 
+    pub fn externally_powered(&self) -> bool {
+        self.platform.charger_present()
+    }
+
+    pub fn usb_host(&self) -> bool {
+        self.platform.usb_host()
+    }
+
+    pub fn suspend(&mut self) -> bool {
+        self.platform.suspend()
+    }
+
     pub fn set_led(&mut self, state: LedState) {
         self.platform.set_led(state)
     }

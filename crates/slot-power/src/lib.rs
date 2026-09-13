@@ -53,6 +53,14 @@ pub trait Platform: Send {
     /// The charge state alone: the cheap half of `battery`, and the half that changes the
     /// instant a cable moves. `Unknown` where there is no gauge to ask.
     fn charge(&self) -> Charge;
+    /// Physical input power, independent of whether a full battery is accepting charge.
+    fn charger_present(&self) -> bool {
+        false
+    }
+    /// A computer has enumerated the USB gadget. A wall charger is deliberately not this.
+    fn usb_host(&self) -> bool {
+        false
+    }
     /// Best effort. A device with no LED node is a device that does not have one, which is
     /// not a failure.
     fn set_led(&mut self, state: LedState);
@@ -71,6 +79,12 @@ pub trait Platform: Send {
     /// 0 is off, `u16::MAX` is full. Strong and weak are one motor here; the caller has
     /// already taken the louder.
     fn set_rumble(&mut self, strength: u16);
+
+    /// Suspend-to-RAM and return after wake. `false` means unsupported or failed, so the
+    /// caller can retain the existing safe power-off fallback.
+    fn suspend(&mut self) -> bool {
+        false
+    }
 
     /// Put the debug link back after the cable was pulled, and say whether there was anything
     /// to put back. `false` everywhere there is no USB gadget to rebind, which is every

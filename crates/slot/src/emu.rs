@@ -15,10 +15,11 @@ use crate::frames::{FrameRef, Frames};
 use crate::persist::Snapshot;
 use crate::resample::Resampler;
 use crate::rewind::{RewindThread, REWIND_BYTES};
+use crate::timing::PANEL_FRAME;
 
-/// Present is locked to the 60 Hz panel and the core is stepped once per present, so the
-/// 0.456% the GBA runs slow lands entirely on audio rate control.
-const PRESENT: Duration = Duration::from_nanos(16_666_667);
+/// Present is locked to the RG SP's nominal 59.155 Hz panel and the core is stepped once per
+/// present. The GBA-to-panel difference lands entirely on audio rate control.
+const PRESENT: Duration = PANEL_FRAME;
 
 /// Core frames per present while fast forwarding. There is no ramp and no adaptive cap: the
 /// core is stepped this many times and the deadline below absorbs whatever that costs.
@@ -442,7 +443,7 @@ impl Worker {
             0 => av.sample_rate,
             hz => hz as f64,
         };
-        // The core is stepped once per present, so a 60 Hz frame carries a 59.7275 Hz frame's
+        // The core is stepped once per panel present, so each scan carries a 59.7275 Hz frame's
         // worth of audio. That surplus is the resampler's to absorb in its base rate. Left to
         // DRC's trim, which is proportional and only reaches full authority at twice target,
         // it parks occupancy at 91% of the ring: measured, and one late frame from the top.

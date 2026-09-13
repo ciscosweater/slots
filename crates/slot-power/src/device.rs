@@ -1,5 +1,5 @@
 use std::ffi::{c_int, c_ulong, c_void};
-use std::fs;
+use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
@@ -19,6 +19,8 @@ const DEV_INPUT: &str = "/dev/input";
 
 const EV_FF: u16 = 0x15;
 const FF_RUMBLE: u16 = 0x50;
+const I2C_SLAVE: c_ulong = 0x0703;
+const AXP_ADDR: c_int = 0x34;
 /// `_IOW('E', 0x80, struct ff_effect)`. The struct is 48 bytes once the union's eight byte
 /// alignment is counted, which is where the size in the middle of this comes from.
 const EVIOCSFF: c_ulong = 0x4030_4580;
@@ -67,6 +69,7 @@ pub struct DevicePlatform {
     backlight: Option<Backlight>,
     max_brightness: u32,
     battery: Option<PathBuf>,
+    charger: Option<PathBuf>,
     /// Only ever reported. Whether the board keeps time with the power off decides what
     /// setting the clock can mean, and that is a bring-up question rather than a running one.
     rtc: Option<PathBuf>,
@@ -100,6 +103,11 @@ impl DevicePlatform {
             }
         };
         let battery = first_dir(&sysfs.join("class/power_supply"), is_battery);
+        let charger = first_dir(&sysfs.join("class/power_supply"), |d| {
+            fs::read_to_string(d.join("type"))
+                .is_ok_and(|t| matches!(t.trim(), "USB" | "USB_C" | "Mains"))
+                && d.join("online").is_file()
+        });
         let rtc = first_dir(&sysfs.join("class/rtc"), |_| true);
         let motor = Motor::open(sysfs);
         let led = first_dir(&sysfs.join("class/leds"), |d| {
@@ -119,6 +127,7 @@ impl DevicePlatform {
             backlight,
             max_brightness,
             battery,
+            charger,
             rtc,
             motor,
             led,
@@ -396,6 +405,63 @@ fn charge_at(dir: &Path) -> Charge {
     }
 }
 
+fn active_charge(battery: &Path, charger: Option<&Path>) -> Charge {
+    let Some(charger) = charger else {
+        return charge_at(battery);
+    };
+    let online = read_number(&charger.join("online")).is_some_and(|v| v == 1);
+    let time_to_full = read_number(&battery.join("time_to_full_now")).unwrap_or(0);
+    if online && time_to_full > 0 {
+        return Charge::Charging;
+    }
+    match charge_at(battery) {
+        Charge::Full => Charge::Full,
+        Charge::Discharging if !online => Charge::Discharging,
+        _ => Charge::Unknown,
+    }
+}
+
+fn axp_i2c_device() -> PathBuf {
+    if let Ok(entries) = fs::read_dir("/sys/bus/i2c/devices") {
+        for entry in entries.flatten() {
+            let leaf = entry.file_name().to_string_lossy().into_owned();
+            let Some((bus, address)) = leaf.split_once('-') else {
+                continue;
+            };
+            if address != "0034" && address != "34" {
+                continue;
+            }
+            if fs::read_to_string(entry.path().join("name"))
+                .is_ok_and(|n| n.trim_start().starts_with("axp"))
+            {
+                return PathBuf::from(format!("/dev/i2c-{bus}"));
+            }
+        }
+    }
+    PathBuf::from("/dev/i2c-5")
+}
+
+/// The stock H700 kernel's generic AXP power-off register is wrong for the AXP2202. Quiesce
+/// pending wake IRQs before asking its real soft-power register to cut the rails; otherwise
+/// a held button or attached charger can turn a black-screen shutdown straight back on.
+fn axp2202_poweroff() -> std::io::Result<()> {
+    let path = axp_i2c_device();
+    let mut bus = OpenOptions::new().read(true).write(true).open(&path)?;
+    if unsafe { ioctl(bus.as_raw_fd(), I2C_SLAVE, AXP_ADDR) } < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let mut register = |reg: u8, value: u8| bus.write_all(&[reg, value]);
+    for reg in 0x40..=0x44 {
+        register(reg, 0x00)?;
+    }
+    for reg in 0x48..=0x4c {
+        register(reg, 0xff)?;
+    }
+    register(0x22, 0x0a)?;
+    std::thread::sleep(Duration::from_millis(50));
+    register(0x27, 0x01)
+}
+
 impl Platform for DevicePlatform {
     /// Step 0 is the panel off rather than the panel dim: it is what the lid closes with, and
     /// any floor under it lights a shut clamshell.
@@ -432,14 +498,57 @@ impl Platform for DevicePlatform {
         let percent = read_number(&dir.join("capacity"))?;
         Some(Battery {
             percent: percent.min(100) as u8,
-            charge: charge_at(dir),
+            charge: active_charge(dir, self.charger.as_deref()),
         })
     }
 
     fn charge(&self) -> Charge {
-        self.battery
+        self.battery.as_ref().map_or(Charge::Unknown, |dir| {
+            active_charge(dir, self.charger.as_deref())
+        })
+    }
+
+    fn charger_present(&self) -> bool {
+        self.charger
             .as_ref()
-            .map_or(Charge::Unknown, |dir| charge_at(dir))
+            .and_then(|d| read_number(&d.join("online")))
+            .is_some_and(|v| v == 1)
+    }
+
+    fn usb_host(&self) -> bool {
+        first_dir(&self.sysfs.join("class/udc"), |d| {
+            fs::read_to_string(d.join("state")).is_ok_and(|s| s.trim() == "configured")
+        })
+        .is_some()
+    }
+
+    fn suspend(&mut self) -> bool {
+        let battery = self.sysfs.join("class/power_supply/axp2202-battery");
+        let hall = battery.join("hallkey");
+        let os_sleep = battery.join("os_sleep");
+        let work_led = battery.join("work_led");
+        let _ = fs::write(&work_led, "0");
+        let _ = Command::new("sync").status();
+
+        loop {
+            if os_sleep.is_file() {
+                let _ = fs::write(&os_sleep, "16");
+            }
+            let status = Command::new("sh")
+                .args(["-c", "echo mem > /sys/power/state"])
+                .status();
+            if !status.is_ok_and(|s| s.success()) {
+                let _ = fs::write(&work_led, "1");
+                return false;
+            }
+            // A pocketed power press can wake the kernel. Do not light a closed clamshell.
+            if fs::read_to_string(&hall).map_or(true, |v| v.trim() != "0") {
+                break;
+            }
+            std::thread::sleep(Duration::from_secs(1));
+        }
+        let _ = fs::write(&work_led, "1");
+        true
     }
 
     fn set_led(&mut self, state: LedState) {
@@ -479,7 +588,16 @@ impl Platform for DevicePlatform {
     fn poweroff(&mut self) -> ! {
         self.breadcrumb("poweroff: reached slot, about to sync");
         let _ = Command::new("sync").status();
-        self.breadcrumb("poweroff: sync returned, about to signal init");
+        self.breadcrumb("poweroff: sync returned, trying AXP2202 rail cut");
+        match axp2202_poweroff() {
+            Ok(()) => {
+                // A successful PMIC write normally never reaches the end of this sleep.
+                std::thread::sleep(Duration::from_secs(1));
+                self.breadcrumb("poweroff: AXP2202 write returned but rails stayed up");
+            }
+            Err(e) => self.breadcrumb(&format!("poweroff: AXP2202 unavailable: {e}")),
+        }
+        self.breadcrumb("poweroff: about to signal init fallback");
         let _ = Command::new("poweroff").status();
         self.breadcrumb("poweroff: signalled init, waiting for it to take the machine down");
         // The card is already flushed, so the worst case is a frontend BaseOS respawns

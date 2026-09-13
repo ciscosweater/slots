@@ -1,6 +1,6 @@
-/// Widest correction the resampler is allowed to apply. The panel runs 60 Hz against the
-/// GBA's 59.7275, a standing 0.456% surplus, so the bound has to sit just above that or the
-/// buffer would climb with nothing able to pull it back.
+/// Widest dynamic correction the resampler applies around the base GBA-to-panel conversion.
+/// The standing 59.7275-to-59.155 difference is already absorbed by `core_hz` in the worker;
+/// this bound only steers transient ring occupancy.
 const MAX_CORRECTION: f64 = 0.005;
 
 /// How far the device buffer is from where it should sit, as a resampling ratio. Above 1.0

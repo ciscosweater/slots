@@ -21,4 +21,5 @@ pub mod rewind;
 pub mod root;
 pub mod session;
 pub mod thumb;
+pub mod timing;
 pub mod wallpaper;

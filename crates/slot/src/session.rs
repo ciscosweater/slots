@@ -233,7 +233,16 @@ impl Session {
     }
 
     pub fn update(&mut self, dt: f32) {
+        let crossing_suspend = self.app.suspending_now();
+        if crossing_suspend {
+            self.sink.close();
+        }
         self.bridge_link(|app| app.update(dt));
+        if crossing_suspend && !self.app.powering_off() {
+            if let Err(e) = self.sink.open(GBA_HZ) {
+                eprintln!("slot: audio after resume: {e}");
+            }
+        }
         // The wire a link that just came up runs over. `App` holds a session's own
         // bookkeeping and never a transport (see `App::link`), so this is the hop that
         // carries one to the emulator thread — the mirror of `bridge_link`'s own hop for the

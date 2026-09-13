@@ -85,6 +85,10 @@ impl AudioSink for HostAudio {
         }
     }
 
+    fn close(&mut self) {
+        HostAudio::close(self);
+    }
+
     fn ring(&self) -> Arc<Ring> {
         self.ring.clone()
     }

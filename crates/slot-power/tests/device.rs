@@ -127,6 +127,20 @@ fn the_gauge_and_the_charge_state_come_back_together() {
     );
 }
 
+#[test]
+fn h700_only_reports_active_charge_when_time_to_full_is_positive() {
+    let d = sysfs_with("255", "87", Some("Charging"));
+    let supply = d.path().join("class/power_supply");
+    fs::write(supply.join("axp2202-usb/online"), "1\n").unwrap();
+    fs::write(supply.join("axp2202-battery/time_to_full_now"), "1200\n").unwrap();
+    let p = platform(&d);
+    assert!(p.charger_present());
+    assert_eq!(p.charge(), Charge::Charging);
+
+    fs::write(supply.join("axp2202-battery/time_to_full_now"), "0\n").unwrap();
+    assert_eq!(platform(&d).charge(), Charge::Unknown);
+}
+
 /// A tree with no gauge at all has no second absence case to reason about: the charge state
 /// is simply the one every consumer already has to handle.
 #[test]

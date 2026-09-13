@@ -242,9 +242,11 @@ impl FbdevSurface {
             if (egl.make_current)(display, surface, surface, context) == 0 {
                 return Err(egl.fail("eglMakeCurrent"));
             }
-            // Present is locked to the panel; the GBA to panel drift is absorbed by audio
+            // Present is locked to the panel; the GBA-to-panel drift is absorbed by audio
             // rate control, exactly as it is on the host.
-            (egl.swap_interval)(display, 1);
+            if (egl.swap_interval)(display, 1) == 0 {
+                eprintln!("slot: eglSwapInterval(1) refused; using the panel deadline fallback");
+            }
             let size = query_size(&egl, display, surface).unwrap_or(hint);
             Ok(FbdevSurface {
                 egl,

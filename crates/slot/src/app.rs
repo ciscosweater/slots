@@ -2503,19 +2503,35 @@ impl App {
         }
     }
 
-    /// A dark panel is not a saving: the machine is still running flat out behind it at
-    /// 400-700 mA. So the dark is a grace period rather than a state, and when it runs out
-    /// the device stops for real.
-    ///
-    /// It suspends beautifully — under 45 mA — and that is not on offer, because it cannot
-    /// wake itself back up: the RTC alarm arms, reads back, and never fires. A sleep nothing
-    /// can end is a slow leak with a better name. Powering off costs the user a three second
-    /// boot, and `slot.state` still names the cart, so they come back to the same frame.
+    /// Escalate the dark-panel grace period into H700 suspend-to-RAM. External power keeps
+    /// the unit in screen-off instead: charging and an enumerated debug cable are deliberate
+    /// uses, not abandonment. A platform without working suspend retains the proven power-off
+    /// fallback, and a failed suspend never leaves the board burning power behind a black LCD.
     pub fn on_doze_timeout(&mut self) {
         if !matches!(self.phase, Phase::Doze { .. }) {
             return;
         }
+        if let Some(power) = &mut self.power {
+            if power.externally_powered() || power.usb_host() {
+                self.dozed_at = self.now();
+                return;
+            }
+            if power.suspend() {
+                self.wake();
+                return;
+            }
+        }
         self.begin_power_off();
+    }
+
+    /// True on the frame that may cross the kernel suspend boundary. `Session` uses this
+    /// before `update` so ALSA is closed while it is still healthy, then reopened after wake.
+    pub fn suspending_now(&self) -> bool {
+        self.doze_expired()
+            && self
+                .power
+                .as_ref()
+                .is_some_and(|p| !p.externally_powered() && !p.usb_host())
     }
 
     /// The lid's twin, and the only one of the two the device is certain to see. A tap

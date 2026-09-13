@@ -29,5 +29,7 @@ pub trait AudioSink: Send {
     /// The rate is a preference. A device that will not take it opens at its own, which the
     /// ring then reports and the resampler converts to.
     fn open(&mut self, sample_rate: u32) -> Result<(), AudioError>;
+    /// Close the hardware synchronously. H700 ALSA must not remain open across suspend.
+    fn close(&mut self);
     fn ring(&self) -> Arc<Ring>;
 }
