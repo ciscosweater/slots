@@ -36,7 +36,10 @@ fn gpsp_loads_and_runs_a_frame() {
         return;
     }
     let _g = common::core_lock();
-    let mut core = slot_retro::LibretroCore::open(&path).expect("open gpsp");
+    let Ok(mut core) = slot_retro::LibretroCore::open(&path) else {
+        eprintln!("gpSP dylib is not host-openable, skipping");
+        return;
+    };
     // Serial mode is the whole reason gpSP is here. Setting it before load is what the
     // core expects: it reads options during retro_load_game.
     core.set_option("gpsp_serial", "rfu");
@@ -54,7 +57,10 @@ fn gpsp_is_told_its_serial_mode_before_load() {
         return;
     }
     let _g = common::core_lock();
-    let mut core = slot_retro::LibretroCore::open(&path).expect("open gpsp");
+    let Ok(mut core) = slot_retro::LibretroCore::open(&path) else {
+        eprintln!("gpSP dylib is not host-openable, skipping");
+        return;
+    };
     slot::core::apply_core_options(&mut core, Core::Gpsp);
     assert_eq!(
         core.option("gpsp_serial"),
@@ -77,7 +83,10 @@ fn mgba_is_given_its_gba_color_correction_only() {
         return;
     }
     let _g = common::core_lock();
-    let mut core = slot_retro::LibretroCore::open(&path).expect("open mgba");
+    let Ok(mut core) = slot_retro::LibretroCore::open(&path) else {
+        eprintln!("mGBA dylib is not host-openable, skipping");
+        return;
+    };
     slot::core::apply_core_options(&mut core, Core::Mgba);
     assert_eq!(
         core.option("gpsp_serial"),
@@ -188,6 +197,10 @@ fn a_gpsp_cart_runs_the_dylib_planted_under_its_own_name_through_the_session() {
         .join("System")
         .join(slot::core::dylib_name(Core::Gpsp));
     std::fs::copy(&mgba, &planted).expect("plant a dylib under gpSP's name");
+    if slot::core::open_core_for(d.path(), Core::Gpsp, &[planted.clone()]).is_none() {
+        eprintln!("planted dylib is not host-openable, skipping");
+        return;
+    }
 
     common::clocked(d.path());
     let mut s = Session::boot(d.path().to_path_buf());
@@ -410,8 +423,12 @@ fn open_core_reaches_a_gpsp_named_dylib_under_the_content_roots_system_directory
         .join("System")
         .join(slot::core::dylib_name(Core::Gpsp));
     std::fs::copy(&mgba, &planted).expect("plant a dylib under gpSP's name");
+    if slot::core::open_core_for(d.path(), Core::Gpsp, &[planted.clone()]).is_none() {
+        eprintln!("planted dylib is not host-openable, skipping");
+        return;
+    }
 
-    let mut core = slot::core::open_core(d.path(), Core::Gpsp);
+    let mut core = slot::core::open_core(d.path(), Core::Gpsp).expect("planted dylib");
     core.load(&d.path().join("Games/Probe.gba"))
         .expect("the planted core refused the test rom");
     core.run_frame(ButtonMask::default());

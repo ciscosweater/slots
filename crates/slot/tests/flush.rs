@@ -199,7 +199,9 @@ impl Snapshot for CountingSnapshot {
         None
     }
 
-    fn load(&self, _state: Vec<u8>) {}
+    fn load(&self, _state: Vec<u8>) -> bool {
+        true
+    }
 }
 
 fn at(percent: u8, charge: Charge) -> Battery {

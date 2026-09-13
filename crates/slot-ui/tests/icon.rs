@@ -163,3 +163,11 @@ fn a_link_badge_wears_its_colour() {
         .chunks(4)
         .any(|p| p[3] == 255 && p[..3] == LINK_HOST_INK));
 }
+
+#[test]
+fn the_favorite_mark_rasterises() {
+    let f = slot_ui::favorite_mark_face();
+    assert!(f.w > 0 && f.h > 0, "the star has no size");
+    let lit = f.rgba.chunks(4).filter(|p| p[3] > 0).count();
+    assert!(lit > 20, "the favorite mark is blank: {lit} pixels");
+}

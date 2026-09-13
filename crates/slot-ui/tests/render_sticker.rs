@@ -24,6 +24,7 @@ fn render_sticker() {
         battery: Some(87),
         serial: "0473885",
         dirty_digit: '0',
+        page: slot_ui::StickerPage::Credits,
     });
     let (w, h) = (STICKER_W as usize, STICKER_H as usize);
     write(&out, &face.rgba, w, h);

@@ -10,7 +10,9 @@ pub trait Snapshot {
     /// The last frame the core produced, PNG encoded. Encoded on the worker, which is where
     /// the frame already is, so a save does not cost the compositor a hitch.
     fn thumb(&self) -> Option<Vec<u8>>;
-    fn load(&self, state: Vec<u8>);
+    /// `false` if the core refused the bytes. Callers that toast a successful load have to
+    /// wait for this rather than assume the fire-and-forget landed.
+    fn load(&self, state: Vec<u8>) -> bool;
 
     /// Whether `state()` came from a core that actually accepted the resume it was opened
     /// with. Defaults to `true`, which is right for anything that was never handed a resume

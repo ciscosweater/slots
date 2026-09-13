@@ -1,9 +1,20 @@
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use slot_retro::{LibretroCore, MockCore, RetroCore};
 use slot_store::Core;
 
 use crate::root;
+
+/// Integration tests compile this crate without `cfg(test)`, so they opt in here. Production
+/// never does: a missing dylib is a refused insert, not a rainbow cart.
+static ALLOW_MOCK: AtomicBool = AtomicBool::new(false);
+
+/// Lets a test `Session` run a machine when no dylib is planted. `SLOT_CORE` still wins: a
+/// test that names a missing file is asking for the refuse path, not a mock.
+pub fn allow_mock_for_tests() {
+    ALLOW_MOCK.store(true, Ordering::Relaxed);
+}
 
 /// Names the dylib outright, for a build that keeps it somewhere the search does not look.
 ///
@@ -57,12 +68,23 @@ fn candidates(root: &Path, core: Core) -> Vec<PathBuf> {
 /// what the caller does with that `Core` afterward: `App` is the one that has to keep using
 /// the same value for every later read and write, and it does that by storing it rather than
 /// asking again.
-pub fn open_core(root: &Path, core: Core) -> Box<dyn RetroCore> {
-    open_core_for(root, core, &candidates(root, core))
+pub fn open_core(root: &Path, core: Core) -> Option<Box<dyn RetroCore>> {
+    if let Some(opened) = open_core_for(root, core, &candidates(root, core)) {
+        return Some(opened);
+    }
+    if ALLOW_MOCK.load(Ordering::Relaxed) && std::env::var_os(CORE_ENV).is_none() {
+        eprintln!(
+            "slot: no {} core found in tests, running the mock",
+            core.as_str()
+        );
+        return Some(Box::new(MockCore::new()));
+    }
+    None
 }
 
-/// The named core if one of these opens, the mock if none of them do. A missing core is not
-/// a failure to boot: the shelf, the slot and every gesture are reachable either way.
+/// The named core if one of these opens. A missing or broken dylib is `None`, and the insert
+/// that asked for it comes back out of the slot: seating a rainbow test pattern used to read
+/// as a broken game rather than a missing core.
 ///
 /// The core is told the content root's own folders, never the dylib's: on the device the
 /// core lives in `System/` and the user's BIOS does not.
@@ -74,7 +96,7 @@ pub fn open_core(root: &Path, core: Core) -> Box<dyn RetroCore> {
 /// call it on: everything above here deals in `Box<dyn RetroCore>`, which has no `set_option`.
 /// That is also why the call sits here rather than at a caller — after `open_with` succeeds,
 /// before the `Box<dyn RetroCore>` is handed back and `load` becomes reachable at all.
-pub fn open_core_for(root: &Path, core: Core, paths: &[PathBuf]) -> Box<dyn RetroCore> {
+pub fn open_core_for(root: &Path, core: Core, paths: &[PathBuf]) -> Option<Box<dyn RetroCore>> {
     let bios = root::bios_dir(root);
     let saves = root::saves_dir(root);
     for path in paths {
@@ -85,17 +107,13 @@ pub fn open_core_for(root: &Path, core: Core, paths: &[PathBuf]) -> Box<dyn Retr
             Ok(mut opened) => {
                 apply_core_options(&mut opened, core);
                 eprintln!("slot: core {}", path.display());
-                return Box::new(opened);
+                return Some(Box::new(opened));
             }
             Err(e) => eprintln!("slot: {}: {e}", path.display()),
         }
     }
-    // Name the core and every path that was tried. The mock renders a rainbow test pattern
-    // and a sine tone, which on screen reads as "this core is broken" rather than "this core
-    // is missing" — the one time that happened it cost an afternoon, so the log says which
-    // file was wanted and where it was looked for.
     eprintln!(
-        "slot: no {} core found, running the mock test pattern instead. Looked in: {}",
+        "slot: no {} core found. Looked in: {}",
         core.as_str(),
         paths
             .iter()
@@ -103,7 +121,7 @@ pub fn open_core_for(root: &Path, core: Core, paths: &[PathBuf]) -> Box<dyn Retr
             .collect::<Vec<_>>()
             .join(", ")
     );
-    Box::new(MockCore::new())
+    None
 }
 
 /// Options a core needs before `load`, because libretro cores read them during

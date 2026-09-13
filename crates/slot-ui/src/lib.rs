@@ -43,7 +43,7 @@ pub use hud::{
     ff_badge, FfState, Hud, HudKind, LinkBadge, Millis, HUD_ICON_PX, HUD_INK, HUD_MS,
     LINK_HOST_INK, LINK_JOIN_INK, PLATE_H,
 };
-pub use icon::{badge_face, icon_box, icon_face, Badge, Icon};
+pub use icon::{badge_face, favorite_mark_face, icon_box, icon_face, Badge, Icon, FAVORITE_INK};
 pub use link_art::{
     link_art, LinkArt, ADAPTER_BASE_X, ADAPTER_BASE_Y, ADAPTER_H, ADAPTER_W, ARCS, ARROW_H,
     ARROW_LEFT_X, ARROW_RIGHT_X, ARROW_W, ARROW_Y, CLICKS_H, CLICKS_W, CLICKS_X, CLICKS_Y, PLUG_H,
@@ -57,7 +57,7 @@ pub use plate::{
 pub use polaroids::{photo_face, PhotoFace, Polaroids, DOT, LEGEND, PHOTO_H, PHOTO_W};
 pub use power_menu::{menu_face, PowerChoice, MENU_PAD};
 pub use refusal::Refusal;
-pub use shelf::Shelf;
+pub use shelf::{Shelf, EMPTY_SHELF};
 pub use shell::{
     lookup_order_is_exact_then_family_then_default, shell_for, table_keys, Finish, Shell,
     DEFAULT_SHELL,
@@ -68,7 +68,7 @@ pub use slot_chrome::{
     MOUTH_H, MOUTH_W,
 };
 pub use sticker::{
-    draw_sticker, head_rows, sticker_face, sticker_lines, StickerFields, COPYRIGHT, CREDITS, DC,
-    HOME, ORIGIN, STICKER_H, STICKER_W,
+    draw_sticker, head_rows, sticker_face, sticker_lines, StickerFields, StickerPage, CONTROLS,
+    COPYRIGHT, CREDITS, DC, HOME, ORIGIN, STICKER_H, STICKER_W,
 };
 pub use toast::{toast_box, toast_face, toast_rect, Toast};

@@ -204,6 +204,13 @@ impl CorePicker {
         }
     }
 
+    /// A write that did not land: the lid stays off and the chip shakes, rather than closing
+    /// as if the card had taken the choice.
+    pub fn abort_write(&mut self, now: Millis) {
+        self.close = None;
+        self.refusal = Some(Refusal::started(now));
+    }
+
     fn begin_close(&mut self, now: Millis) {
         self.close = Some(Close {
             started: now,

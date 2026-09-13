@@ -73,23 +73,23 @@ impl Link {
     /// A packet that arrived from the peer. The transport calls this; `pump_link` and the
     /// core's `poll_receive` trampoline are what drain it back out.
     pub fn push_inbound(&self, packet: Vec<u8>) {
-        self.0.inbound.lock().unwrap().push_back(packet);
+        lock_queue(&self.0.inbound).push_back(packet);
     }
 
     /// Pop the next packet waiting for the core, in the order it arrived.
     pub fn take_inbound(&self) -> Option<Vec<u8>> {
-        self.0.inbound.lock().unwrap().pop_front()
+        lock_queue(&self.0.inbound).pop_front()
     }
 
     /// The core handed this to the `send` trampoline. The transport is what actually puts it
     /// on the wire.
     pub fn push_outbound(&self, packet: Vec<u8>) {
-        self.0.outbound.lock().unwrap().push_back(packet);
+        lock_queue(&self.0.outbound).push_back(packet);
     }
 
     /// Pop the next packet the core produced, in the order it was sent.
     pub fn take_outbound(&self) -> Option<Vec<u8>> {
-        self.0.outbound.lock().unwrap().pop_front()
+        lock_queue(&self.0.outbound).pop_front()
     }
 
     /// Whether a session is actually live right now. `Acquire`, paired with `set_active`'s
@@ -116,7 +116,11 @@ impl Link {
     /// is the only caller, right after it marks the session inactive, so a stale packet from
     /// session one is never mistaken for traffic belonging to session two.
     pub fn clear(&self) {
-        self.0.inbound.lock().unwrap().clear();
-        self.0.outbound.lock().unwrap().clear();
+        lock_queue(&self.0.inbound).clear();
+        lock_queue(&self.0.outbound).clear();
     }
+}
+
+fn lock_queue(m: &Mutex<VecDeque<Vec<u8>>>) -> std::sync::MutexGuard<'_, VecDeque<Vec<u8>>> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
 }

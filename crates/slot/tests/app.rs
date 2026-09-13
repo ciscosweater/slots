@@ -286,6 +286,20 @@ fn an_empty_shelf_has_nothing_to_insert() {
 }
 
 #[test]
+fn an_empty_shelf_prints_on_the_case() {
+    let mut a = app_with_carts(&[]);
+    a.set_empty_caption(Printed::new(TexId::from_raw(3), 120));
+    let mut out = Vec::new();
+    a.draw(&mut out);
+    assert!(
+        out.iter().any(
+            |d| matches!(d, Draw::Tex { y, w, .. } if (*y - 316.0).abs() < 0.1 && *w == 120.0)
+        ),
+        "the empty shelf did not print on the case: {out:?}"
+    );
+}
+
+#[test]
 fn face_buttons_drive_the_shelf_only_while_it_is_showing() {
     let mut a = app_with_carts(&["Emerald", "Wars"]);
     a.apply(Action::GbaDown(Btn::Right));
@@ -522,6 +536,120 @@ fn both_b_and_menu_close_the_about_screen() {
             "{out:?} did not close the label"
         );
     }
+}
+
+#[test]
+fn left_and_right_turn_the_about_plate_over() {
+    let (_d, mut app) = on_shelf(&["Emerald", "Fusion"]);
+    app.apply(Action::OpenAbout);
+    assert_eq!(app.about_page(), slot_ui::StickerPage::Credits);
+    app.apply(Action::GbaDown(Btn::Right));
+    assert_eq!(app.about_page(), slot_ui::StickerPage::Controls);
+    app.apply(Action::GbaDown(Btn::Left));
+    assert_eq!(app.about_page(), slot_ui::StickerPage::Credits);
+}
+
+#[test]
+fn holding_a_on_about_opens_the_clock() {
+    let (_d, mut app) = on_shelf(&["Emerald", "Fusion"]);
+    app.apply(Action::OpenAbout);
+    app.apply(Action::GbaDown(Btn::A));
+    for _ in 0..40 {
+        app.update(1.0 / 60.0);
+    }
+    assert!(
+        matches!(app.phase(), Phase::SetClock { .. }),
+        "hold A on the label did not open the clock: {:?}",
+        app.phase()
+    );
+}
+
+#[test]
+fn tapping_a_on_about_leaves_a_live_clock_alone() {
+    let (_d, mut app) = on_shelf(&["Emerald", "Fusion"]);
+    app.apply(Action::OpenAbout);
+    app.apply(Action::GbaDown(Btn::A));
+    app.apply(Action::GbaUp(Btn::A));
+    assert!(
+        matches!(app.phase(), Phase::About),
+        "tap A opened the clock while it was already set: {:?}",
+        app.phase()
+    );
+}
+
+#[test]
+fn idle_hints_appear_after_a_pause_and_leave_on_input() {
+    let (_d, mut app) = on_shelf(&["Emerald", "Fusion"]);
+    app.set_shelf_idle_faces(vec![(TexId::from_raw(7), 40), (TexId::from_raw(8), 50)]);
+    let mut out = Vec::new();
+    app.draw(&mut out);
+    assert!(
+        !out.iter()
+            .any(|d| matches!(d, Draw::Tex { tex, .. } if *tex == TexId::from_raw(7))),
+        "the idle hint was on before anyone waited"
+    );
+    app.update(5.0);
+    out.clear();
+    app.draw(&mut out);
+    assert!(
+        out.iter().any(|d| matches!(
+            d,
+            Draw::Tex { y, tex, alpha, .. }
+            if *tex == TexId::from_raw(7) && (*y - 386.0).abs() < 0.1 && *alpha < 0.5
+        )),
+        "the idle hint did not appear: {out:?}"
+    );
+    app.apply(Action::GbaDown(Btn::Right));
+    out.clear();
+    app.draw(&mut out);
+    assert!(
+        !out.iter()
+            .any(|d| matches!(d, Draw::Tex { tex, .. } if *tex == TexId::from_raw(7))),
+        "the idle hint stayed after the row moved"
+    );
+}
+
+#[test]
+fn idle_hints_stay_off_an_empty_shelf() {
+    let mut app = app_with_carts(&[]);
+    app.set_shelf_idle_faces(vec![(TexId::from_raw(7), 40), (TexId::from_raw(8), 50)]);
+    app.update(5.0);
+    let mut out = Vec::new();
+    app.draw(&mut out);
+    assert!(
+        !out.iter()
+            .any(|d| matches!(d, Draw::Tex { tex, .. } if *tex == TexId::from_raw(7))),
+        "an empty shelf showed insert hints"
+    );
+}
+
+#[test]
+fn about_shows_the_clock_hint_when_the_rtc_is_dead() {
+    let d = common::tmp_root_with_carts(&["Emerald", "Fusion"]);
+    write_slot_state(
+        d.path(),
+        &SlotState {
+            clock_set: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let (mut app, _clock) = common::app_booting_at(d.path(), 0);
+    app.set_about_flip_face(TexId::from_raw(12), 90);
+    app.set_about_clock_hint(TexId::from_raw(11), 80);
+    app.apply(Action::OpenAbout);
+    let mut out = Vec::new();
+    app.draw(&mut out);
+    assert!(
+        out.iter()
+            .any(|d| matches!(d, Draw::Tex { tex, .. } if *tex == TexId::from_raw(11))),
+        "a dead clock did not offer A on the label: {out:?}"
+    );
+    assert!(
+        !out.iter()
+            .any(|d| matches!(d, Draw::Tex { tex, .. } if *tex == TexId::from_raw(12))),
+        "Flip stayed on while the clock needed setting"
+    );
 }
 
 /// A booted app sitting on the shelf, beside the card it reads and writes. Two carts at

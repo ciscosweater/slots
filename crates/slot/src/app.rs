@@ -13,9 +13,9 @@ use slot_store::{
 use slot_ui::{
     board_at, board_zoom, draw_backdrop, draw_empty_slot, draw_footer, draw_printed, draw_sticker,
     ease, grown, lid_at, lift_of, on_board, ClockPicker, Draw, FfState, Hud, HudKind, Icon,
-    LinkBadge, Millis, Placed, Polaroids, PowerChoice, Printed, Refusal, Shelf, SlotChrome, TexId,
-    Toast, BOARD_W, BOARD_X, CART_W, CHIP_H, CHIP_U, CHIP_V, CHIP_W, HINT_EDGE, HINT_H, HOP_LIFT,
-    SHADOW_H, SHADOW_W, SOCKET_H, SOCKET_U, SOCKET_V, SOCKET_W, TURN_PAD,
+    LinkBadge, Millis, Placed, Polaroids, PowerChoice, Printed, Refusal, Shelf, SlotChrome,
+    StickerPage, TexId, Toast, BOARD_W, BOARD_X, CART_W, CHIP_H, CHIP_U, CHIP_V, CHIP_W, HINT_EDGE,
+    HINT_H, HOP_LIFT, SHADOW_H, SHADOW_W, SOCKET_H, SOCKET_U, SOCKET_V, SOCKET_W, TURN_PAD,
 };
 
 use crate::audio::Sfx;
@@ -118,6 +118,10 @@ const CORE_PICKER_RECEDE: f32 = 0.26;
 const CORE_PICKER_DIM: f32 = 0.614;
 /// The legend's line, under the open cart and clear of the case band.
 const CORE_LEGEND_Y: f32 = 386.0;
+/// How long the shelf sits still before the faint START/A hint appears. Short enough to teach,
+/// long enough that browsing never flashes it.
+const IDLE_HINT_MS: Millis = 4000;
+const IDLE_HINT_ALPHA: f32 = 0.45;
 /// Top of the link screen's one line of text: its baseline lands near y 74.
 const LINK_TEXT_Y: f32 = 44.0;
 /// The legend, centred on the console strip (y 388–480).
@@ -413,6 +417,14 @@ pub struct App {
     favorites: BTreeSet<String>,
     shelf_captions: BTreeMap<String, (Printed, Printed)>,
     favorite_caption: Printed,
+    empty_caption: Printed,
+    /// Last input on the shelf, for the idle hint. Reset whenever the row is used.
+    shelf_idle_at: Millis,
+    /// `A` Resume and `START` Core, uploaded once.
+    shelf_idle_faces: Vec<(TexId, u32)>,
+    about_page: StickerPage,
+    about_flip_face: Option<(TexId, u32)>,
+    about_clock_hint: Option<(TexId, u32)>,
     lcd: bool,
     pixelify: bool,
     font_revision: u64,
@@ -537,6 +549,12 @@ impl App {
             favorites: BTreeSet::new(),
             shelf_captions: BTreeMap::new(),
             favorite_caption: Printed::default(),
+            empty_caption: Printed::default(),
+            shelf_idle_at: 0,
+            shelf_idle_faces: Vec::new(),
+            about_page: StickerPage::Credits,
+            about_flip_face: None,
+            about_clock_hint: None,
             lcd: true,
             pixelify: true,
             font_revision: 0,
@@ -583,6 +601,7 @@ impl App {
         let mut app = App::new(scan(root).unwrap_or_default());
         app.root = Some(root.to_path_buf());
         app.favorites = read_favorites(root);
+        app.shelf.sort_by_favorites(&app.favorites);
         app.lcd = read_lcd(root);
         app.pixelify = read_pixelify(root);
         slot_ui::text::set_pixelify(app.pixelify);
@@ -612,6 +631,8 @@ impl App {
             stem.and_then(|stem| self.shelf.carts.iter().position(|c| c.stem == stem))
         };
         self.phase = Phase::Shelf;
+        self.shelf_idle_at = self.now();
+        self.about_page = StickerPage::Credits;
         match seated {
             Some(i) => {
                 // The shelf sits on the resumed cart so ejecting it lands where it left.
@@ -632,8 +653,8 @@ impl App {
         }
     }
 
-    /// Confirms whatever is on the clock screen. It is asked once, so this is also the only
-    /// way off it: there is no way back and no second chance to get it wrong.
+    /// Confirms whatever is on the clock screen. First boot and a dead RTC both land here;
+    /// About can open it again so a clock that lost power is not stuck for good.
     pub fn confirm_clock(&mut self) {
         let Phase::SetClock { picker } = &self.phase else {
             return;
@@ -730,7 +751,40 @@ impl App {
         self.favorite_caption = favorite;
     }
 
+    pub fn set_empty_caption(&mut self, caption: Printed) {
+        self.empty_caption = caption;
+    }
+
+    pub fn set_shelf_idle_faces(&mut self, faces: Vec<(TexId, u32)>) {
+        self.shelf_idle_faces = faces;
+    }
+
+    pub fn set_about_flip_face(&mut self, face: TexId, w: u32) {
+        self.about_flip_face = Some((face, w));
+    }
+
+    pub fn set_about_clock_hint(&mut self, face: TexId, w: u32) {
+        self.about_clock_hint = Some((face, w));
+    }
+
+    pub fn set_favorite_mark(&mut self, face: TexId, w: u32, h: u32) {
+        self.shelf.set_favorite_mark(face, w, h);
+    }
+
+    pub fn about_page(&self) -> StickerPage {
+        self.about_page
+    }
+
     fn draw_shelf_captions(&self, out: &mut Vec<Draw>) {
+        if self.shelf.carts.is_empty() {
+            draw_printed(
+                (OUT_W as f32 - self.empty_caption.w as f32) / 2.0,
+                316.0,
+                self.empty_caption,
+                out,
+            );
+            return;
+        }
         let Some(stem) = self.selected_stem() else {
             return;
         };
@@ -744,6 +798,36 @@ impl App {
         };
         draw_printed((OUT_W as f32 - group.w as f32) / 2.0, 132.0, group, out);
         draw_printed((OUT_W as f32 - title.w as f32) / 2.0, 316.0, title, out);
+    }
+
+    fn draw_idle_hints(&self, out: &mut Vec<Draw>) {
+        if self.core_picker.is_some() || self.shelf.carts.is_empty() {
+            return;
+        }
+        if self.now().saturating_sub(self.shelf_idle_at) < IDLE_HINT_MS {
+            return;
+        }
+        if let [resume, core] = self.shelf_idle_faces.as_slice() {
+            let seen = |w: u32| w.saturating_sub(HINT_EDGE) as f32;
+            let gap = 40.0;
+            let total = seen(resume.1) + gap + seen(core.1);
+            let mut x = (OUT_W as f32 - total) / 2.0;
+            for (tex, w) in [resume, core] {
+                out.push(Draw::Tex {
+                    x: x.round(),
+                    y: CORE_LEGEND_Y,
+                    w: *w as f32,
+                    h: HINT_H as f32,
+                    tex: *tex,
+                    alpha: IDLE_HINT_ALPHA,
+                });
+                x += seen(*w) + gap;
+            }
+        }
+    }
+
+    fn bump_shelf_idle(&mut self) {
+        self.shelf_idle_at = self.now();
     }
 
     /// Handed over when the core is spawned, which is on the way into the slot.
@@ -868,17 +952,12 @@ impl App {
         // The device's own clock, which the host's stands in for. Boot has nothing better to
         // seed the picker from, so a device with a live RTC only gets its confirmation here.
         // The first moment the device's own clock can be asked, and so the first moment a
-        // clock that was never set can be told apart from one that was. Boot has already
-        // taken `clock_set` at its word by here, which is exactly the case that leaves a
-        // dead RTC with no way back to the one screen that could fix it.
+        // clock that was never set can be told apart from one that was. A clock that dies
+        // after that is About's to reopen — interrupting a seated cart, or a test that
+        // attached a stub platform sitting at epoch 0, is not a first-boot.
         let secs = power.now();
         match &mut self.phase {
             Phase::SetClock { picker } => *picker = ClockPicker::from_secs(secs),
-            _ if secs < CLOCK_FLOOR => {
-                self.phase = Phase::SetClock {
-                    picker: ClockPicker::from_secs(secs),
-                }
-            }
             _ => {}
         }
         self.power = Some(power);
@@ -1114,6 +1193,9 @@ impl App {
         if action == Action::GbaDown(Btn::X)
             && matches!(self.phase, Phase::Shelf | Phase::Playing { .. })
         {
+            if matches!(self.phase, Phase::Shelf) {
+                self.bump_shelf_idle();
+            }
             return self.toggle_lcd();
         }
         // The release reaches the shelf whatever is on screen. A direction let go of during
@@ -1133,39 +1215,42 @@ impl App {
         }
         let now = self.now();
         match self.phase {
-            Phase::Shelf => match action {
-                // START rather than SELECT, and the difference is not cosmetic. SELECT is
-                // the chord key: held, it turns Up/Down into brightness and Left/Right into
-                // blue light, and `adjust` answers those on every screen including this one.
-                // Opening a menu the instant SELECT goes down would eat the first half of
-                // every one of those chords; waiting out the 600 ms window instead would put
-                // that delay in front of the menu. START is bound to nothing here and reaches
-                // no core from the shelf, so it costs neither.
-                Action::GbaDown(Btn::Start) if self.core_picker.is_none() => {
-                    self.open_core_picker()
-                }
-                // Ahead of the shelf's own movement, so an open picker takes the arrows
-                // before the row of carts underneath it does.
-                _ if self.core_picker.is_some() => self.core_picker_input(action),
-                Action::ShelfLeft | Action::GbaDown(Btn::Left) => self.shelf.hold_left(now),
-                Action::ShelfRight | Action::GbaDown(Btn::Right) => self.shelf.hold_right(now),
-                Action::GbaDown(Btn::L1) => self.shelf.previous_letter(),
-                Action::GbaDown(Btn::R1) => self.shelf.next_letter(),
-                Action::RewindStart => self.toggle_font(),
-                Action::GbaDown(Btn::Y) => self.toggle_favorite(),
-                Action::OpenAbout => self.phase = Phase::About,
-                // A is two actions and the press cannot tell them apart yet, so the cart
-                // goes in on the release. The hold has already taken it if it got there
-                // first, and then the release is not a second press.
-                Action::GbaDown(Btn::A) => self.play_held = Some(now),
-                Action::GbaUp(Btn::A) => {
-                    if self.play_held.take().is_some() {
-                        self.insert(false);
+            Phase::Shelf => {
+                self.bump_shelf_idle();
+                match action {
+                    // START rather than SELECT, and the difference is not cosmetic. SELECT is
+                    // the chord key: held, it turns Up/Down into brightness and Left/Right into
+                    // blue light, and `adjust` answers those on every screen including this one.
+                    // Opening a menu the instant SELECT goes down would eat the first half of
+                    // every one of those chords; waiting out the 600 ms window instead would put
+                    // that delay in front of the menu. START is bound to nothing here and reaches
+                    // no core from the shelf, so it costs neither.
+                    Action::GbaDown(Btn::Start) if self.core_picker.is_none() => {
+                        self.open_core_picker()
                     }
+                    // Ahead of the shelf's own movement, so an open picker takes the arrows
+                    // before the row of carts underneath it does.
+                    _ if self.core_picker.is_some() => self.core_picker_input(action),
+                    Action::ShelfLeft | Action::GbaDown(Btn::Left) => self.shelf.hold_left(now),
+                    Action::ShelfRight | Action::GbaDown(Btn::Right) => self.shelf.hold_right(now),
+                    Action::GbaDown(Btn::L1) => self.shelf.previous_letter(),
+                    Action::GbaDown(Btn::R1) => self.shelf.next_letter(),
+                    Action::RewindStart => self.toggle_font(),
+                    Action::GbaDown(Btn::Y) => self.toggle_favorite(),
+                    Action::OpenAbout => self.phase = Phase::About,
+                    // A is two actions and the press cannot tell them apart yet, so the cart
+                    // goes in on the release. The hold has already taken it if it got there
+                    // first, and then the release is not a second press.
+                    Action::GbaDown(Btn::A) => self.play_held = Some(now),
+                    Action::GbaUp(Btn::A) => {
+                        if self.play_held.take().is_some() {
+                            self.insert(false);
+                        }
+                    }
+                    Action::Insert => self.insert(false),
+                    _ => {}
                 }
-                Action::Insert => self.insert(false),
-                _ => {}
-            },
+            }
             // Eject reaches an insert as well, so a cart whose core never arrived can still
             // be got out. Nothing else here applies until there is a game.
             Phase::Inserting { .. } if action == Action::Eject => self.eject(),
@@ -1197,10 +1282,25 @@ impl App {
                 _ => {}
             },
             // MENU closes it as well as opening it, so the button that got you here gets you
-            // back without having to know that B also works.
-            Phase::About if action == Action::GbaDown(Btn::B) || action == Action::OpenAbout => {
-                self.phase = Phase::Shelf
-            }
+            // back without having to know that B also works. L/R turns the plate over; A
+            // (or a hold of A) opens the clock when the RTC is dead, and a hold always does.
+            Phase::About => match action {
+                Action::GbaDown(Btn::B) | Action::OpenAbout => self.phase = Phase::Shelf,
+                Action::GbaDown(Btn::Left)
+                | Action::GbaDown(Btn::Right)
+                | Action::ShelfLeft
+                | Action::ShelfRight => {
+                    self.about_page = self.about_page.other();
+                    self.sticker_face = None;
+                }
+                Action::GbaDown(Btn::A) => self.play_held = Some(now),
+                Action::GbaUp(Btn::A) => {
+                    if self.play_held.take().is_some() && self.clock_needs_setting() {
+                        self.open_clock();
+                    }
+                }
+                _ => {}
+            },
             _ => {}
         }
     }
@@ -1691,6 +1791,7 @@ impl App {
                     _ => self.shelf.draw(self.shelf_shake(), out),
                 }
                 self.draw_shelf_captions(out);
+                self.draw_idle_hints(out);
                 draw_footer(
                     self.battery,
                     self.battery_percent,
@@ -1705,6 +1806,21 @@ impl App {
                 // photograph — it is there for the carts for exactly the same reason.
                 draw_backdrop(self.wallpaper, out);
                 draw_sticker(self.sticker_face, out);
+                let legend = if self.clock_needs_setting() {
+                    self.about_clock_hint
+                } else {
+                    self.about_flip_face
+                };
+                if let Some((tex, w)) = legend {
+                    out.push(Draw::Tex {
+                        x: ((OUT_W - w) / 2) as f32,
+                        y: CORE_LEGEND_Y,
+                        w: w as f32,
+                        h: HINT_H as f32,
+                        tex,
+                        alpha: 1.0,
+                    });
+                }
                 return;
             }
             // The shelf recedes behind the cart on the way in; on the way out the live
@@ -2221,13 +2337,35 @@ impl App {
         let Some(at) = self.play_held else {
             return;
         };
-        if !self.on_shelf() {
-            self.play_held = None;
-            return;
+        match self.phase {
+            Phase::Shelf => {
+                if self.now().saturating_sub(at) >= PLAY_HOLD_MS {
+                    self.insert(true);
+                }
+            }
+            Phase::About => {
+                if self.now().saturating_sub(at) >= PLAY_HOLD_MS {
+                    self.play_held = None;
+                    self.open_clock();
+                }
+            }
+            _ => {
+                self.play_held = None;
+            }
         }
-        if self.now().saturating_sub(at) >= PLAY_HOLD_MS {
-            self.insert(true);
-        }
+    }
+
+    fn clock_needs_setting(&self) -> bool {
+        let utc = self.power.as_ref().map_or_else(system_secs, |p| p.now());
+        utc < CLOCK_FLOOR
+    }
+
+    fn open_clock(&mut self) {
+        let secs = self.power.as_ref().map_or_else(system_secs, |p| p.now());
+        self.play_held = None;
+        self.phase = Phase::SetClock {
+            picker: ClockPicker::from_secs(secs),
+        };
     }
 
     fn eject(&mut self) {
@@ -2279,6 +2417,7 @@ impl App {
         };
         let Some(state) = snapshot.state() else {
             eprintln!("slot: eject: the core gave up no state");
+            self.refuse();
             return;
         };
         let (state, sav) = trusted_write(snapshot.as_ref(), state, "eject");
@@ -2418,7 +2557,7 @@ impl App {
         }
     }
 
-    /// SELECT on the shelf offers the highlighted cart's core, opening on the one it already
+    /// START on the shelf offers the highlighted cart's core, opening on the one it already
     /// uses so the menu answers "which is this?" before it asks "which do you want?".
     ///
     /// Both the read that positions the highlight and the write that follows need the card.
@@ -2472,7 +2611,11 @@ impl App {
         };
         let outcome = picker.press(press, now);
         if let Outcome::Write(core) = outcome {
-            self.write_core(core);
+            if !self.write_core(core) {
+                if let Some(picker) = &mut self.core_picker {
+                    picker.abort_write(now);
+                }
+            }
         }
     }
 
@@ -2623,18 +2766,18 @@ impl App {
         }
     }
 
-    /// The choice, onto the card. Best effort, like every other card write here: a read only
-    /// or absent card is a shelf that still works, not a boot failure. Nothing else in the
-    /// app is told — `self.core` is the seated cart's, set when a core is actually spawned,
-    /// and the shelf has none seated.
-    fn write_core(&self, core: Core) {
+    /// The choice, onto the card. `false` if it did not land, so the picker can stay open
+    /// and shake rather than close as if the chip had been written.
+    fn write_core(&self, core: Core) -> bool {
         let (Some(root), Some(cart)) = (self.root.clone(), self.shelf.carts.get(self.shelf.index))
         else {
-            return;
+            return false;
         };
         if let Err(e) = slot_store::write_selected_core(&root, &cart.stem, core) {
             eprintln!("slot: core: could not write selected_core.ini: {e}");
+            return false;
         }
+        true
     }
 
     /// Every path to shutdown — a held button, an idle doze timing out, and a critical
@@ -2717,6 +2860,7 @@ impl App {
         };
         let Some(state) = snapshot.state() else {
             eprintln!("slot: flush: the core gave up no state");
+            self.refuse();
             return;
         };
         let (state, sav) = trusted_write(snapshot.as_ref(), state, "flush");
@@ -2873,7 +3017,11 @@ impl App {
         };
         // Taken before the load, which is the last moment there is anything to go back to.
         let prior = snapshot.state();
-        snapshot.load(bytes);
+        if !snapshot.load(bytes) {
+            eprintln!("slot: load: the core refused the state");
+            self.refuse();
+            return false;
+        }
         self.hud.toast(Toast::StateLoaded, self.now());
         if let Some(prior) = prior {
             self.pending = Some((PendingUndo::Load { prior }, self.now()));
@@ -2904,7 +3052,7 @@ impl App {
         }
         let Some(state) = snapshot.state() else {
             eprintln!("slot: save: the core gave up no state");
-            return;
+            return self.refuse();
         };
         let thumb = snapshot.thumb().unwrap_or_default();
         let stamp = free_stamp(&ring, self.wall_secs());
@@ -2996,7 +3144,10 @@ impl App {
             PendingUndo::Save { stamp, evicted } => self.undo_save(&stamp, evicted),
             PendingUndo::Load { prior } => {
                 if let Some(snapshot) = &self.snapshot {
-                    snapshot.load(prior);
+                    if !snapshot.load(prior) {
+                        eprintln!("slot: undo: the core refused the state");
+                        self.refuse();
+                    }
                 }
             }
         }

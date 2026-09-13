@@ -76,8 +76,8 @@ impl Field {
     ];
 }
 
-/// Year, month, day, hour, minute, with one of them under the caret. Asked once on slot's
-/// first launch and never reachable again, which is what keeps it from being a setting.
+/// Year, month, day, hour, minute, with one of them under the caret. Asked on first launch,
+/// and again from the about label if the RTC later reads as never set.
 #[derive(Clone, Debug)]
 pub struct ClockPicker {
     year: i64,

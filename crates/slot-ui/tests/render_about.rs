@@ -22,6 +22,7 @@ fn render_about() {
         battery: Some(87),
         serial: "0473885",
         dirty_digit: '0',
+        page: slot_ui::StickerPage::Credits,
     });
 
     // The two calls the About arm makes, in order.

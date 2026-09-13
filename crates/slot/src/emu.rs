@@ -89,8 +89,8 @@ pub struct EmuHandle {
 }
 
 enum Cmd {
-    Load(Vec<u8>),
-    Save(Sender<Vec<u8>>),
+    Load(Vec<u8>, Sender<bool>),
+    Save(Sender<Option<Vec<u8>>>),
     Sav(Sender<Option<Vec<u8>>>),
     Thumb(Sender<Option<Vec<u8>>>),
     /// Wires a transport to the core's serial traffic. `client_id` is libretro's own: 0 the
@@ -304,14 +304,18 @@ impl EmuHandle {
 
     /// The state arrives on the receiver once the worker reaches a frame boundary. A dead
     /// worker closes the channel rather than leaving the caller waiting forever.
-    pub fn request_state(&self) -> Receiver<Vec<u8>> {
+    pub fn request_state(&self) -> Receiver<Option<Vec<u8>>> {
         let (tx, rx) = channel();
         let _ = self.cmds.send(Cmd::Save(tx));
         rx
     }
 
-    pub fn request_load(&self, state: Vec<u8>) {
-        let _ = self.cmds.send(Cmd::Load(state));
+    pub fn request_load(&self, state: Vec<u8>) -> bool {
+        let (tx, rx) = channel();
+        if self.cmds.send(Cmd::Load(state, tx)).is_err() {
+            return false;
+        }
+        rx.recv().ok().unwrap_or(false)
     }
 
     pub fn snapshot(&self) -> EmuSnapshot {
@@ -336,7 +340,7 @@ impl Snapshot for EmuSnapshot {
     fn state(&self) -> Option<Vec<u8>> {
         let (tx, rx) = channel();
         self.cmds.send(Cmd::Save(tx)).ok()?;
-        rx.recv().ok()
+        rx.recv().ok().flatten()
     }
 
     fn save_ram(&self) -> Option<Vec<u8>> {
@@ -351,8 +355,12 @@ impl Snapshot for EmuSnapshot {
         rx.recv().ok().flatten()
     }
 
-    fn load(&self, state: Vec<u8>) {
-        let _ = self.cmds.send(Cmd::Load(state));
+    fn load(&self, state: Vec<u8>) -> bool {
+        let (tx, rx) = channel();
+        if self.cmds.send(Cmd::Load(state, tx)).is_err() {
+            return false;
+        }
+        rx.recv().ok().unwrap_or(false)
     }
 
     /// `false` exactly when `Worker::run` handed this core a resume it went on to refuse.
@@ -463,14 +471,22 @@ impl Worker {
                 match cmd {
                     Cmd::Save(reply) => match core.serialize() {
                         Ok(state) => {
-                            let _ = reply.send(state);
+                            let _ = reply.send(Some(state));
                         }
-                        Err(e) => eprintln!("slot: {e}"),
-                    },
-                    Cmd::Load(state) => {
-                        if let Err(e) = core.unserialize(&state) {
+                        Err(e) => {
                             eprintln!("slot: {e}");
+                            let _ = reply.send(None);
                         }
+                    },
+                    Cmd::Load(state, reply) => {
+                        let ok = match core.unserialize(&state) {
+                            Ok(()) => true,
+                            Err(e) => {
+                                eprintln!("slot: {e}");
+                                false
+                            }
+                        };
+                        let _ = reply.send(ok);
                     }
                     Cmd::Sav(reply) => {
                         let _ = reply.send(core.save_ram());

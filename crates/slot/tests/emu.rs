@@ -67,7 +67,8 @@ fn frame_count(emu: &EmuHandle) -> u64 {
     let bytes = emu
         .request_state()
         .recv_timeout(Duration::from_secs(2))
-        .expect("the worker never answered a state request");
+        .expect("the worker never answered a state request")
+        .expect("the core gave up no state");
     u64::from_le_bytes(bytes.try_into().expect("mock state is a u64 counter"))
 }
 
@@ -99,7 +100,8 @@ fn a_requested_load_rewinds_the_core() {
     let state = emu
         .request_state()
         .recv_timeout(Duration::from_secs(2))
-        .expect("the worker never answered a state request");
+        .expect("the worker never answered a state request")
+        .expect("the core gave up no state");
     let at_save = u64::from_le_bytes(state.clone().try_into().expect("mock state is a counter"));
 
     std::thread::sleep(Duration::from_millis(200));

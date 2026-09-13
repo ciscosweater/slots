@@ -85,6 +85,17 @@ fn onward_mid_hop_does_nothing_and_is_not_a_refusal() {
 }
 
 #[test]
+fn aborting_a_write_keeps_the_cart_open_and_shakes_the_chip() {
+    let mut p = opened(Core::Mgba, 0);
+    assert_eq!(p.press(Press::Keep, OPEN_MS), Outcome::Write(Core::Mgba));
+    assert!(p.closing());
+    p.abort_write(OPEN_MS);
+    assert!(!p.closing());
+    assert_ne!(p.chip(OPEN_MS).shake, 0.0, "a failed write with no shake");
+    assert!(!p.finished(OPEN_MS + CLOSE_MS));
+}
+
+#[test]
 fn keep_writes_where_the_chip_is_heading_and_closes() {
     let mut p = opened(Core::Mgba, 0);
     p.press(Press::Right, 400);

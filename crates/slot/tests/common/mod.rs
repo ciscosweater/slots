@@ -18,7 +18,7 @@ pub type Loaded = Arc<Mutex<Option<Vec<u8>>>>;
 
 /// A libretro core keeps its machine in dylib globals, so two live cores is not a
 /// configuration any test in this crate may reach — `LIVE` (`slot_retro::libretro`) refuses
-/// the second one and `open_core_for` falls back to the mock, which makes a test that opens a
+/// the second one and `open_core_for` returns `None`, which makes a test that opens a
 /// real core race under CPU contention and fail looking exactly like the regression it was
 /// meant to catch. Every test in this crate that opens a real dylib takes `core_lock()` first.
 /// Shared here rather than declared per file: three separate copies of this same `Mutex` was
@@ -51,6 +51,7 @@ pub fn tmp_root_with_real_carts(stems: &[&str]) -> TempDir {
 }
 
 fn tmp_root() -> TempDir {
+    slot::core::allow_mock_for_tests();
     let d = tempfile::tempdir().expect("tempdir");
     for sub in slot::root::DIRS {
         std::fs::create_dir(d.path().join(sub)).expect("create content dir");
@@ -161,8 +162,9 @@ impl Snapshot for StubSnapshot {
         self.thumb.clone()
     }
 
-    fn load(&self, state: Vec<u8>) {
+    fn load(&self, state: Vec<u8>) -> bool {
         *self.loaded.lock().expect("loaded") = Some(state);
+        true
     }
 }
 
@@ -210,8 +212,9 @@ impl Snapshot for CoreSnapshot {
         Some(b"png".to_vec())
     }
 
-    fn load(&self, state: Vec<u8>) {
+    fn load(&self, state: Vec<u8>) -> bool {
         self.with(|c| c.unserialize(&state).expect("unserialize"));
+        true
     }
 }
 

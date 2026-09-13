@@ -10,9 +10,10 @@ use slot_power::{Platform, Power};
 use slot_store::format_stamp;
 use slot_ui::{
     arrows_hint_face, badge_face, cart_face, cart_shadow, chip_face, chip_shadow_face, clean_label,
-    hhmm, hint_face, icon_face, menu_face, photo_face, set_clock_hint_face, socket_face,
-    sticker_face, title_face, toast_face, wallpaper_face, word_face, Icon, LinkBadge, PowerChoice,
-    Printed, StickerFields, Toast, ALERT_PX, BOLT_PX, HUD_ICON_PX, HUD_INK, LEGEND,
+    favorite_mark_face, hhmm, hint_face, icon_face, menu_face, photo_face, set_clock_hint_face,
+    socket_face, sticker_face, title_face, toast_face, wallpaper_face, word_face, Icon, LinkBadge,
+    PowerChoice, Printed, StickerFields, StickerPage, Toast, ALERT_PX, BOLT_PX, EMPTY_SHELF,
+    HUD_ICON_PX, HUD_INK, LEGEND,
 };
 
 use crate::app::{App, LinkRow, Phase};
@@ -33,6 +34,10 @@ use crate::wallpaper;
 /// from a sleep — the RTC alarm never fires on this board — so a standby would be a leak with
 /// no end, and a power off is the honest version of putting it down.
 const DOZE_TIMEOUT: Duration = Duration::from_secs(180);
+
+/// A hitch longer than this would jump the shelf spring and the insert. The emu paces itself
+/// on its own thread; this is only the UI clock.
+const UI_DT_MAX: f32 = 0.08;
 
 /// Amber. The only warning colour in the tree, and the reason it is not the HUD's ink: a
 /// refusal that looks like a volume glyph is a refusal nobody reads as one.
@@ -75,6 +80,7 @@ struct AboutFace {
     /// `None` is a board with no gauge, which is a different thing from not having built one
     /// yet — `tex` says that.
     battery: Option<u8>,
+    page: StickerPage,
 }
 
 /// The clock screen's two faces and the shelf's one, with what each was last built for. The
@@ -175,6 +181,34 @@ impl Frontend {
         self.session
             .app_mut()
             .set_shelf_captions(captions, favorite);
+        let empty = title_face(EMPTY_SHELF);
+        self.session.app_mut().set_empty_caption(Printed::new(
+            compositor.create_texture(empty.w, empty.h, &empty.rgba),
+            empty.w,
+        ));
+        let idle = [hint_face("A", "Resume"), hint_face("START", "Core")]
+            .into_iter()
+            .map(|f| (compositor.create_texture(f.w, f.h, &f.rgba), f.w))
+            .collect();
+        self.session.app_mut().set_shelf_idle_faces(idle);
+        let flip = arrows_hint_face("Flip");
+        self.session.app_mut().set_about_flip_face(
+            compositor.create_texture(flip.w, flip.h, &flip.rgba),
+            flip.w,
+        );
+        let clock_hint = set_clock_hint_face();
+        self.session.app_mut().set_about_clock_hint(
+            compositor.create_texture(clock_hint.w, clock_hint.h, &clock_hint.rgba),
+            clock_hint.w,
+        );
+        let mark = favorite_mark_face();
+        if mark.w > 0 {
+            self.session.app_mut().set_favorite_mark(
+                compositor.create_texture(mark.w, mark.h, &mark.rgba),
+                mark.w,
+                mark.h,
+            );
+        }
         let icons = Icon::ALL
             .iter()
             .map(|i| {
@@ -405,7 +439,9 @@ impl Frontend {
         let now = self.now();
         let events = input.poll(now);
         self.session.feed(events, now);
-        let dt = self.last.elapsed().as_secs_f32();
+        // A hitch would otherwise jump the shelf spring and the insert. The emu paces itself
+        // on its own thread; this is only the UI clock.
+        let dt = self.last.elapsed().as_secs_f32().min(UI_DT_MAX);
         self.last = Instant::now();
         self.session.update(dt);
     }
@@ -556,15 +592,18 @@ fn sync_about(app: &mut App, compositor: &mut Compositor, state: &mut AboutFace)
         return;
     }
     let battery = app.battery().map(|b| b.percent);
-    if state.tex.is_some() && state.battery == battery {
+    let page = app.about_page();
+    if state.tex.is_some() && state.battery == battery && state.page == page {
         return;
     }
     state.battery = battery;
+    state.page = page;
     let build = Build::current();
     let face = sticker_face(&StickerFields {
         battery,
         serial: &build.serial(),
         dirty_digit: build.dirty_digit(),
+        page,
     });
     let id = upload(compositor, &mut state.tex, face);
     app.set_sticker_face(id);

@@ -98,10 +98,12 @@ impl Pass {
 fn the_whole_pass_from_boot_to_resume() {
     // The search that finds the vendored core runs from the workspace root, and a test does
     // not. Naming it is what keeps this pass against mGBA rather than against the mock.
-    if let Some(dylib) = common::vendored_core() {
-        std::env::set_var("SLOT_CORE", dylib);
-    }
     let d = common::tmp_root_with_real_carts(&["Advance Wars", "Emerald"]);
+    if let Some(dylib) = common::vendored_core() {
+        if slot::core::open_core_for(d.path(), Core::Mgba, &[dylib.clone()]).is_some() {
+            std::env::set_var("SLOT_CORE", dylib);
+        }
+    }
     let root = d.path();
     let mut p = Pass::boot(root);
 

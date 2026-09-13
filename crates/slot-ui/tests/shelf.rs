@@ -524,3 +524,21 @@ fn dim_darkens_a_side_carts_face_and_not_the_black_under_it() {
         "the black under the side cart changed with the dim"
     );
 }
+
+#[test]
+fn a_favorite_cart_wears_the_mark_on_its_label() {
+    use std::collections::BTreeSet;
+    let mut s = shelf_with(1);
+    s.set_faces(vec![TexId::from_raw(10)]);
+    s.set_favorite_mark(TexId::from_raw(99), 16, 16);
+    let favorites = BTreeSet::from(["Game 0".to_string()]);
+    s.sort_by_favorites(&favorites);
+    let mut out = Vec::new();
+    s.draw(0.0, &mut out);
+    assert!(
+        out.iter().any(
+            |d| matches!(d, Draw::Tex { tex, w, .. } if *tex == TexId::from_raw(99) && *w == 16.0)
+        ),
+        "the favorite mark was not drawn: {out:?}"
+    );
+}

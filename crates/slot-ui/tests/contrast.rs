@@ -1,5 +1,8 @@
 use slot_gfx::BACKDROP;
-use slot_ui::{edge, housing, opening, shell_for, DEFAULT_SHELL};
+use slot_ui::{
+    edge, favorite_mark_face, housing, opening, shell_for, title_face, DEFAULT_SHELL, EMPTY_SHELF,
+    FAVORITE_INK,
+};
 
 fn distance(a: [u8; 3], b: [f32; 4]) -> u32 {
     (0..3)
@@ -23,6 +26,33 @@ fn every_shell_is_visible_against_the_backdrop() {
         );
     }
     assert!(distance(DEFAULT_SHELL.colour, BACKDROP) > 60);
+}
+
+/// The new faces on the shelf have to clear the same bar the shells do, or a favorite star
+/// and the empty-case type vanish into the photograph behind them.
+#[test]
+fn the_favorite_mark_and_empty_caption_clear_the_backdrop() {
+    assert!(
+        distance(FAVORITE_INK, BACKDROP) > 60,
+        "the favorite mark is only {}/765 from the backdrop",
+        distance(FAVORITE_INK, BACKDROP)
+    );
+    let star = favorite_mark_face();
+    let lit = star.rgba.chunks(4).filter(|p| p[3] > 200).count();
+    assert!(lit > 20, "the favorite mark has no opaque ink: {lit}");
+    let caption = title_face(EMPTY_SHELF);
+    let ink = caption
+        .rgba
+        .chunks(4)
+        .find(|p| p[3] > 200)
+        .expect("the empty shelf caption is blank");
+    let colour = [ink[0], ink[1], ink[2]];
+    assert!(
+        distance(colour, BACKDROP) > 60,
+        "empty shelf type {:?} is only {}/765 from the backdrop",
+        colour,
+        distance(colour, BACKDROP)
+    );
 }
 
 /// The same failure one layer along: a near black mouth on a pure black backdrop is not an

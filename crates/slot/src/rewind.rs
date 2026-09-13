@@ -130,7 +130,7 @@ impl RewindThread {
         let (tx, rx) = std::sync::mpsc::sync_channel::<Msg>(4);
         let fill = std::sync::Arc::new(std::sync::atomic::AtomicU8::new(0));
         let published = fill.clone();
-        std::thread::Builder::new()
+        if let Err(e) = std::thread::Builder::new()
             .name("slot-rewind".into())
             .spawn(move || {
                 let mut rewind = Rewind::new(budget_bytes);
@@ -150,7 +150,9 @@ impl RewindThread {
                     }
                 }
             })
-            .expect("rewind thread");
+        {
+            eprintln!("slot: rewind thread: {e}");
+        }
         RewindThread { tx, fill }
     }
 

@@ -463,8 +463,11 @@ impl Session {
         let resume = (!self.app.starting_clean())
             .then(|| persist::read_resume(&self.root, core, stem))
             .flatten();
+        let Some(opened) = open_core(&self.root, core) else {
+            return;
+        };
         let emu = EmuHandle::spawn(
-            open_core(&self.root, core),
+            opened,
             rom,
             self.sink.ring(),
             persist::read_sav(&self.root, stem),

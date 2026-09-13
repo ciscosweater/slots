@@ -25,7 +25,7 @@ A bespoke, GBA-only frontend for the Anbernic RG SP.
 | `X`       | Toggle the LCD effect on or off        |
 | Tap `A`   | Resume the last save state          |
 | Hold `A`  | Start the game fresh                |
-| `MENU`    | Open the about screen               |
+| `MENU`    | Open the about screen. `L` / `R` turns it over for the control map; hold `A` sets the clock |
 | `START`   | Choose which emulator runs the cart |
 
 ### In game
@@ -136,8 +136,9 @@ shipped tree alongside the cores they cover.
 The device boots either [AGS-102](https://github.com/BrandonKowalski/AGS-102) by Brandon T.
 Kowalski or [BaseOS](https://github.com/pvaibhav/BaseOS) by @pvaibhav.
 
-Type is [Open Sans](https://github.com/googlefonts/opensans), under the SIL Open Font
-License, and [Nerd Fonts](https://www.nerdfonts.com) symbols by Ryan L. McIntyre, under MIT.
+Type is [Pixelify Sans](https://github.com/googlefonts/pixelify) (the default) and the original
+label font, under the SIL Open Font License, and [Nerd Fonts](https://www.nerdfonts.com)
+symbols by Ryan L. McIntyre, under MIT. L2 on the carousel toggles between them.
 
 The panel mask is derived from LCD3x, a public-domain shader by Gigaherz in the libretro
 shader collection. At exactly 3x it reduces to a 3 by 3 table, which is what ships here

@@ -1,7 +1,9 @@
+use std::collections::BTreeSet;
+
 use slot_gfx::{Draw, TexId, OUT_H, OUT_W};
 use slot_store::Cart;
 
-use crate::cart::{label_colour, label_text, CART_H, CART_W};
+use crate::cart::{label_colour, label_text, CART_H, CART_W, LABEL_W, LABEL_X, LABEL_Y};
 use crate::hud::Millis;
 use crate::slot_chrome::draw_empty_slot;
 
@@ -30,6 +32,9 @@ const REPEAT_DELAY_MS: Millis = 400;
 /// stop on one.
 const REPEAT_MS: Millis = 110;
 
+/// Printed on the case when `Games/` is empty. Same type as a cart title, not a dialog.
+pub const EMPTY_SHELF: &str = "no carts in Games/";
+
 pub struct Shelf {
     pub carts: Vec<Cart>,
     pub index: usize,
@@ -42,6 +47,8 @@ pub struct Shelf {
     /// The direction being held and when it next repeats. Repeat lives here rather than in
     /// the gesture layer so nothing in game starts auto firing.
     held: Option<(i32, Millis)>,
+    favorites: BTreeSet<String>,
+    favorite_mark: Option<(TexId, u32, u32)>,
 }
 
 impl Shelf {
@@ -54,6 +61,8 @@ impl Shelf {
             shadow: None,
             vel: 0.0,
             held: None,
+            favorites: BTreeSet::new(),
+            favorite_mark: None,
         }
     }
 
@@ -61,6 +70,10 @@ impl Shelf {
     /// can mint a `TexId`.
     pub fn set_shadow(&mut self, face: TexId) {
         self.shadow = Some(face);
+    }
+
+    pub fn set_favorite_mark(&mut self, face: TexId, w: u32, h: u32) {
+        self.favorite_mark = Some((face, w, h));
     }
 
     pub fn set_faces(&mut self, faces: Vec<TexId>) {
@@ -121,6 +134,7 @@ impl Shelf {
         self.scroll = self.index as f32;
         self.vel = 0.0;
         self.held = None;
+        self.favorites = favorites.clone();
     }
 
     pub fn hold_left(&mut self, now: Millis) {
@@ -344,6 +358,20 @@ impl Shelf {
                     }
                 }
             });
+            if self.favorites.contains(&cart.stem) {
+                if let Some((tex, mw, mh)) = self.favorite_mark {
+                    let (mw, mh) = (mw as f32 * scale, mh as f32 * scale);
+                    let inset = 6.0 * scale;
+                    out.push(Draw::Tex {
+                        x: x + (LABEL_X + LABEL_W) as f32 * scale - mw - inset,
+                        y: y + LABEL_Y as f32 * scale + inset,
+                        w: mw,
+                        h: mh,
+                        tex,
+                        alpha: alpha * dim,
+                    });
+                }
+            }
         }
     }
 }
@@ -353,4 +381,3 @@ impl Shelf {
 fn recede_alpha(face_alpha: f32) -> f32 {
     (face_alpha / SIDE_ALPHA).clamp(0.0, 1.0)
 }
-use std::collections::BTreeSet;

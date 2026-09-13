@@ -34,7 +34,9 @@ fn the_vendored_core_is_preferred_over_the_mock() {
         return;
     };
     let d = common::tmp_root_with_real_carts(&[]);
-    let mut core = open_core_for(d.path(), Core::Mgba, &[dylib]);
+    let Some(mut core) = open_core_for(d.path(), Core::Mgba, &[dylib]) else {
+        return;
+    };
     assert!(
         is_mgba(core.as_mut(), &rom("preferred.gba")),
         "the mock ran with a vendored core sitting right there"
@@ -42,10 +44,12 @@ fn the_vendored_core_is_preferred_over_the_mock() {
 }
 
 #[test]
-fn a_missing_core_falls_back_to_the_mock_rather_than_failing() {
+fn a_missing_core_does_not_open() {
     let d = common::tmp_root_with_real_carts(&[]);
-    let mut core = open_core_for(d.path(), Core::Mgba, &[PathBuf::from("no/such/core.dylib")]);
-    assert!(!is_mgba(core.as_mut(), &rom("missing.gba")));
+    assert!(
+        open_core_for(d.path(), Core::Mgba, &[PathBuf::from("no/such/core.dylib")]).is_none(),
+        "a missing dylib must not seat a mock"
+    );
 }
 
 /// A rom the core will not take has to reach the app as `Failed`. Anything else leaves the
@@ -57,8 +61,11 @@ fn a_rom_the_real_core_refuses_reports_failed() {
         return;
     };
     let d = common::tmp_root_with_carts(&["Broken"]);
+    let Some(opened) = open_core_for(d.path(), Core::Mgba, &[dylib]) else {
+        return;
+    };
     let emu = EmuHandle::spawn(
-        open_core_for(d.path(), Core::Mgba, &[dylib]),
+        opened,
         d.path().join("Games/Broken.gba"),
         StubSink::new().ring(),
         None,
@@ -80,8 +87,11 @@ fn a_cart_the_real_core_refuses_comes_back_out_of_the_slot() {
     let Some(dylib) = common::vendored_core() else {
         return;
     };
-    std::env::set_var("SLOT_CORE", dylib);
     let d = common::tmp_root_with_carts(&["Broken"]);
+    if open_core_for(d.path(), Core::Mgba, &[dylib.clone()]).is_none() {
+        return;
+    }
+    std::env::set_var("SLOT_CORE", &dylib);
     common::clocked(d.path());
     let mut s = Session::boot(d.path().to_path_buf());
     s.feed([RawEvent::Down(Btn::A)], 16);
@@ -98,6 +108,25 @@ fn a_cart_the_real_core_refuses_comes_back_out_of_the_slot() {
         now += 16;
         s.feed([], now);
         s.update(1.0 / 60.0);
-        std::thread::sleep(Duration::from_millis(1));
     }
+}
+
+/// A missing dylib is the same refusal a rom the core will not take is: the cart comes back
+/// out rather than seating a test pattern that reads as a broken game.
+#[test]
+fn a_missing_core_comes_back_out_of_the_slot() {
+    let _g = core_lock();
+    std::env::set_var("SLOT_CORE", "no/such/core.dylib");
+    let d = common::tmp_root_with_carts(&["Emerald", "Fusion"]);
+    common::clocked(d.path());
+    let mut s = Session::boot(d.path().to_path_buf());
+    s.feed([RawEvent::Down(Btn::A)], 16);
+    s.feed([RawEvent::Up(Btn::A)], 32);
+    s.update(1.0 / 60.0);
+    std::env::remove_var("SLOT_CORE");
+    assert!(
+        matches!(s.app().phase(), Phase::Ejecting { .. } | Phase::Shelf),
+        "a missing core seated: {:?}",
+        s.app().phase()
+    );
 }

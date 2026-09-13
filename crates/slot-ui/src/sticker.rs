@@ -62,10 +62,37 @@ pub struct StickerFields<'a> {
     /// Boxed beside the serial, where the article boxes a check digit. Says whether the tree
     /// had uncommitted changes when this was built.
     pub dirty_digit: char,
+    /// Credits or the control map. Same plate, L/R turns it over.
+    pub page: StickerPage,
+}
+
+/// Which face of the about label is showing. The artwork is one sticker; the small print is
+/// what turns over.
+#[derive(Copy, Clone, Default, PartialEq, Eq, Debug)]
+pub enum StickerPage {
+    #[default]
+    Credits,
+    Controls,
+}
+
+impl StickerPage {
+    pub fn other(self) -> Self {
+        match self {
+            StickerPage::Credits => StickerPage::Controls,
+            StickerPage::Controls => StickerPage::Credits,
+        }
+    }
+
+    fn lines(self) -> [&'static str; 10] {
+        match self {
+            StickerPage::Credits => CREDITS,
+            StickerPage::Controls => CONTROLS,
+        }
+    }
 }
 
 /// What the article gives ten lines of regulatory small print to. Set to the width of the
-/// column rather than to the sentence: the original's type is condensed and Open Sans is not,
+/// column rather than to the sentence: the original's type is condensed and Pixelify is not,
 /// so the same wording at the same size would run out from under the barcode panel.
 ///
 /// This is what README.md credits, in the space a label has for it.
@@ -73,13 +100,28 @@ pub const CREDITS: [&str; 10] = [
     "EMULATION POWERED BY MGBA",
     "AND GPSP. AGS-102 IS A FORK OF",
     "BASEOS BY PVAIBHAV. TYPE IS",
-    "OPEN SANS AND NERD FONTS",
+    "PIXELIFY AND NERD FONTS",
     "SYMBOLS BY RYAN L MCINTYRE.",
     "THE PANEL MASK IS DERIVED",
     "FROM GIGAHERZ'S LCD3X. THE",
     "CART SOUNDS ARE MY CHILDHOOD",
     "GAMEBOY. I WASTED WATER",
     "BUILDING THIS WITH CLAUDE.",
+];
+
+/// The other face of the same plate: how the device is actually used. Same ten lines, same
+/// column, so turning it over does not reflow the sticker.
+pub const CONTROLS: [&str; 10] = [
+    "SHELF. A RESUMES. HOLD A",
+    "STARTS FRESH. START OPENS",
+    "THE CART TO PICK A CORE.",
+    "Y FAVORITES. L2 THE FONT.",
+    "X THE LCD. MENU THIS LABEL.",
+    "IN GAME. HOLD MENU EJECTS.",
+    "DOUBLE TAP MENU FOR STATES.",
+    "SELECT PLUS MENU LINKS ON",
+    "GPSP. SELECT PLUS R1 SAVES.",
+    "L AND R TURN THIS LABEL.",
 ];
 
 /// The article's own origin row, kept word for word. It is the one place the joke is funnier
@@ -113,7 +155,7 @@ pub fn head_rows(f: &StickerFields) -> [String; 3] {
 /// from this, so nothing depends on a position in it.
 pub fn sticker_lines(f: &StickerFields) -> Vec<String> {
     let mut out: Vec<String> = head_rows(f).into();
-    out.extend(CREDITS.iter().map(|s| s.to_string()));
+    out.extend(f.page.lines().iter().map(|s| s.to_string()));
     out.extend(ORIGIN.iter().map(|s| s.to_string()));
     out.push(format!("{} {}", f.serial, f.dirty_digit));
     out.push(COPYRIGHT.to_string());
@@ -296,7 +338,7 @@ pub fn sticker_face(f: &StickerFields) -> UndoFace {
         y = c.print(left, y, line, HEAD_PX, WHITE);
     }
     y += 3.0;
-    for line in CREDITS {
+    for line in f.page.lines() {
         y = c.print(left, y, line, BODY_PX, WHITE);
     }
     y += 3.0;

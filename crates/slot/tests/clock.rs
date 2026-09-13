@@ -199,12 +199,11 @@ fn the_wall_clock_is_local_rather_than_the_utc_the_card_keeps() {
     assert_eq!(a.wall_secs(), 1_700_000_000 - 300 * 60);
 }
 
-/// An RTC that lost power sets its fault flag, the kernel refuses every read, and the system
-/// clock comes up at the epoch. The one screen that can put it right is gated on a flag that
-/// is already set by then, so without this the clock is wrong for good and there is no way
-/// back to it.
+/// An RTC that lost power comes up at the epoch after `clock_set` is already true. Reopening
+/// the picker on every boot would make a one-shot screen into a settings prompt, so the way
+/// back is About: tap A on the label when the clock reads as never set.
 #[test]
-fn a_clock_that_never_got_set_is_asked_for_again() {
+fn a_dead_rtc_is_reopened_from_about() {
     let d = tmp_root_with_carts(&["Emerald", "Fusion"]);
     write_slot_state(
         d.path(),
@@ -214,10 +213,18 @@ fn a_clock_that_never_got_set_is_asked_for_again() {
         },
     )
     .unwrap();
-    let (a, _clock) = app_booting_at(d.path(), 0);
+    let (mut a, _clock) = app_booting_at(d.path(), 0);
+    assert!(
+        matches!(a.phase(), Phase::Shelf),
+        "a confirmed clock reopened at boot: {:?}",
+        a.phase()
+    );
+    a.apply(Action::OpenAbout);
+    a.apply(Action::GbaDown(Btn::A));
+    a.apply(Action::GbaUp(Btn::A));
     assert!(
         matches!(a.phase(), Phase::SetClock { .. }),
-        "a 1970 clock was taken at face value: {:?}",
+        "tap A on the label did not reopen a dead clock: {:?}",
         a.phase()
     );
 }

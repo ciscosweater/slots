@@ -190,6 +190,26 @@ pub fn badge_face(badge: Badge, px: f32, colour: [u8; 3]) -> CartFace {
     haloed(&out, f.w, f.h, colour)
 }
 
+/// Amber, the same warning colour the alert uses, so a favorite mark on a label reads as a
+/// badge rather than as damage on the art.
+pub const FAVORITE_INK: [u8; 3] = [0xf0, 0xb4, 0x3c];
+const FAVORITE_GLYPH: char = '\u{f005}';
+const FAVORITE_PX: f32 = 14.0;
+
+/// A small star for the corner of a favorite cart's label. Not in `Icon::ALL`: the HUD box is
+/// shared and a star that widened it would reflow every bar.
+pub fn favorite_mark_face() -> CartFace {
+    let Some(font) = symbols_font() else {
+        return CartFace {
+            rgba: Vec::new(),
+            w: 0,
+            h: 0,
+        };
+    };
+    let (m, cov) = font.rasterize(FAVORITE_GLYPH, FAVORITE_PX);
+    haloed(&cov, m.width as u32, m.height as u32, FAVORITE_INK)
+}
+
 /// Coverage only. The tint is applied per call, so two colours of one icon share a raster.
 struct Raster {
     cov: Vec<u8>,

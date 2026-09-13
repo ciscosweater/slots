@@ -5,6 +5,7 @@ fn fields() -> StickerFields<'static> {
         battery: Some(87),
         serial: "0473885",
         dirty_digit: '0',
+        page: slot_ui::StickerPage::Credits,
     }
 }
 
@@ -56,7 +57,7 @@ fn the_compliance_block_is_the_credits() {
     let all = sticker_lines(&fields()).join("\n").to_uppercase();
     // What README.md credits, minus the parts a label has no room for. The cartridge sounds
     // are a recording of the author's own console, so nobody is owed for them.
-    for owed in ["MGBA", "GPSP", "OPEN SANS", "NERD", "LCD3X", "CLAUDE"] {
+    for owed in ["MGBA", "GPSP", "PIXELIFY", "NERD", "LCD3X", "CLAUDE"] {
         assert!(all.contains(owed), "the credits do not mention {owed}");
     }
 }
@@ -75,6 +76,24 @@ fn the_serial_row_matches_the_encoded_hash() {
 fn every_line_is_already_upper_case() {
     for line in sticker_lines(&fields()) {
         assert_eq!(line, line.to_uppercase(), "{line}");
+    }
+    let mut f = fields();
+    f.page = slot_ui::StickerPage::Controls;
+    for line in sticker_lines(&f) {
+        assert_eq!(line, line.to_uppercase(), "{line}");
+    }
+}
+
+#[test]
+fn the_controls_face_names_the_shelf_and_the_game() {
+    let mut f = fields();
+    f.page = slot_ui::StickerPage::Controls;
+    let all = sticker_lines(&f).join("\n");
+    for owed in ["SHELF", "START", "HOLD A", "HOLD MENU", "GPSP"] {
+        assert!(
+            all.contains(owed),
+            "the control map does not mention {owed}: {all}"
+        );
     }
 }
 

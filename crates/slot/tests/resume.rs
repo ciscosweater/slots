@@ -29,7 +29,7 @@ fn a_resume_state_is_restored_before_the_core_reports_ready() {
         Some(500_000u64.to_le_bytes().to_vec()),
     );
     wait_ready(&emu);
-    let state = emu.request_state().recv().unwrap();
+    let state = emu.request_state().recv().unwrap().expect("core state");
     let n = u64::from_le_bytes(state.try_into().expect("mock state is 8 bytes"));
     assert!(n >= 500_000, "the core started cold, counter is {n}");
 }

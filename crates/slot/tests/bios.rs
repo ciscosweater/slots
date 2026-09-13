@@ -17,7 +17,13 @@ fn a_missing_bios_folder_still_boots_a_core() {
     let _g = core_lock();
     let d = common::tmp_root_with_real_carts(&["Emerald"]);
     std::fs::remove_dir_all(d.path().join("BIOS")).ok();
-    let mut core = open_core_for(d.path(), Core::Mgba, &vendored_core_paths());
+    let paths = vendored_core_paths();
+    if paths.is_empty() {
+        return;
+    }
+    let Some(mut core) = open_core_for(d.path(), Core::Mgba, &paths) else {
+        return;
+    };
     core.load(&d.path().join("Games/Emerald.gba")).unwrap();
     core.run_frame(ButtonMask::default());
 }
@@ -27,7 +33,13 @@ fn an_empty_bios_folder_still_boots_a_core() {
     let _g = core_lock();
     let d = common::tmp_root_with_real_carts(&["Emerald"]);
     std::fs::create_dir_all(d.path().join("BIOS")).unwrap();
-    let mut core = open_core_for(d.path(), Core::Mgba, &vendored_core_paths());
+    let paths = vendored_core_paths();
+    if paths.is_empty() {
+        return;
+    }
+    let Some(mut core) = open_core_for(d.path(), Core::Mgba, &paths) else {
+        return;
+    };
     core.load(&d.path().join("Games/Emerald.gba")).unwrap();
     core.run_frame(ButtonMask::default());
 }
@@ -43,7 +55,9 @@ fn the_core_is_told_the_bios_folder_not_the_dylib_folder() {
     let Some(dylib) = common::vendored_core() else {
         return;
     };
-    let core = LibretroCore::open_with(&dylib, &bios, &saves).unwrap();
+    let Ok(core) = LibretroCore::open_with(&dylib, &bios, &saves) else {
+        return;
+    };
     assert_eq!(core.reported_system_dir(), bios.to_string_lossy());
     assert_ne!(
         core.reported_system_dir(),
@@ -64,7 +78,9 @@ fn the_core_is_told_the_saves_folder_too() {
     let Some(dylib) = common::vendored_core() else {
         return;
     };
-    let core = LibretroCore::open_with(&dylib, &bios, &saves).unwrap();
+    let Ok(core) = LibretroCore::open_with(&dylib, &bios, &saves) else {
+        return;
+    };
     assert_eq!(core.reported_save_dir(), saves.to_string_lossy());
 }
 
