@@ -1,3 +1,11 @@
+@font-face{
+  font-family:"Pixelify Sans";
+  src:url("PixelifySans.ttf") format("truetype");
+  font-style:normal;
+  font-weight:400 700;
+  font-display:swap;
+}
+
 /* The palette is slot's own theme defaults, the ones System/theme.txt overrides. */
 :root{
   --housing:#242429;
@@ -32,12 +40,12 @@ body{
   margin:0;
   background:var(--page);
   color:var(--ink);
-  font:400 18px/1.68 "Open Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  font:400 18px/1.68 "Pixelify Sans",sans-serif;
   -webkit-font-smoothing:antialiased;
 }
 a{color:var(--ink)}
 h1,h2{line-height:1.15;letter-spacing:-.02em;margin:0}
-code,kbd{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+code,kbd{font-family:"Pixelify Sans",sans-serif}
 /* A chip, the way a backtick reads in Discord. A typeface change alone was not enough
    separation at this size. .88em because monospace sets larger than the body face at
    the same px, and the vertical padding stays small so an inline chip cannot push into
@@ -423,7 +431,7 @@ footer a{color:var(--ink)}
 .ledGlow{fill:#6fd39b;opacity:.22}
 .ledOff{fill:var(--etch);opacity:.5}
 .face circle{fill:url(#btnGrad);stroke:var(--etch);stroke-opacity:.32;stroke-width:3}
-.face text,.glyph{fill:var(--etch);font-family:"Open Sans",sans-serif;font-weight:600;text-anchor:middle}
+.face text,.glyph{fill:var(--etch);font-family:"Pixelify Sans",sans-serif;font-weight:600;text-anchor:middle}
 .face text{font-size:32px}
 .micro text{fill:var(--etch);font:600 20px "Open Sans",sans-serif;letter-spacing:2.5px;text-anchor:middle}
 .holes circle{fill:var(--etch);opacity:.7}

@@ -18,6 +18,12 @@ fn lcd_changes_say_which_way_the_toggle_went() {
     assert_eq!(Toast::LcdOff.text(), "LCD Effect Off");
 }
 
+#[test]
+fn font_changes_name_the_selected_face() {
+    assert_eq!(Toast::FontPixelify.text(), "Font: Pixelify");
+    assert_eq!(Toast::FontOriginal.text(), "Font: Original");
+}
+
 /// The link shortcut on a core that cannot link says which one can, in the same banner.
 #[test]
 fn the_link_shortcut_on_the_wrong_core_says_to_switch() {

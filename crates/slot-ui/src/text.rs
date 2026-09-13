@@ -1,8 +1,11 @@
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 
 use fontdue::{Font, FontSettings};
 
-const LABEL_TTF: &[u8] = include_bytes!("../assets/label.ttf");
+const ORIGINAL_TTF: &[u8] = include_bytes!("../assets/label.ttf");
+const PIXELIFY_TTF: &[u8] = include_bytes!("../assets/PixelifySans.ttf");
+static PIXELIFY: AtomicBool = AtomicBool::new(true);
 
 pub struct Layout {
     pub lines: Vec<String>,
@@ -11,9 +14,21 @@ pub struct Layout {
 }
 
 pub fn label_font() -> Option<&'static Font> {
-    static FONT: OnceLock<Option<Font>> = OnceLock::new();
-    FONT.get_or_init(|| Font::from_bytes(LABEL_TTF, FontSettings::default()).ok())
-        .as_ref()
+    static ORIGINAL: OnceLock<Option<Font>> = OnceLock::new();
+    static PIXEL: OnceLock<Option<Font>> = OnceLock::new();
+    if PIXELIFY.load(Ordering::Relaxed) {
+        PIXEL
+            .get_or_init(|| Font::from_bytes(PIXELIFY_TTF, FontSettings::default()).ok())
+            .as_ref()
+    } else {
+        ORIGINAL
+            .get_or_init(|| Font::from_bytes(ORIGINAL_TTF, FontSettings::default()).ok())
+            .as_ref()
+    }
+}
+
+pub fn set_pixelify(enabled: bool) {
+    PIXELIFY.store(enabled, Ordering::Relaxed);
 }
 
 /// Largest whole pixel size at which `text` wraps into `max_lines` or fewer whole words per

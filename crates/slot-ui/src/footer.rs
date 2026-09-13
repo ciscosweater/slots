@@ -47,7 +47,7 @@ pub fn draw_footer(
 
 /// A line of type at an arbitrary `y`. The placeholder is what holds the space while the
 /// face is still on its way, so a row does not reflow the moment type arrives.
-pub(crate) fn draw_printed(x: f32, y: f32, p: Printed, out: &mut Vec<Draw>) {
+pub fn draw_printed(x: f32, y: f32, p: Printed, out: &mut Vec<Draw>) {
     if p.w == 0 {
         return;
     }

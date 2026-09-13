@@ -1,6 +1,7 @@
 //! Everything the binary does with a compositor except own one. The window is the only
 //! difference between the host and the device, so it is the only thing left above this.
 
+use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 use slot_gfx::{Compositor, Draw, TexId, OUT_H, OUT_W};
@@ -8,10 +9,10 @@ use slot_input::{InputSource, Millis};
 use slot_power::{Platform, Power};
 use slot_store::format_stamp;
 use slot_ui::{
-    arrows_hint_face, badge_face, cart_face, cart_shadow, chip_face, chip_shadow_face, hhmm,
-    hint_face, icon_face, menu_face, photo_face, set_clock_hint_face, socket_face, sticker_face,
-    title_face, toast_face, wallpaper_face, word_face, Icon, LinkBadge, PowerChoice, StickerFields,
-    Toast, ALERT_PX, BOLT_PX, HUD_ICON_PX, HUD_INK, LEGEND,
+    arrows_hint_face, badge_face, cart_face, cart_shadow, chip_face, chip_shadow_face, clean_label,
+    hhmm, hint_face, icon_face, menu_face, photo_face, set_clock_hint_face, socket_face,
+    sticker_face, title_face, toast_face, wallpaper_face, word_face, Icon, LinkBadge, PowerChoice,
+    Printed, StickerFields, Toast, ALERT_PX, BOLT_PX, HUD_ICON_PX, HUD_INK, LEGEND,
 };
 
 use crate::app::{App, LinkRow, Phase};
@@ -63,6 +64,7 @@ pub struct Frontend {
     switcher: Switcher,
     clocks: Clocks,
     about: AboutFace,
+    font_revision: u64,
 }
 
 /// The about label, and what it was last built for. The gauge is the only thing on it that
@@ -122,6 +124,7 @@ impl Frontend {
             switcher: Switcher::default(),
             clocks: Clocks::default(),
             about: AboutFace::default(),
+            font_revision: 0,
         }
     }
 
@@ -139,6 +142,39 @@ impl Frontend {
             })
             .collect();
         self.session.app_mut().set_faces(faces);
+        let captions = self
+            .session
+            .app()
+            .carts()
+            .iter()
+            .map(|cart| {
+                let clean = clean_label(&cart.stem);
+                let group = clean
+                    .chars()
+                    .next()
+                    .map(|c| c.to_ascii_uppercase().to_string())
+                    .unwrap_or_else(|| "#".to_string());
+                let letter = word_face(&group);
+                let title = title_face(&clean);
+                let letter = Printed::new(
+                    compositor.create_texture(letter.w, letter.h, &letter.rgba),
+                    letter.w,
+                );
+                let title = Printed::new(
+                    compositor.create_texture(title.w, title.h, &title.rgba),
+                    title.w,
+                );
+                (cart.stem.clone(), (letter, title))
+            })
+            .collect::<BTreeMap<_, _>>();
+        let favorite = word_face("Favorites");
+        let favorite = Printed::new(
+            compositor.create_texture(favorite.w, favorite.h, &favorite.rgba),
+            favorite.w,
+        );
+        self.session
+            .app_mut()
+            .set_shelf_captions(captions, favorite);
         let icons = Icon::ALL
             .iter()
             .map(|i| {
@@ -254,6 +290,7 @@ impl Frontend {
             })
             .collect();
         self.session.app_mut().set_toast_faces(toasts);
+        self.font_revision = self.session.app().font_revision();
         let legend = legend_faces(compositor, &LEGEND);
         self.session.app_mut().set_legend_faces(legend);
         let shadow = cart_shadow();
@@ -288,6 +325,13 @@ impl Frontend {
     /// One frame into the offscreen target and out to a surface of `window` pixels. The
     /// caller swaps: only it knows what presenting costs.
     pub fn render(&mut self, compositor: &mut Compositor, window: (u32, u32)) {
+        if self.font_revision != self.session.app().font_revision() {
+            self.title_tex = None;
+            self.undo_tex = None;
+            self.clocks = Clocks::default();
+            self.about = AboutFace::default();
+            self.upload_faces(compositor);
+        }
         // Set every frame rather than on the edge: the grade is part of the final blit, so
         // it has to be right whether or not anything just changed it.
         compositor.set_blue_light(self.session.app().blue_light());

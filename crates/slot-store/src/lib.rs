@@ -1,6 +1,7 @@
 mod atomic;
 mod core;
 mod favorites;
+mod font;
 mod gba;
 mod lcd;
 mod migrate;
@@ -13,6 +14,7 @@ mod theme;
 pub use atomic::atomic_write;
 pub use core::{core_for, read_selected_cores, write_selected_core, Core, SELECTED_CORE_FILE};
 pub use favorites::{read_favorites, write_favorites, FAVORITES_FILE};
+pub use font::{read_pixelify, write_pixelify, FONT_FILE};
 pub use gba::{header_clean, header_code, header_title};
 pub use lcd::{read_lcd, write_lcd, LCD_FILE};
 pub use migrate::{migrate_states, MigrationReport};

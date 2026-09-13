@@ -1,16 +1,19 @@
 mod common;
 
+use std::collections::BTreeMap;
 use std::time::Duration;
 
 use slot::app::{App, Phase, EJECT_S, INSERT_S, SEATED_AT};
 use slot::audio::Sfx;
 use slot::session::Session;
 use slot_input::{Action, Btn, RawEvent};
-use slot_store::{read_favorites, read_lcd, write_slot_state, Cart, Core, SlotState};
+use slot_store::{
+    read_favorites, read_lcd, read_pixelify, write_slot_state, Cart, Core, SlotState,
+};
 use slot_ui::{
-    board_at, grown, lid_at, on_board, opening, shelf_cart, Draw, Placed, TexId, Toast, BOARD_W,
-    CART_W, CHIP_H, CHIP_U, CHIP_V, CHIP_W, HINT_EDGE, HINT_H, LID_TURN, SLIDE_UP, SOCKET_H,
-    SOCKET_U, SOCKET_V, SOCKET_W, TURN_PAD,
+    board_at, grown, lid_at, on_board, opening, shelf_cart, Draw, Placed, Printed, TexId, Toast,
+    BOARD_W, CART_W, CHIP_H, CHIP_U, CHIP_V, CHIP_W, HINT_EDGE, HINT_H, LID_TURN, SLIDE_UP,
+    SOCKET_H, SOCKET_U, SOCKET_V, SOCKET_W, TURN_PAD,
 };
 
 /// A tap of A, which is what plays a cart. The press alone is not enough: held, it means
@@ -574,6 +577,51 @@ fn x_toggles_the_persistent_lcd_effect() {
     assert!(rebooted.lcd_enabled());
     assert_eq!(rebooted.toast(), Some(Toast::LcdOn));
     assert!(read_lcd(d.path()));
+}
+
+#[test]
+fn l2_toggles_the_persistent_font() {
+    let (d, mut app) = on_shelf(&["Advance", "Boktai"]);
+    assert!(read_pixelify(d.path()));
+    let revision = app.font_revision();
+
+    app.apply(Action::GbaDown(Btn::L2));
+    assert!(!read_pixelify(d.path()));
+    assert_eq!(app.font_revision(), revision + 1);
+    assert_eq!(app.toast(), Some(Toast::FontOriginal));
+
+    let mut rebooted = App::boot(d.path());
+    rebooted.apply(Action::GbaDown(Btn::L2));
+    assert!(read_pixelify(d.path()));
+    assert_eq!(rebooted.toast(), Some(Toast::FontPixelify));
+}
+
+#[test]
+fn shelf_names_the_current_letter_or_favorites_above_and_the_game_below() {
+    let (_d, mut app) = on_shelf(&["Advance (USA) [Rev 1]", "Boktai"]);
+    let letter = Printed::new(TexId::from_raw(101), 20);
+    let title = Printed::new(TexId::from_raw(102), 360);
+    let favorite = Printed::new(TexId::from_raw(103), 90);
+    app.set_shelf_captions(
+        BTreeMap::from([("Advance (USA) [Rev 1]".to_string(), (letter, title))]),
+        favorite,
+    );
+
+    let mut out = Vec::new();
+    app.draw(&mut out);
+    assert!(out.iter().any(|draw| matches!(draw,
+        Draw::Tex { y, tex, .. } if *y == 132.0 && *tex == TexId::from_raw(101)
+    )));
+    assert!(out.iter().any(|draw| matches!(draw,
+        Draw::Tex { y, tex, .. } if *y == 316.0 && *tex == TexId::from_raw(102)
+    )));
+
+    app.apply(Action::GbaDown(Btn::Y));
+    out.clear();
+    app.draw(&mut out);
+    assert!(out.iter().any(|draw| matches!(draw,
+        Draw::Tex { y, tex, .. } if *y == 132.0 && *tex == TexId::from_raw(103)
+    )));
 }
 
 /// Long enough for the close to put the lid back, with room to spare.

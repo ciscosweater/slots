@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use slot_gfx::{OUT_H, OUT_W};
@@ -6,16 +6,16 @@ use slot_input::{Action, Btn, MUTE_CHORD_MS};
 use slot_power::{Battery, Charge, LedState, LidPolicy, Power};
 use slot_retro::LinkChannel;
 use slot_store::{
-    format_stamp, read_favorites, read_lcd, read_slot_state, scan, write_favorites, write_lcd,
-    write_slot_state, Cart, Core, SlotState, StateEntry, StateRing, Theme, BLUE_LIGHT_MAX,
-    BRIGHTNESS_MAX, RING_MAX, VOLUME_MAX,
+    format_stamp, read_favorites, read_lcd, read_pixelify, read_slot_state, scan, write_favorites,
+    write_lcd, write_pixelify, write_slot_state, Cart, Core, SlotState, StateEntry, StateRing,
+    Theme, BLUE_LIGHT_MAX, BRIGHTNESS_MAX, RING_MAX, VOLUME_MAX,
 };
 use slot_ui::{
-    board_at, board_zoom, draw_backdrop, draw_empty_slot, draw_footer, draw_sticker, ease, grown,
-    lid_at, lift_of, on_board, ClockPicker, Draw, FfState, Hud, HudKind, Icon, LinkBadge, Millis,
-    Placed, Polaroids, PowerChoice, Refusal, Shelf, SlotChrome, TexId, Toast, BOARD_W, BOARD_X,
-    CART_W, CHIP_H, CHIP_U, CHIP_V, CHIP_W, HINT_EDGE, HINT_H, HOP_LIFT, SHADOW_H, SHADOW_W,
-    SOCKET_H, SOCKET_U, SOCKET_V, SOCKET_W, TURN_PAD,
+    board_at, board_zoom, draw_backdrop, draw_empty_slot, draw_footer, draw_printed, draw_sticker,
+    ease, grown, lid_at, lift_of, on_board, ClockPicker, Draw, FfState, Hud, HudKind, Icon,
+    LinkBadge, Millis, Placed, Polaroids, PowerChoice, Printed, Refusal, Shelf, SlotChrome, TexId,
+    Toast, BOARD_W, BOARD_X, CART_W, CHIP_H, CHIP_U, CHIP_V, CHIP_W, HINT_EDGE, HINT_H, HOP_LIFT,
+    SHADOW_H, SHADOW_W, SOCKET_H, SOCKET_U, SOCKET_V, SOCKET_W, TURN_PAD,
 };
 
 use crate::audio::Sfx;
@@ -411,7 +411,11 @@ pub struct App {
     /// `None` outside the binary, where there is no content root and nothing persists.
     root: Option<PathBuf>,
     favorites: BTreeSet<String>,
+    shelf_captions: BTreeMap<String, (Printed, Printed)>,
+    favorite_caption: Printed,
     lcd: bool,
+    pixelify: bool,
+    font_revision: u64,
     state: SlotState,
     /// The volume and the silence as they stood before each of the last two volume presses,
     /// oldest first. The mute chord is delivered behind the two presses that make it, so
@@ -531,7 +535,11 @@ impl App {
             act_at: 0,
             root: None,
             favorites: BTreeSet::new(),
+            shelf_captions: BTreeMap::new(),
+            favorite_caption: Printed::default(),
             lcd: true,
+            pixelify: true,
+            font_revision: 0,
             state: SlotState::default(),
             vol_before: Vec::new(),
             snapshot: None,
@@ -576,6 +584,8 @@ impl App {
         app.root = Some(root.to_path_buf());
         app.favorites = read_favorites(root);
         app.lcd = read_lcd(root);
+        app.pixelify = read_pixelify(root);
+        slot_ui::text::set_pixelify(app.pixelify);
         app.state = read_slot_state(root);
         if app.state.clock_set {
             app.start();
@@ -709,6 +719,31 @@ impl App {
     /// Face textures in `carts` order. Only the compositor can mint a `TexId`.
     pub fn set_faces(&mut self, faces: Vec<TexId>) {
         self.shelf.set_faces(faces);
+    }
+
+    pub fn set_shelf_captions(
+        &mut self,
+        captions: BTreeMap<String, (Printed, Printed)>,
+        favorite: Printed,
+    ) {
+        self.shelf_captions = captions;
+        self.favorite_caption = favorite;
+    }
+
+    fn draw_shelf_captions(&self, out: &mut Vec<Draw>) {
+        let Some(stem) = self.selected_stem() else {
+            return;
+        };
+        let Some((letter, title)) = self.shelf_captions.get(stem).copied() else {
+            return;
+        };
+        let group = if self.favorites.contains(stem) {
+            self.favorite_caption
+        } else {
+            letter
+        };
+        draw_printed((OUT_W as f32 - group.w as f32) / 2.0, 132.0, group, out);
+        draw_printed((OUT_W as f32 - title.w as f32) / 2.0, 316.0, title, out);
     }
 
     /// Handed over when the core is spawned, which is on the way into the slot.
@@ -986,6 +1021,29 @@ impl App {
         self.lcd
     }
 
+    fn toggle_font(&mut self) {
+        self.pixelify = !self.pixelify;
+        slot_ui::text::set_pixelify(self.pixelify);
+        self.font_revision = self.font_revision.wrapping_add(1);
+        if let Some(root) = &self.root {
+            if let Err(e) = write_pixelify(root, self.pixelify) {
+                eprintln!("slot: font: {e}");
+            }
+        }
+        self.hud.toast(
+            if self.pixelify {
+                Toast::FontPixelify
+            } else {
+                Toast::FontOriginal
+            },
+            self.now(),
+        );
+    }
+
+    pub fn font_revision(&self) -> u64 {
+        self.font_revision
+    }
+
     /// The cached reading. `None` until the first slow tick, and on any device with no gauge.
     pub fn battery(&self) -> Option<Battery> {
         self.battery
@@ -1093,6 +1151,7 @@ impl App {
                 Action::ShelfRight | Action::GbaDown(Btn::Right) => self.shelf.hold_right(now),
                 Action::GbaDown(Btn::L1) => self.shelf.previous_letter(),
                 Action::GbaDown(Btn::R1) => self.shelf.next_letter(),
+                Action::GbaDown(Btn::L2) => self.toggle_font(),
                 Action::GbaDown(Btn::Y) => self.toggle_favorite(),
                 Action::OpenAbout => self.phase = Phase::About,
                 // A is two actions and the press cannot tell them apart yet, so the cart
@@ -1631,6 +1690,7 @@ impl App {
                     }
                     _ => self.shelf.draw(self.shelf_shake(), out),
                 }
+                self.draw_shelf_captions(out);
                 draw_footer(
                     self.battery,
                     self.battery_percent,

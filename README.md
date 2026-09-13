@@ -20,6 +20,7 @@ A bespoke, GBA-only frontend for the Anbernic RG SP.
 |-----------|-------------------------------------|
 | `L` / `R` | Browse the carousel                 |
 | `L1` / `R1` | Jump to the previous / next letter |
+| `L2`      | Toggle between Pixelify and the original font |
 | `Y`       | Add or remove the game from favorites |
 | `X`       | Toggle the LCD effect on or off        |
 | Tap `A`   | Resume the last save state          |

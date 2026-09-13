@@ -17,10 +17,12 @@ pub enum Toast {
     Unfavorited,
     LcdOn,
     LcdOff,
+    FontPixelify,
+    FontOriginal,
 }
 
 impl Toast {
-    pub const ALL: [Toast; 7] = [
+    pub const ALL: [Toast; 9] = [
         Toast::StateSaved,
         Toast::StateLoaded,
         Toast::NeedsGpsp,
@@ -28,6 +30,8 @@ impl Toast {
         Toast::Unfavorited,
         Toast::LcdOn,
         Toast::LcdOff,
+        Toast::FontPixelify,
+        Toast::FontOriginal,
     ];
 
     /// Position in `ALL`, which is the order faces are uploaded in.
@@ -44,6 +48,8 @@ impl Toast {
             Toast::Unfavorited => "Removed from Favorites",
             Toast::LcdOn => "LCD Effect On",
             Toast::LcdOff => "LCD Effect Off",
+            Toast::FontPixelify => "Font: Pixelify",
+            Toast::FontOriginal => "Font: Original",
         }
     }
 }
