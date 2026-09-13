@@ -117,8 +117,19 @@ fn gb_title(p: &Path) -> Option<String> {
     file.seek(SeekFrom::Start(0x134)).ok()?;
     let mut raw = [0u8; 16];
     file.read_exact(&mut raw).ok()?;
-    let end = raw.iter().position(|b| *b == 0).unwrap_or(raw.len());
-    let title = String::from_utf8_lossy(&raw[..end]).trim().to_string();
+    // In newer CGB headers 0x13f..=0x142 is the manufacturer code and 0x143 is the
+    // CGB flag, leaving eleven bytes for the title. Older headers use all sixteen bytes.
+    let title_bytes = match raw[15] {
+        0x80 | 0xc0 => &raw[..11],
+        _ => &raw[..],
+    };
+    let end = title_bytes
+        .iter()
+        .position(|b| *b == 0)
+        .unwrap_or(title_bytes.len());
+    let title = String::from_utf8_lossy(&title_bytes[..end])
+        .trim()
+        .to_string();
     (!title.is_empty()).then_some(title)
 }
 

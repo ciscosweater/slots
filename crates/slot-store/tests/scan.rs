@@ -52,6 +52,30 @@ fn scan_accepts_gba_gb_and_gbc_and_ignores_other_files() {
 }
 
 #[test]
+fn a_modern_cgb_header_does_not_append_the_manufacturer_code_to_the_title() {
+    let d = tmp_root();
+    let mut gbc = vec![0u8; 0x150];
+    gbc[0x134..0x13f].copy_from_slice(b"POKEMON RED");
+    gbc[0x13f..0x143].copy_from_slice(b"ABCD");
+    gbc[0x143] = 0x80;
+    std::fs::write(d.path().join("Games/Pokemon.gbc"), gbc).unwrap();
+
+    let carts = scan(d.path()).unwrap();
+    assert_eq!(carts[0].title, "POKEMON RED");
+}
+
+#[test]
+fn an_older_gb_header_can_use_all_sixteen_title_bytes() {
+    let d = tmp_root();
+    let mut gb = vec![0u8; 0x150];
+    gb[0x134..0x144].copy_from_slice(b"SIXTEEN BYTE NAM");
+    std::fs::write(d.path().join("Games/Old.gb"), gb).unwrap();
+
+    let carts = scan(d.path()).unwrap();
+    assert_eq!(carts[0].title, "SIXTEEN BYTE NAM");
+}
+
+#[test]
 fn an_appledouble_sidecar_is_not_shelved_as_a_cart() {
     let d = tmp_root();
     write_rom(&d, "Metroid Fusion.gba", "METROID");

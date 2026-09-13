@@ -83,6 +83,7 @@ tasks:
     desc: Build Gambatte for GB and GBC from its pinned source revision
     status:
       - test -f {{.GAMBATTE_HOST}}
+      - test -f {{.GAMBATTE_HOST}}.src.tar.gz
       - grep -q 'commit={{.GAMBATTE_COMMIT}}' {{.GAMBATTE_HOST}}.meta
     cmds:
       - sh cores/gambatte/build.sh {{.GAMBATTE_COMMIT}} target/gambatte {{.GAMBATTE_HOST}}
@@ -219,6 +220,7 @@ tasks:
     desc: Build the aarch64 Linux Gambatte core and retain its corresponding source
     status:
       - test -f vendor/gambatte_libretro.so
+      - test -f vendor/gambatte_libretro.so.src.tar.gz
       - grep -q 'commit={{.GAMBATTE_COMMIT}}' vendor/gambatte_libretro.so.meta
     cmds:
       - task: device:sh
