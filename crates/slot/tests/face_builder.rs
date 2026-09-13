@@ -10,6 +10,7 @@ fn cart(stem: &str) -> Cart {
         label: None,
         title: stem.to_uppercase(),
         code: String::new(),
+        platform: slot_store::Platform::Gba,
     }
 }
 

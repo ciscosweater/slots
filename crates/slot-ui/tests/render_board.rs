@@ -17,6 +17,7 @@ fn render_board() {
         label: None,
         code: "BPEE".into(),
         title: "POKEMON EMER".into(),
+        platform: slot_store::Platform::Gba,
     });
     let f = std::fs::File::create(&out).unwrap();
     let mut e = png::Encoder::new(std::io::BufWriter::new(f), face.w, face.h);

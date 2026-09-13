@@ -42,6 +42,7 @@ fn app_with_carts(stems: &[&str]) -> App {
                 label: None,
                 code: String::new(),
                 title: stem.to_uppercase(),
+                platform: slot_store::Platform::Gba,
             })
             .collect(),
     )
@@ -708,7 +709,7 @@ fn x_toggles_the_persistent_lcd_effect() {
 }
 
 #[test]
-fn physical_l2_toggles_the_persistent_font() {
+fn select_toggles_the_persistent_font() {
     let d = common::tmp_root_with_carts(&["Advance", "Boktai"]);
     write_slot_state(
         d.path(),
@@ -722,13 +723,13 @@ fn physical_l2_toggles_the_persistent_font() {
     assert!(read_pixelify(d.path()));
     let revision = session.app().font_revision();
 
-    session.feed([RawEvent::Down(Btn::L2)], 0);
+    session.feed([RawEvent::Down(Btn::Select), RawEvent::Up(Btn::Select)], 0);
     assert!(!read_pixelify(d.path()));
     assert_eq!(session.app().font_revision(), revision + 1);
     assert_eq!(session.app().toast(), Some(Toast::FontOriginal));
 
     let (mut rebooted, _motor) = common::session_with_platform(d.path());
-    rebooted.feed([RawEvent::Down(Btn::L2)], 10);
+    rebooted.feed([RawEvent::Down(Btn::Select), RawEvent::Up(Btn::Select)], 10);
     assert!(read_pixelify(d.path()));
     assert_eq!(rebooted.app().toast(), Some(Toast::FontPixelify));
 }

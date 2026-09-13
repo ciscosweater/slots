@@ -8,6 +8,8 @@ vars:
   # the same fork, and that fork lacks upstream's fix for the Classic NES Series audio
   # (mgba-emu/mgba 685023e05). Once libretro/mgba carries it, drop the patch and fetch again.
   MGBA_COMMIT: e31759b24e7a4e3899285ff720d7b573ac328ae7
+  GAMBATTE_COMMIT: d9d6cd06382d1ced30de34d56d3609452323dab1
+  GAMBATTE_HOST: 'vendor/gambatte_libretro.{{if eq OS "darwin"}}dylib{{else}}so{{end}}'
 
 tasks:
   default:
@@ -75,6 +77,15 @@ tasks:
     cmds:
       - task: core:mgba:host
       - task: core:gpsp:host
+      - task: core:gambatte:host
+
+  core:gambatte:host:
+    desc: Build Gambatte for GB and GBC from its pinned source revision
+    status:
+      - test -f {{.GAMBATTE_HOST}}
+      - grep -q 'commit={{.GAMBATTE_COMMIT}}' {{.GAMBATTE_HOST}}.meta
+    cmds:
+      - sh cores/gambatte/build.sh {{.GAMBATTE_COMMIT}} target/gambatte {{.GAMBATTE_HOST}}
 
   core:mgba:host:
     desc: Build mgba_libretro for this host from the pinned libretro/mgba commit and cores/mgba's patches
@@ -186,7 +197,7 @@ tasks:
       - rm -rf {{.OUT}}
       - ./target/release/slot --init-root {{.OUT}}
       - cp target/release/slot {{.OUT}}/System/slot
-      - cp {{.CORE}} {{.GPSP_HOST}} {{.OUT}}/System/
+      - cp {{.CORE}} {{.GPSP_HOST}} {{.GAMBATTE_HOST}} {{.OUT}}/System/
       - 'echo "dist ready at {{.OUT}}, copy its contents to SD2"'
 
   core:device:
@@ -203,6 +214,17 @@ tasks:
           CMD: sh cores/mgba/build.sh build {{.MGBA_COMMIT}} target-device/mgba vendor/mgba_libretro.so
       - file vendor/mgba_libretro.so | grep -q aarch64
       - 'echo "built vendor/mgba_libretro.so"'
+
+  core:gambatte:device:
+    desc: Build the aarch64 Linux Gambatte core and retain its corresponding source
+    status:
+      - test -f vendor/gambatte_libretro.so
+      - grep -q 'commit={{.GAMBATTE_COMMIT}}' vendor/gambatte_libretro.so.meta
+    cmds:
+      - task: device:sh
+        vars:
+          CMD: sh cores/gambatte/build.sh {{.GAMBATTE_COMMIT}} target-device/gambatte vendor/gambatte_libretro.so
+      - file vendor/gambatte_libretro.so | grep -q aarch64
 
   core:gpsp:
     desc: >-
@@ -344,7 +366,7 @@ tasks:
     # Both cores now ship: crates/slot/src/core.rs resolves the dylib from a cart's own
     # Core, so a card naming gpsp in System/selected_core.ini gets gpSP for real rather than
     # mGBA wearing its name.
-    deps: [core:device, core:gpsp, build:device]
+    deps: [core:device, core:gpsp, core:gambatte:device, build:device]
     vars:
       OUT: '{{.OUT | default "dist-device"}}'
     cmds:
@@ -363,8 +385,10 @@ tasks:
       # now, right before it ships, for both cores.
       - file vendor/mgba_libretro.so | grep -q aarch64
       - file vendor/gpsp_libretro.so | grep -q aarch64
+      - file vendor/gambatte_libretro.so | grep -q aarch64
       - cp vendor/mgba_libretro.so {{.OUT}}/System/
       - cp vendor/gpsp_libretro.so {{.OUT}}/System/
+      - cp vendor/gambatte_libretro.so {{.OUT}}/System/
       # BaseOS v1.1.0 hands control to this conventional NextUI entry point on whichever
       # frontend volume it mounted. With no TF2 that is TF1's own data partition, so the
       # same tree works in either slot without baking a block-device name into slot.
@@ -372,6 +396,8 @@ tasks:
       - cp platform/baseos/launch.sh {{.OUT}}/.system/h700/paks/MinUI.pak/launch.sh
       - chmod +x {{.OUT}}/.system/h700/paks/MinUI.pak/launch.sh
       - cp -r licenses {{.OUT}}/System/licenses
+      - cp vendor/gambatte_libretro.so.src.tar.gz {{.OUT}}/System/licenses/gambatte-{{.GAMBATTE_COMMIT}}.tar.gz
+      - cp vendor/gambatte_libretro.so.meta {{.OUT}}/System/licenses/gambatte-{{.GAMBATTE_COMMIT}}.meta
       # GPL-2.0 section 3(a): gpSP's corresponding source travels with the binary. It lands
       # inside licenses/ itself, next to the license text that explains it, named for the
       # commit core:gpsp resolved so the file identifies its own source with no release page
@@ -399,7 +425,7 @@ tasks:
   deploy:device:
     desc: Build and push onto a device over adb, then restart it. SD defaults to /mnt/sdcard
     # See the note on dist:device: both cores are real now, so both are pushed.
-    deps: [core:device, core:gpsp, build:device]
+    deps: [core:device, core:gpsp, core:gambatte:device, build:device]
     vars:
       SD: '{{.SD | default "/mnt/sdcard"}}'
     cmds:
@@ -409,16 +435,20 @@ tasks:
       # own `status` has started skipping them.
       - file vendor/mgba_libretro.so | grep -q aarch64
       - file vendor/gpsp_libretro.so | grep -q aarch64
+      - file vendor/gambatte_libretro.so | grep -q aarch64
       # Onto the card the device is already running from, rather than a tree to copy by hand.
       # The binary is replaced under the running process, which is why the reboot below is
       # part of the task and not left to be remembered.
       - adb push target-device/release/slot '{{.SD}}/System/slot'
       - adb push vendor/mgba_libretro.so '{{.SD}}/System/mgba_libretro.so'
       - adb push vendor/gpsp_libretro.so '{{.SD}}/System/gpsp_libretro.so'
+      - adb push vendor/gambatte_libretro.so '{{.SD}}/System/gambatte_libretro.so'
       # Into System/, not onto System/licenses: adb copies a folder inside a destination that
       # already exists, so naming licenses itself nested a fresh copy inside the old one on
       # every deploy after the first and left the notice at the top of the card stale.
       - adb push licenses '{{.SD}}/System/'
+      - adb push vendor/gambatte_libretro.so.src.tar.gz '{{.SD}}/System/licenses/gambatte-{{.GAMBATTE_COMMIT}}.tar.gz'
+      - adb push vendor/gambatte_libretro.so.meta '{{.SD}}/System/licenses/gambatte-{{.GAMBATTE_COMMIT}}.meta'
       # Same reasoning as dist:device: the source belongs on the card next to the binary it
       # corresponds to, not only offered on request, and the .meta beside it so the anchor
       # timestamp and resolution method travel too.

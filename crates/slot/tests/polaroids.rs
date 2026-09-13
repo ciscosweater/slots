@@ -13,6 +13,7 @@ fn app_playing(stem: &str) -> App {
         label: None,
         code: String::new(),
         title: stem.to_uppercase(),
+        platform: slot_store::Platform::Gba,
     }]);
     a.apply(Action::Insert);
     a.on_core_ready();

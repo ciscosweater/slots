@@ -9,6 +9,12 @@ use crate::text;
 /// 720 wide row exactly, so the shelf can show a neighbour either side of the selection.
 pub const CART_W: u32 = 240;
 pub const CART_H: u32 = 135;
+pub const GB_CART_W: u32 = 200;
+pub const GB_CART_H: u32 = 228;
+pub const GB_LABEL_W: u32 = 148;
+pub const GB_LABEL_H: u32 = 130;
+pub const GB_LABEL_X: u32 = (GB_CART_W - GB_LABEL_W) / 2;
+pub const GB_LABEL_Y: u32 = 52;
 
 /// The paper label, inset in the shell rather than covering it: 9% to 91% across and 22.8%
 /// to 86.3% down. The vertical placement is the reference's, and the band it leaves above is
@@ -63,6 +69,9 @@ pub fn cart_shadow() -> CartFace {
 }
 
 pub fn cart_face(cart: &Cart) -> CartFace {
+    if cart.platform != slot_store::Platform::Gba {
+        return gb_cart_face(cart);
+    }
     let shell = shell_for(&cart.code);
     let mut face = shell_face(&shell);
     let label = match cart
@@ -78,6 +87,101 @@ pub fn cart_face(cart: &Cart) -> CartFace {
     paste_label(&mut face, &label);
     clip_to_silhouette(&mut face);
     face
+}
+
+pub fn cart_shadow_for(platform: slot_store::Platform) -> CartFace {
+    if platform == slot_store::Platform::Gba {
+        return cart_shadow();
+    }
+    let mut rgba = Vec::with_capacity((GB_CART_W * GB_CART_H * 4) as usize);
+    for y in 0..GB_CART_H {
+        for x in 0..GB_CART_W {
+            rgba.extend_from_slice(&[0, 0, 0, if gb_inside(x, y) { 255 } else { 0 }]);
+        }
+    }
+    CartFace {
+        rgba,
+        w: GB_CART_W,
+        h: GB_CART_H,
+    }
+}
+
+fn gb_inside(x: u32, y: u32) -> bool {
+    let shoulder = 9u32;
+    if y >= shoulder {
+        return x >= 2 && x + 2 < GB_CART_W;
+    }
+    let inset = shoulder - y;
+    x >= inset && x + inset < GB_CART_W
+}
+
+fn gb_cart_face(cart: &Cart) -> CartFace {
+    let base: [u8; 3] = match cart.platform {
+        slot_store::Platform::Gb => [0x9b, 0x9c, 0x96],
+        slot_store::Platform::Gbc => [0x49, 0x70, 0x83],
+        slot_store::Platform::Gba => unreachable!(),
+    };
+    let mut rgba = vec![0u8; (GB_CART_W * GB_CART_H * 4) as usize];
+    for y in 0..GB_CART_H {
+        for x in 0..GB_CART_W {
+            if !gb_inside(x, y) {
+                continue;
+            }
+            let i = ((y * GB_CART_W + x) * 4) as usize;
+            let edge = x < 6 || x + 6 >= GB_CART_W || y < 6 || y + 6 >= GB_CART_H;
+            let c = if edge {
+                base.map(|v| v.saturating_add(24))
+            } else {
+                base
+            };
+            rgba[i..i + 3].copy_from_slice(&c);
+            rgba[i + 3] = 255;
+        }
+    }
+    let label = cart
+        .label
+        .as_deref()
+        .and_then(|p| art::cover(p, GB_LABEL_W, GB_LABEL_H))
+        .unwrap_or_else(|| generated_label_sized(&label_text(cart), GB_LABEL_W, GB_LABEL_H));
+    for y in 0..GB_LABEL_H {
+        for x in 0..GB_LABEL_W {
+            let s = ((y * GB_LABEL_W + x) * 4) as usize;
+            let d = (((y + GB_LABEL_Y) * GB_CART_W + x + GB_LABEL_X) * 4) as usize;
+            rgba[d..d + 4].copy_from_slice(&label[s..s + 4]);
+        }
+    }
+    // Moulded top band and the characteristic lower thumb arrow.
+    for y in 27..31 {
+        for x in 18..GB_CART_W - 18 {
+            let i = ((y * GB_CART_W + x) * 4) as usize;
+            rgba[i..i + 3].copy_from_slice(&base.map(|v| (v as f32 * 0.68) as u8));
+        }
+    }
+    CartFace {
+        rgba,
+        w: GB_CART_W,
+        h: GB_CART_H,
+    }
+}
+
+fn generated_label_sized(title: &str, w: u32, h: u32) -> Vec<u8> {
+    let bg = label_colour(title);
+    let mut rgba = Vec::with_capacity((w * h * 4) as usize);
+    for _ in 0..w * h {
+        rgba.extend_from_slice(&[bg[0], bg[1], bg[2], 255]);
+    }
+    if let Some(font) = text::label_font() {
+        let layout = text::fit(
+            font,
+            title,
+            (w - 2 * PAD) as f32,
+            MAX_LINES,
+            h as f32 / 4.1,
+            MIN_PX,
+        );
+        text::draw_centred(&mut rgba, w, h, &layout, ink(bg));
+    }
+    rgba
 }
 
 /// Colour is left alone and only alpha is cut, because the sprite pass blends straight

@@ -3,7 +3,10 @@ use std::collections::BTreeSet;
 use slot_gfx::{Draw, TexId, OUT_H, OUT_W};
 use slot_store::Cart;
 
-use crate::cart::{label_colour, label_text, CART_H, CART_W, LABEL_W, LABEL_X, LABEL_Y};
+use crate::cart::{
+    label_colour, label_text, CART_H, CART_W, GB_CART_H, GB_CART_W, GB_LABEL_W, GB_LABEL_X,
+    GB_LABEL_Y, LABEL_W, LABEL_X, LABEL_Y,
+};
 use crate::hud::Millis;
 use crate::slot_chrome::draw_empty_slot;
 
@@ -37,12 +40,16 @@ pub const EMPTY_SHELF: &str = "no carts in Games/";
 
 pub struct Shelf {
     pub carts: Vec<Cart>,
+    all_carts: Vec<Cart>,
     pub index: usize,
     pub scroll: f32,
     faces: Vec<TexId>,
+    all_faces: Vec<TexId>,
+    category: usize,
     /// The cart silhouette in black, drawn under a dimmed cart. One texture for the whole
     /// row: every cart is the same shape.
     shadow: Option<TexId>,
+    gb_shadow: Option<TexId>,
     vel: f32,
     /// The direction being held and when it next repeats. Repeat lives here rather than in
     /// the gesture layer so nothing in game starts auto firing.
@@ -54,11 +61,15 @@ pub struct Shelf {
 impl Shelf {
     pub fn new(carts: Vec<Cart>) -> Self {
         Shelf {
+            all_carts: carts.clone(),
             carts,
             index: 0,
             scroll: 0.0,
             faces: Vec::new(),
+            all_faces: Vec::new(),
+            category: 0,
             shadow: None,
+            gb_shadow: None,
             vel: 0.0,
             held: None,
             favorites: BTreeSet::new(),
@@ -72,12 +83,68 @@ impl Shelf {
         self.shadow = Some(face);
     }
 
+    pub fn set_gb_shadow(&mut self, face: TexId) {
+        self.gb_shadow = Some(face);
+    }
+
     pub fn set_favorite_mark(&mut self, face: TexId, w: u32, h: u32) {
         self.favorite_mark = Some((face, w, h));
     }
 
     pub fn set_faces(&mut self, faces: Vec<TexId>) {
+        self.all_faces = faces.clone();
         self.faces = faces;
+        self.set_category(self.category);
+    }
+
+    pub fn all_carts(&self) -> &[Cart] {
+        &self.all_carts
+    }
+
+    pub fn category(&self) -> usize {
+        self.category
+    }
+
+    pub fn previous_category(&mut self) {
+        self.set_category((self.category + 3) % 4);
+    }
+
+    pub fn next_category(&mut self) {
+        self.set_category((self.category + 1) % 4);
+    }
+
+    fn set_category(&mut self, category: usize) {
+        let selected = self.carts.get(self.index).map(|c| c.stem.clone());
+        self.category = category;
+        let wanted = |cart: &Cart| {
+            category == 0
+                || match category {
+                    1 => cart.platform == slot_store::Platform::Gba,
+                    2 => cart.platform == slot_store::Platform::Gb,
+                    3 => cart.platform == slot_store::Platform::Gbc,
+                    _ => false,
+                }
+        };
+        self.carts = self
+            .all_carts
+            .iter()
+            .filter(|cart| wanted(cart))
+            .cloned()
+            .collect();
+        self.faces = self
+            .all_carts
+            .iter()
+            .zip(self.all_faces.iter().copied())
+            .filter(|(cart, _)| wanted(cart))
+            .map(|(_, face)| face)
+            .collect();
+        self.sort_by_favorites(&self.favorites.clone());
+        self.index = selected
+            .and_then(|stem| self.carts.iter().position(|cart| cart.stem == stem))
+            .unwrap_or(0);
+        self.scroll = self.index as f32;
+        self.vel = 0.0;
+        self.held = None;
     }
 
     /// In `hints` order.
@@ -307,7 +374,11 @@ impl Shelf {
             let t = offset.abs().min(1.0);
             let scale = 1.0 + (SIDE_SCALE - 1.0) * t;
             let alpha = (1.0 + (SIDE_ALPHA - 1.0) * t) * (1.0 - recede);
-            let (w, h) = (CART_W as f32 * scale, CART_H as f32 * scale);
+            let (base_w, base_h) = match cart.platform {
+                slot_store::Platform::Gba => (CART_W, CART_H),
+                slot_store::Platform::Gb | slot_store::Platform::Gbc => (GB_CART_W, GB_CART_H),
+            };
+            let (w, h) = (base_w as f32 * scale, base_h as f32 * scale);
             // Away from the middle, and further the further out it already was, so the row
             // opens rather than sliding sideways.
             let away = offset.signum() * (1.0 + offset.abs());
@@ -320,7 +391,11 @@ impl Shelf {
             // Black in the cart's own shape, under the dimmed face. Without it the dimming is
             // transparency, and over a wallpaper the row reads as ghosts of carts.
             if alpha < 1.0 {
-                if let Some(tex) = self.shadow {
+                if let Some(tex) = if cart.platform == slot_store::Platform::Gba {
+                    self.shadow
+                } else {
+                    self.gb_shadow
+                } {
                     out.push(Draw::Tex {
                         x,
                         y,
@@ -362,9 +437,15 @@ impl Shelf {
                 if let Some((tex, mw, mh)) = self.favorite_mark {
                     let (mw, mh) = (mw as f32 * scale, mh as f32 * scale);
                     let inset = 6.0 * scale;
+                    let (label_x, label_y, label_w) = match cart.platform {
+                        slot_store::Platform::Gba => (LABEL_X, LABEL_Y, LABEL_W),
+                        slot_store::Platform::Gb | slot_store::Platform::Gbc => {
+                            (GB_LABEL_X, GB_LABEL_Y, GB_LABEL_W)
+                        }
+                    };
                     out.push(Draw::Tex {
-                        x: x + (LABEL_X + LABEL_W) as f32 * scale - mw - inset,
-                        y: y + LABEL_Y as f32 * scale + inset,
+                        x: x + (label_x + label_w) as f32 * scale - mw - inset,
+                        y: y + label_y as f32 * scale + inset,
                         w: mw,
                         h: mh,
                         tex,

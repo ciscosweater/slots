@@ -10,6 +10,7 @@ pub enum Core {
     #[default]
     Mgba,
     Gpsp,
+    Gambatte,
 }
 
 impl Core {
@@ -17,12 +18,14 @@ impl Core {
     /// `migrate_states` walks this rather than spelling the variant list out a second time,
     /// so a third core added here does not also have to be remembered at every call site
     /// that needs to tell a core's own directory apart from a cart's.
-    pub const ALL: [Core; 2] = [Core::Mgba, Core::Gpsp];
+    pub const ALL: [Core; 3] = [Core::Mgba, Core::Gpsp, Core::Gambatte];
+    pub const PICKABLE: [Core; 2] = [Core::Mgba, Core::Gpsp];
 
     pub fn as_str(&self) -> &'static str {
         match self {
             Core::Mgba => "mgba",
             Core::Gpsp => "gpsp",
+            Core::Gambatte => "gambatte",
         }
     }
 
@@ -38,6 +41,7 @@ impl Core {
         match self {
             Core::Mgba => "mGBA",
             Core::Gpsp => "gpSP",
+            Core::Gambatte => "Gambatte",
         }
     }
 
@@ -45,6 +49,7 @@ impl Core {
         match s.trim().to_ascii_lowercase().as_str() {
             "mgba" => Some(Core::Mgba),
             "gpsp" => Some(Core::Gpsp),
+            "gambatte" => Some(Core::Gambatte),
             _ => None,
         }
     }
@@ -94,6 +99,13 @@ pub fn core_for(root: &Path, stem: &str) -> Core {
         .get(stem)
         .copied()
         .unwrap_or_default()
+}
+
+pub fn core_for_cart(root: &Path, cart: &crate::Cart) -> Core {
+    match cart.platform {
+        crate::Platform::Gba => core_for(root, &cart.stem),
+        crate::Platform::Gb | crate::Platform::Gbc => Core::Gambatte,
+    }
 }
 
 /// Set one cart's core, leaving the rest of the file exactly as it was.

@@ -7,10 +7,14 @@ compiled libretro cores it did not write:
 |-----------------|------------------------------------------|----------|---------------------------|
 | `gpsp_libretro`  | https://github.com/libretro/gpsp        | GPL-2.0  | `gpsp-GPL-2.0.txt`        |
 | `mgba_libretro`  | https://github.com/libretro/mgba        | MPL-2.0  | `mgba-MPL-2.0.txt`        |
+| `gambatte_libretro` | https://github.com/libretro/gambatte-libretro | GPL-2.0 | `gambatte-GPL-2.0.txt` |
 
 gpSP was originally written by Gilead "Exophase" Kutnick; the libretro core above is the
 actively maintained fork slot's fetch script pulls from. mGBA is by Jeffrey "endrift" Pfau.
 libretro/mgba is libretro's fork of https://github.com/mgba-emu/mgba.
+Gambatte is built from the pinned libretro fork by `cores/gambatte/build.sh`; its exact source
+archive and revision metadata ship beside the binary as `gambatte-<commit>.tar.gz` and
+`gambatte-<commit>.meta`, satisfying GPL-2.0 section 3(a) in the same manner as gpSP below.
 
 gpSP is conveyed unmodified, in the executable form the libretro buildbot publishes, fetched by
 `taskfile.yml`'s `core:gpsp`. mGBA is built by this repo instead: `cores/mgba/build.sh`, run by

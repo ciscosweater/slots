@@ -1,4 +1,4 @@
-use slot_store::{core_for, read_selected_cores, Core};
+use slot_store::{core_for, core_for_cart, read_selected_cores, Cart, Core, Platform};
 use tempfile::tempdir;
 
 fn root_with(ini: Option<&str>) -> tempfile::TempDir {
@@ -30,6 +30,22 @@ fn a_listed_stem_gets_its_core() {
 fn an_unlisted_stem_defaults_to_mgba() {
     let d = root_with(Some("Emerald = gpsp\n"));
     assert_eq!(core_for(d.path(), "Metroid Fusion"), Core::Mgba);
+}
+
+#[test]
+fn gb_and_gbc_always_resolve_to_gambatte() {
+    let d = root_with(Some("Tetris = gpsp\n"));
+    for platform in [Platform::Gb, Platform::Gbc] {
+        let cart = Cart {
+            stem: "Tetris".into(),
+            rom: "Games/Tetris.gb".into(),
+            label: None,
+            title: "TETRIS".into(),
+            code: String::new(),
+            platform,
+        };
+        assert_eq!(core_for_cart(d.path(), &cart), Core::Gambatte);
+    }
 }
 
 /// A card is user editable. Every one of these is a typo someone will make, and not one

@@ -382,9 +382,13 @@ unsafe extern "C" fn video_refresh(
     with_host(|h| {
         let cols = width.min(GBA_W) as usize;
         let rows = height.min(GBA_H) as usize;
+        let left = (GBA_W as usize - cols) / 2;
+        // A 160x144 GB frame is centred in the GBA-sized backing texture, then moved four
+        // source pixels upward: at the fixed 3x presentation this is the requested 12 px.
+        let top = if width == 160 && height == 144 { 4 } else { 0 };
         for y in 0..rows {
             let src = (data as *const u8).add(y * pitch);
-            let row = y * GBA_W as usize * 4;
+            let row = ((y + top) * GBA_W as usize + left) * 4;
             match h.format {
                 PixelFormat::Xrgb8888 => {
                     ptr::copy_nonoverlapping(src, h.video.as_mut_ptr().add(row), cols * 4);

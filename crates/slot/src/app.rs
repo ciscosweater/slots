@@ -422,6 +422,7 @@ pub struct App {
     shelf_idle_at: Millis,
     /// `A` Resume and `START` Core, uploaded once.
     shelf_idle_faces: Vec<(TexId, u32)>,
+    shelf_category_faces: Vec<Printed>,
     about_page: StickerPage,
     about_flip_face: Option<(TexId, u32)>,
     about_clock_hint: Option<(TexId, u32)>,
@@ -552,6 +553,7 @@ impl App {
             empty_caption: Printed::default(),
             shelf_idle_at: 0,
             shelf_idle_faces: Vec::new(),
+            shelf_category_faces: Vec::new(),
             about_page: StickerPage::Credits,
             about_flip_face: None,
             about_clock_hint: None,
@@ -729,7 +731,22 @@ impl App {
     }
 
     pub fn carts(&self) -> &[Cart] {
-        &self.shelf.carts
+        self.shelf.all_carts()
+    }
+
+    pub fn game_platform(&self) -> Option<slot_store::Platform> {
+        let stem = match &self.phase {
+            Phase::Inserting { cart, .. }
+            | Phase::Playing { cart }
+            | Phase::Ejecting { cart, .. }
+            | Phase::Polaroids { cart, .. } => cart,
+            _ => return None,
+        };
+        self.shelf
+            .carts
+            .iter()
+            .find(|cart| &cart.stem == stem)
+            .map(|cart| cart.platform)
     }
 
     /// Exactly one cart on the card. The shelf is unreachable and eject is refused.
@@ -740,6 +757,10 @@ impl App {
     /// Face textures in `carts` order. Only the compositor can mint a `TexId`.
     pub fn set_faces(&mut self, faces: Vec<TexId>) {
         self.shelf.set_faces(faces);
+    }
+
+    pub fn set_gb_shadow(&mut self, face: TexId) {
+        self.shelf.set_gb_shadow(face);
     }
 
     pub fn set_shelf_captions(
@@ -759,6 +780,10 @@ impl App {
         self.shelf_idle_faces = faces;
     }
 
+    pub fn set_shelf_category_faces(&mut self, faces: Vec<Printed>) {
+        self.shelf_category_faces = faces;
+    }
+
     pub fn set_about_flip_face(&mut self, face: TexId, w: u32) {
         self.about_flip_face = Some((face, w));
     }
@@ -776,6 +801,13 @@ impl App {
     }
 
     fn draw_shelf_captions(&self, out: &mut Vec<Draw>) {
+        if let Some(face) = self
+            .shelf_category_faces
+            .get(self.shelf.category())
+            .copied()
+        {
+            draw_printed((OUT_W as f32 - face.w as f32) / 2.0, 8.0, face, out);
+        }
         if self.shelf.carts.is_empty() {
             draw_printed(
                 (OUT_W as f32 - self.empty_caption.w as f32) / 2.0,
@@ -796,7 +828,17 @@ impl App {
         } else {
             letter
         };
-        draw_printed((OUT_W as f32 - group.w as f32) / 2.0, 132.0, group, out);
+        let group_y = if self
+            .shelf
+            .carts
+            .get(self.shelf.index)
+            .is_some_and(|cart| cart.platform != slot_store::Platform::Gba)
+        {
+            44.0
+        } else {
+            132.0
+        };
+        draw_printed((OUT_W as f32 - group.w as f32) / 2.0, group_y, group, out);
         draw_printed((OUT_W as f32 - title.w as f32) / 2.0, 316.0, title, out);
     }
 
@@ -956,9 +998,8 @@ impl App {
         // after that is About's to reopen — interrupting a seated cart, or a test that
         // attached a stub platform sitting at epoch 0, is not a first-boot.
         let secs = power.now();
-        match &mut self.phase {
-            Phase::SetClock { picker } => *picker = ClockPicker::from_secs(secs),
-            _ => {}
+        if let Phase::SetClock { picker } = &mut self.phase {
+            *picker = ClockPicker::from_secs(secs);
         }
         self.power = Some(power);
         // There is nothing to read before this call — no gauge for `battery_at`, no charge
@@ -1235,7 +1276,9 @@ impl App {
                     Action::ShelfRight | Action::GbaDown(Btn::Right) => self.shelf.hold_right(now),
                     Action::GbaDown(Btn::L1) => self.shelf.previous_letter(),
                     Action::GbaDown(Btn::R1) => self.shelf.next_letter(),
-                    Action::RewindStart => self.toggle_font(),
+                    Action::RewindStart => self.shelf.previous_category(),
+                    Action::FfStart => self.shelf.next_category(),
+                    Action::GbaDown(Btn::Select) => self.toggle_font(),
                     Action::GbaDown(Btn::Y) => self.toggle_favorite(),
                     Action::OpenAbout => self.phase = Phase::About,
                     // A is two actions and the press cannot tell them apart yet, so the cart
@@ -1294,10 +1337,10 @@ impl App {
                     self.sticker_face = None;
                 }
                 Action::GbaDown(Btn::A) => self.play_held = Some(now),
-                Action::GbaUp(Btn::A) => {
-                    if self.play_held.take().is_some() && self.clock_needs_setting() {
-                        self.open_clock();
-                    }
+                Action::GbaUp(Btn::A)
+                    if self.play_held.take().is_some() && self.clock_needs_setting() =>
+                {
+                    self.open_clock();
                 }
                 _ => {}
             },
@@ -2588,6 +2631,9 @@ impl App {
         let Some(cart) = self.shelf.carts.get(self.shelf.index) else {
             return;
         };
+        if cart.platform != slot_store::Platform::Gba {
+            return;
+        }
         let seat = slot_store::core_for(&root, &cart.stem);
         let now = self.now();
         let mut picker = CorePicker::open(seat, now);

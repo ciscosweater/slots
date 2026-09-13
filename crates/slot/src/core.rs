@@ -139,6 +139,16 @@ pub fn apply_core_options(core: &mut LibretroCore, which: Core) {
             core.set_option("gpsp_serial", "auto");
             core.set_option("gpsp_color_correction", "enabled");
         }
+        Core::Gambatte => {
+            core.set_option("gambatte_gb_colorization", "internal");
+            core.set_option("gambatte_gb_internal_palette", "PixelShift - Pack 1");
+            core.set_option(
+                "gambatte_gb_palette_pixelshift_1",
+                "PixelShift 03 - BGB 0.3 Emulator",
+            );
+            core.set_option("gambatte_gbc_color_correction", "GBC only");
+            core.set_option("gambatte_gbc_color_correction_mode", "Accurate");
+        }
     }
 }
 

@@ -3,7 +3,7 @@ mod common;
 use std::collections::BTreeSet;
 
 use common::tmp_root;
-use slot_store::{scan, write_favorites};
+use slot_store::{scan, write_favorites, Platform};
 use tempfile::TempDir;
 
 fn write_rom(d: &TempDir, name: &str, title: &str) {
@@ -34,11 +34,21 @@ fn a_png_in_labels_is_paired_to_its_rom_by_stem() {
 }
 
 #[test]
-fn scan_ignores_non_gba_files() {
+fn scan_accepts_gba_gb_and_gbc_and_ignores_other_files() {
     let d = tmp_root();
     write_rom(&d, "Real.gba", "REAL");
+    let mut gb = vec![0u8; 0x150];
+    gb[0x134..0x13a].copy_from_slice(b"TETRIS");
+    std::fs::write(d.path().join("Games/Tetris.gb"), &gb).unwrap();
+    std::fs::write(d.path().join("Games/Zelda.GBC"), &gb).unwrap();
     std::fs::write(d.path().join("Games/notes.txt"), "hi").unwrap();
-    assert_eq!(scan(d.path()).unwrap().len(), 1);
+    let carts = scan(d.path()).unwrap();
+    assert_eq!(carts.len(), 3);
+    assert_eq!(
+        carts.iter().map(|c| c.platform).collect::<Vec<_>>(),
+        [Platform::Gba, Platform::Gb, Platform::Gbc,]
+    );
+    assert_eq!(carts[1].title, "TETRIS");
 }
 
 #[test]

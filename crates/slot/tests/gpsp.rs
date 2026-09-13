@@ -99,6 +99,34 @@ fn mgba_is_given_its_gba_color_correction_only() {
     );
 }
 
+#[test]
+fn gambatte_is_given_the_requested_gb_palette_and_gbc_correction() {
+    let path = dylib_for(Core::Gambatte);
+    if !path.exists() {
+        return;
+    }
+    let Ok(mut core) = slot_retro::LibretroCore::open(&path) else {
+        return;
+    };
+    slot::core::apply_core_options(&mut core, Core::Gambatte);
+    assert_eq!(
+        core.option("gambatte_gb_colorization").as_deref(),
+        Some("internal")
+    );
+    assert_eq!(
+        core.option("gambatte_gb_internal_palette").as_deref(),
+        Some("PixelShift - Pack 1")
+    );
+    assert_eq!(
+        core.option("gambatte_gb_palette_pixelshift_1").as_deref(),
+        Some("PixelShift 03 - BGB 0.3 Emulator")
+    );
+    assert_eq!(
+        core.option("gambatte_gbc_color_correction").as_deref(),
+        Some("GBC only")
+    );
+}
+
 /// The bug the previous plan shipped: `open_core` searched for `mgba_libretro` no matter
 /// what the cart asked for, while the resume lookup already read `core_for` from the ini.
 /// A `gpsp` cart could therefore run on mGBA with its state filed under `States/gpsp/` — two
@@ -197,7 +225,7 @@ fn a_gpsp_cart_runs_the_dylib_planted_under_its_own_name_through_the_session() {
         .join("System")
         .join(slot::core::dylib_name(Core::Gpsp));
     std::fs::copy(&mgba, &planted).expect("plant a dylib under gpSP's name");
-    if slot::core::open_core_for(d.path(), Core::Gpsp, &[planted.clone()]).is_none() {
+    if slot::core::open_core_for(d.path(), Core::Gpsp, std::slice::from_ref(&planted)).is_none() {
         eprintln!("planted dylib is not host-openable, skipping");
         return;
     }
@@ -423,7 +451,7 @@ fn open_core_reaches_a_gpsp_named_dylib_under_the_content_roots_system_directory
         .join("System")
         .join(slot::core::dylib_name(Core::Gpsp));
     std::fs::copy(&mgba, &planted).expect("plant a dylib under gpSP's name");
-    if slot::core::open_core_for(d.path(), Core::Gpsp, &[planted.clone()]).is_none() {
+    if slot::core::open_core_for(d.path(), Core::Gpsp, std::slice::from_ref(&planted)).is_none() {
         eprintln!("planted dylib is not host-openable, skipping");
         return;
     }

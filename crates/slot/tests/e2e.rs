@@ -100,7 +100,7 @@ fn the_whole_pass_from_boot_to_resume() {
     // not. Naming it is what keeps this pass against mGBA rather than against the mock.
     let d = common::tmp_root_with_real_carts(&["Advance Wars", "Emerald"]);
     if let Some(dylib) = common::vendored_core() {
-        if slot::core::open_core_for(d.path(), Core::Mgba, &[dylib.clone()]).is_some() {
+        if slot::core::open_core_for(d.path(), Core::Mgba, std::slice::from_ref(&dylib)).is_some() {
             std::env::set_var("SLOT_CORE", dylib);
         }
     }

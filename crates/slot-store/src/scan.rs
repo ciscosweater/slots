@@ -4,6 +4,25 @@ use std::path::{Path, PathBuf};
 use crate::gba::{header_code, header_title};
 use crate::read_favorites;
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Platform {
+    Gba,
+    Gb,
+    Gbc,
+}
+
+impl Platform {
+    pub const ALL: [Platform; 3] = [Platform::Gba, Platform::Gb, Platform::Gbc];
+
+    pub fn text(self) -> &'static str {
+        match self {
+            Platform::Gba => "GBA",
+            Platform::Gb => "GB",
+            Platform::Gbc => "GBC",
+        }
+    }
+}
+
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Cart {
     /// Filename stem, which is the key for labels, saves and states. Not a content hash.
@@ -13,6 +32,7 @@ pub struct Cart {
     pub title: String,
     /// The four character header game code, empty when the rom has none.
     pub code: String,
+    pub platform: Platform,
 }
 
 #[derive(Debug)]
@@ -47,17 +67,24 @@ pub fn scan(root: &Path) -> Result<Vec<Cart>, StoreError> {
     let mut carts = Vec::new();
     for entry in dir {
         let rom = entry?.path();
-        if !is_gba(&rom) {
+        let Some(platform) = platform_for(&rom) else {
             continue;
-        }
+        };
         let Some(stem) = rom.file_stem().and_then(|s| s.to_str()) else {
             continue;
         };
         let label = root.join("Labels").join(format!("{stem}.png"));
         carts.push(Cart {
             stem: stem.to_string(),
-            title: header_title(&rom).unwrap_or_default(),
-            code: header_code(&rom).unwrap_or_default(),
+            title: match platform {
+                Platform::Gba => header_title(&rom).unwrap_or_default(),
+                Platform::Gb | Platform::Gbc => gb_title(&rom).unwrap_or_default(),
+            },
+            code: match platform {
+                Platform::Gba => header_code(&rom).unwrap_or_default(),
+                Platform::Gb | Platform::Gbc => String::new(),
+            },
+            platform,
             label: label.is_file().then_some(label),
             rom,
         });
@@ -72,12 +99,27 @@ pub fn scan(root: &Path) -> Result<Vec<Cart>, StoreError> {
     Ok(carts)
 }
 
-fn is_gba(p: &Path) -> bool {
-    !is_hidden(p)
-        && p.is_file()
-        && p.extension()
-            .and_then(|e| e.to_str())
-            .is_some_and(|e| e.eq_ignore_ascii_case("gba"))
+fn platform_for(p: &Path) -> Option<Platform> {
+    if is_hidden(p) || !p.is_file() {
+        return None;
+    }
+    match p.extension()?.to_str()?.to_ascii_lowercase().as_str() {
+        "gba" => Some(Platform::Gba),
+        "gb" => Some(Platform::Gb),
+        "gbc" => Some(Platform::Gbc),
+        _ => None,
+    }
+}
+
+fn gb_title(p: &Path) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = std::fs::File::open(p).ok()?;
+    file.seek(SeekFrom::Start(0x134)).ok()?;
+    let mut raw = [0u8; 16];
+    file.read_exact(&mut raw).ok()?;
+    let end = raw.iter().position(|b| *b == 0).unwrap_or(raw.len());
+    let title = String::from_utf8_lossy(&raw[..end]).trim().to_string();
+    (!title.is_empty()).then_some(title)
 }
 
 /// A leading dot is card metadata rather than content, and every folder on the card is read

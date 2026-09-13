@@ -1,5 +1,5 @@
 use slot_power::{Battery, Charge};
-use slot_store::Cart;
+use slot_store::{Cart, Platform};
 use slot_ui::{draw_footer, label_colour, Draw, Printed, Shelf, TexId, CART_W, OUT_W};
 
 fn shelf_with(n: usize) -> Shelf {
@@ -11,9 +11,47 @@ fn shelf_with(n: usize) -> Shelf {
                 label: None,
                 code: String::new(),
                 title: format!("GAME {i}"),
+                platform: slot_store::Platform::Gba,
             })
             .collect(),
     )
+}
+
+#[test]
+fn categories_cycle_and_filter_by_platform() {
+    let carts = [Platform::Gba, Platform::Gb, Platform::Gbc]
+        .into_iter()
+        .enumerate()
+        .map(|(i, platform)| Cart {
+            stem: format!("Game {i}"),
+            rom: format!("Games/Game {i}").into(),
+            label: None,
+            code: String::new(),
+            title: format!("GAME {i}"),
+            platform,
+        })
+        .collect();
+    let mut shelf = Shelf::new(carts);
+    assert_eq!(shelf.carts.len(), 3);
+    shelf.next_category();
+    assert_eq!(
+        (shelf.category(), shelf.carts[0].platform),
+        (1, Platform::Gba)
+    );
+    shelf.next_category();
+    assert_eq!(
+        (shelf.category(), shelf.carts[0].platform),
+        (2, Platform::Gb)
+    );
+    shelf.next_category();
+    assert_eq!(
+        (shelf.category(), shelf.carts[0].platform),
+        (3, Platform::Gbc)
+    );
+    shelf.next_category();
+    assert_eq!((shelf.category(), shelf.carts.len()), (0, 3));
+    shelf.previous_category();
+    assert_eq!(shelf.category(), 3);
 }
 
 fn placed(s: &Shelf) -> Vec<(f32, f32)> {
@@ -97,6 +135,7 @@ fn shoulders_jump_between_initial_letters_and_wrap() {
             label: None,
             code: String::new(),
             title: stem.to_uppercase(),
+            platform: slot_store::Platform::Gba,
         })
         .collect();
     let mut s = Shelf::new(carts);

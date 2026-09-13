@@ -201,10 +201,11 @@ impl Session {
         if trace() {
             eprintln!("slot: {action:?} in {:?}", self.app.phase());
         }
+        let on_shelf = matches!(self.app.phase(), Phase::Shelf);
         match action {
-            Action::RewindStart => self.rewinding = true,
+            Action::RewindStart if !on_shelf => self.rewinding = true,
             Action::RewindStop => self.rewinding = false,
-            Action::FfStart => self.fast = true,
+            Action::FfStart if !on_shelf => self.fast = true,
             Action::FfStop => self.fast = false,
             _ => {}
         }
@@ -449,15 +450,10 @@ impl Session {
     }
 
     fn spawn_core(&mut self, stem: &str) {
-        let Some(rom) = self
-            .app
-            .carts()
-            .iter()
-            .find(|c| c.stem == stem)
-            .map(|c| c.rom.clone())
-        else {
+        let Some(cart) = self.app.carts().iter().find(|c| c.stem == stem).cloned() else {
             return;
         };
+        let rom = cart.rom.clone();
         // Resolved once, and only here: this is which dylib gets opened, which `States/<core>/`
         // directory the resume lookup below reads from, and — via `set_core` — every later
         // flush, eject and polaroid read for this cart too. Deriving it twice let a `gpsp` cart
@@ -465,7 +461,7 @@ impl Session {
         // in practice, right up until `open_core` did not yet know `Core` existed. `App` stores
         // this rather than re-deriving it later, which is what makes that class of drift
         // structurally unreachable now instead of merely unobserved.
-        let core = slot_store::core_for(&self.root, stem);
+        let core = slot_store::core_for_cart(&self.root, &cart);
         self.app.set_core(core);
         // A clean start skips the state, it does not delete it: the file stays on the card
         // for the next tap to resume from.

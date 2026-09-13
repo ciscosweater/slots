@@ -11,6 +11,7 @@ fn cart() -> Cart {
         label: None,
         code: String::new(),
         title: "POKEMON EMER".into(),
+        platform: slot_store::Platform::Gba,
     }
 }
 

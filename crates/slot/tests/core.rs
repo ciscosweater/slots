@@ -88,7 +88,7 @@ fn a_cart_the_real_core_refuses_comes_back_out_of_the_slot() {
         return;
     };
     let d = common::tmp_root_with_carts(&["Broken"]);
-    if open_core_for(d.path(), Core::Mgba, &[dylib.clone()]).is_none() {
+    if open_core_for(d.path(), Core::Mgba, std::slice::from_ref(&dylib)).is_none() {
         return;
     }
     std::env::set_var("SLOT_CORE", &dylib);

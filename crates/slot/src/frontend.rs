@@ -9,11 +9,11 @@ use slot_input::{InputSource, Millis};
 use slot_power::{Platform, Power};
 use slot_store::format_stamp;
 use slot_ui::{
-    arrows_hint_face, badge_face, cart_face, cart_shadow, chip_face, chip_shadow_face, clean_label,
-    favorite_mark_face, hhmm, hint_face, icon_face, menu_face, photo_face, set_clock_hint_face,
-    socket_face, sticker_face, title_face, toast_face, wallpaper_face, word_face, Icon, LinkBadge,
-    PowerChoice, Printed, StickerFields, StickerPage, Toast, ALERT_PX, BOLT_PX, EMPTY_SHELF,
-    HUD_ICON_PX, HUD_INK, LEGEND,
+    arrows_hint_face, badge_face, cart_face, cart_shadow, cart_shadow_for, chip_face,
+    chip_shadow_face, clean_label, favorite_mark_face, hhmm, hint_face, icon_face, menu_face,
+    photo_face, set_clock_hint_face, socket_face, sticker_face, title_face, toast_face,
+    wallpaper_face, word_face, Icon, LinkBadge, PowerChoice, Printed, StickerFields, StickerPage,
+    Toast, ALERT_PX, BOLT_PX, EMPTY_SHELF, HUD_ICON_PX, HUD_INK, LEGEND,
 };
 
 use crate::app::{App, LinkRow, Phase};
@@ -70,6 +70,8 @@ pub struct Frontend {
     clocks: Clocks,
     about: AboutFace,
     font_revision: u64,
+    gb_overlay: Option<TexId>,
+    gbc_overlay: Option<TexId>,
 }
 
 /// The about label, and what it was last built for. The gauge is the only thing on it that
@@ -131,12 +133,16 @@ impl Frontend {
             clocks: Clocks::default(),
             about: AboutFace::default(),
             font_revision: 0,
+            gb_overlay: None,
+            gbc_overlay: None,
         }
     }
 
     /// Everything that never changes: the carts, the HUD glyphs and the key caps. All of it
     /// needs a live context, so it happens after the compositor and not at boot.
     pub fn upload_faces(&mut self, compositor: &mut Compositor) {
+        self.gb_overlay = upload_png(compositor, include_bytes!("../../../jeltron/GB_DMG.png"));
+        self.gbc_overlay = upload_png(compositor, include_bytes!("../../../jeltron/GB_Color.png"));
         let faces = self
             .session
             .app()
@@ -148,6 +154,10 @@ impl Frontend {
             })
             .collect();
         self.session.app_mut().set_faces(faces);
+        let shadow = cart_shadow_for(slot_store::Platform::Gb);
+        self.session
+            .app_mut()
+            .set_gb_shadow(compositor.create_texture(shadow.w, shadow.h, &shadow.rgba));
         let captions = self
             .session
             .app()
@@ -191,6 +201,24 @@ impl Frontend {
             .map(|f| (compositor.create_texture(f.w, f.h, &f.rgba), f.w))
             .collect();
         self.session.app_mut().set_shelf_idle_faces(idle);
+        let category_faces = [
+            "[ALL] - GBA - GB - GBC",
+            "ALL - [GBA] - GB - GBC",
+            "ALL - GBA - [GB] - GBC",
+            "ALL - GBA - GB - [GBC]",
+        ]
+        .into_iter()
+        .map(|label| {
+            let face = word_face(label);
+            Printed::new(
+                compositor.create_texture(face.w, face.h, &face.rgba),
+                face.w,
+            )
+        })
+        .collect();
+        self.session
+            .app_mut()
+            .set_shelf_category_faces(category_faces);
         let flip = arrows_hint_face("Flip");
         self.session.app_mut().set_about_flip_face(
             compositor.create_texture(flip.w, flip.h, &flip.rgba),
@@ -260,14 +288,14 @@ impl Frontend {
         // The open cart's parts that never change: each socket, the chip seated in each, the
         // blank chip in flight and its shadow, in `Core::ALL` order. At boot like the power
         // menu's rows, so the first frame of a lid coming off is not spent in a rasteriser.
-        let sockets = slot_store::Core::ALL
+        let sockets = slot_store::Core::PICKABLE
             .iter()
             .map(|c| {
                 let f = socket_face(*c);
                 compositor.create_texture(f.w, f.h, &f.rgba)
             })
             .collect();
-        let chips = slot_store::Core::ALL
+        let chips = slot_store::Core::PICKABLE
             .iter()
             .map(|c| {
                 let f = chip_face(Some(*c));
@@ -429,6 +457,31 @@ impl Frontend {
         );
         self.draws.clear();
         self.session.app().draw(&mut self.draws);
+        let overlay = match self.session.app().game_platform() {
+            Some(slot_store::Platform::Gb) => self.gb_overlay,
+            Some(slot_store::Platform::Gbc) => self.gbc_overlay,
+            _ => None,
+        };
+        if let Some(tex) = overlay {
+            let mut i = 0;
+            while i < self.draws.len() {
+                if self.draws[i] == Draw::Game {
+                    self.draws.insert(
+                        i + 1,
+                        Draw::Tex {
+                            x: 0.0,
+                            y: 0.0,
+                            w: OUT_W as f32,
+                            h: OUT_H as f32,
+                            tex,
+                            alpha: 1.0,
+                        },
+                    );
+                    i += 1;
+                }
+                i += 1;
+            }
+        }
         compositor.draw_list(&self.draws);
         compositor.end_frame(window);
     }
@@ -467,6 +520,23 @@ impl Frontend {
     pub fn poweroff(&mut self) {
         self.session.app_mut().poweroff();
     }
+}
+
+fn upload_png(compositor: &mut Compositor, bytes: &[u8]) -> Option<TexId> {
+    let mut decoder = png::Decoder::new(bytes);
+    decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
+    let mut reader = decoder.read_info().ok()?;
+    let mut buf = vec![0; reader.output_buffer_size()];
+    let info = reader.next_frame(&mut buf).ok()?;
+    let rgba = match info.color_type {
+        png::ColorType::Rgba => buf[..info.buffer_size()].to_vec(),
+        png::ColorType::Rgb => buf[..info.buffer_size()]
+            .chunks_exact(3)
+            .flat_map(|p| [p[0], p[1], p[2], 255])
+            .collect(),
+        _ => return None,
+    };
+    Some(compositor.create_texture(info.width, info.height, &rgba))
 }
 
 /// A line of menu type per label, in the order they were handed over, each with the size it

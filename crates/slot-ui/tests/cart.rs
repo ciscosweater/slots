@@ -143,6 +143,18 @@ fn the_cart_box_matches_the_traced_outline() {
     );
 }
 
+#[test]
+fn game_boy_cart_uses_the_real_front_and_label_proportions() {
+    let d = tmp_root();
+    std::fs::write(d.path().join("Games/Tetris.gb"), vec![0u8; 0x150]).unwrap();
+    let face = cart_face(&scan(d.path()).unwrap()[0]);
+    assert_eq!((face.w, face.h), (slot_ui::GB_CART_W, slot_ui::GB_CART_H));
+    let cart_ratio = face.w as f32 / face.h as f32;
+    assert!((cart_ratio - 57.0 / 65.0).abs() < 0.01);
+    let label_ratio = slot_ui::GB_LABEL_W as f32 / slot_ui::GB_LABEL_H as f32;
+    assert!((label_ratio - 42.0 / 37.0).abs() < 0.01);
+}
+
 /// The label is wide and low: thin plastic beside it, a broad moulded grip above. A
 /// uniform border reads as a frame, and a narrow label reads as a coaster.
 #[test]

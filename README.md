@@ -1,6 +1,6 @@
 # slot.
 
-A bespoke, GBA-only frontend for the Anbernic RG SP.
+A bespoke GBA, Game Boy and Game Boy Color frontend for the Anbernic RG SP.
 
 ## Controls
 
@@ -20,7 +20,8 @@ A bespoke, GBA-only frontend for the Anbernic RG SP.
 |-----------|-------------------------------------|
 | `L` / `R` | Browse the carousel                 |
 | `L1` / `R1` | Jump to the previous / next letter |
-| `L2`      | Toggle between Pixelify and the original font |
+| `L2` / `R2` | Previous / next platform category (`ALL`, `GBA`, `GB`, `GBC`) |
+| `SELECT`  | Toggle between Pixelify and the original font |
 | `Y`       | Add or remove the game from favorites |
 | `X`       | Toggle the LCD effect on or off        |
 | Tap `A`   | Resume the last save state          |
@@ -57,7 +58,7 @@ does the same. Holding POWER still requests a real shutdown, including while cha
 
 ```
 BIOS/         gba_bios.bin, optional. Absent means mGBA's own high level BIOS.
-Games/        .gba roms.
+Games/        .gba, .gb and .gbc roms.
 Labels/       <rom stem>.png, drawn on the cartridge face. Absent means a text only label.
 Saves/        .sav and .srm battery saves.
 States/       <core>/<rom stem>/, save state rings ten deep per cart.
@@ -68,6 +69,9 @@ Wallpapers/   .png, one picked at random each boot and drawn behind the shelf.
 Label art is drawn at 196x86, or about 2.28:1. Anything else is scaled to cover that box
 and centre cropped, so a square or portrait image loses its top and bottom. Bigger art is
 fine and comes down to size; smaller gets stretched up and shows it.
+
+GB and GBC labels share the real cartridge label's 42:37 aspect ratio. The companion
+`artwork-gb-labels.xml` Skyscraper definition outputs them at 168x148.
 
 `System/theme.txt` is entirely optional and controls the appearance of the slot:
 
@@ -88,6 +92,9 @@ build does not carry:
 ```
 Emerald = gpsp
 ```
+
+GB and GBC games always use Gambatte. GB is presented with PixelShift Pack 1's
+`PixelShift 03 - BGB 0.3 Emulator` palette; GBC uses Gambatte's GBC colour correction.
 
 ## Installing on your RG SP
 
