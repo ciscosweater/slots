@@ -196,16 +196,24 @@ impl Frontend {
             compositor.create_texture(empty.w, empty.h, &empty.rgba),
             empty.w,
         ));
+        let empty_recents = title_face("no recently played games");
+        self.session
+            .app_mut()
+            .set_empty_recents_caption(Printed::new(
+                compositor.create_texture(empty_recents.w, empty_recents.h, &empty_recents.rgba),
+                empty_recents.w,
+            ));
         let idle = [hint_face("A", "Resume"), hint_face("START", "Core")]
             .into_iter()
             .map(|f| (compositor.create_texture(f.w, f.h, &f.rgba), f.w))
             .collect();
         self.session.app_mut().set_shelf_idle_faces(idle);
         let category_faces = [
-            "[ALL] - GBA - GB - GBC",
-            "ALL - [GBA] - GB - GBC",
-            "ALL - GBA - [GB] - GBC",
-            "ALL - GBA - GB - [GBC]",
+            "[ALL] - REC - GBA - GB - GBC",
+            "ALL - [REC] - GBA - GB - GBC",
+            "ALL - REC - [GBA] - GB - GBC",
+            "ALL - REC - GBA - [GB] - GBC",
+            "ALL - REC - GBA - GB - [GBC]",
         ]
         .into_iter()
         .map(|label| {

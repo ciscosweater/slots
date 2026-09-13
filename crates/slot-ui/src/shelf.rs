@@ -34,6 +34,7 @@ const REPEAT_DELAY_MS: Millis = 400;
 /// Between repeats after that. Fast enough to cross a thirty cart library, slow enough to
 /// stop on one.
 const REPEAT_MS: Millis = 110;
+const CATEGORY_COUNT: usize = 5;
 
 /// Printed on the case when `Games/` is empty. Same type as a cart title, not a dialog.
 pub const EMPTY_SHELF: &str = "no carts in Games/";
@@ -55,6 +56,7 @@ pub struct Shelf {
     /// the gesture layer so nothing in game starts auto firing.
     held: Option<(i32, Millis)>,
     favorites: BTreeSet<String>,
+    recents: Vec<String>,
     favorite_mark: Option<(TexId, u32, u32)>,
 }
 
@@ -73,6 +75,7 @@ impl Shelf {
             vel: 0.0,
             held: None,
             favorites: BTreeSet::new(),
+            recents: Vec::new(),
             favorite_mark: None,
         }
     }
@@ -106,11 +109,18 @@ impl Shelf {
     }
 
     pub fn previous_category(&mut self) {
-        self.set_category((self.category + 3) % 4);
+        self.set_category((self.category + CATEGORY_COUNT - 1) % CATEGORY_COUNT);
     }
 
     pub fn next_category(&mut self) {
-        self.set_category((self.category + 1) % 4);
+        self.set_category((self.category + 1) % CATEGORY_COUNT);
+    }
+
+    /// Filename stems in most-recent-first order. Rebuild the current category because a
+    /// game can become recent while its cart is still away from the shelf.
+    pub fn set_recents(&mut self, recents: Vec<String>) {
+        self.recents = recents;
+        self.set_category(self.category);
     }
 
     fn set_category(&mut self, category: usize) {
@@ -119,9 +129,10 @@ impl Shelf {
         let wanted = |cart: &Cart| {
             category == 0
                 || match category {
-                    1 => cart.platform == slot_store::Platform::Gba,
-                    2 => cart.platform == slot_store::Platform::Gb,
-                    3 => cart.platform == slot_store::Platform::Gbc,
+                    1 => self.recents.contains(&cart.stem),
+                    2 => cart.platform == slot_store::Platform::Gba,
+                    3 => cart.platform == slot_store::Platform::Gb,
+                    4 => cart.platform == slot_store::Platform::Gbc,
                     _ => false,
                 }
         };
@@ -186,10 +197,20 @@ impl Shelf {
             .map(|(i, cart)| (cart, faces.as_ref().and_then(|faces| faces.get(i).copied())))
             .collect();
         paired.sort_by(|(a, _), (b, _)| {
-            favorites
-                .contains(&b.stem)
-                .cmp(&favorites.contains(&a.stem))
-                .then_with(|| a.stem.cmp(&b.stem))
+            if self.category == 1 {
+                let rank = |stem: &str| {
+                    self.recents
+                        .iter()
+                        .position(|recent| recent == stem)
+                        .unwrap_or(usize::MAX)
+                };
+                rank(&a.stem).cmp(&rank(&b.stem))
+            } else {
+                favorites
+                    .contains(&b.stem)
+                    .cmp(&favorites.contains(&a.stem))
+                    .then_with(|| a.stem.cmp(&b.stem))
+            }
         });
         self.carts = paired.iter().map(|(cart, _)| cart.clone()).collect();
         if have_faces {

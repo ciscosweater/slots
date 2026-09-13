@@ -6,9 +6,10 @@ use slot_input::{Action, Btn, MUTE_CHORD_MS};
 use slot_power::{Battery, Charge, LedState, LidPolicy, Power};
 use slot_retro::LinkChannel;
 use slot_store::{
-    format_stamp, read_favorites, read_lcd, read_pixelify, read_slot_state, scan, write_favorites,
-    write_lcd, write_pixelify, write_slot_state, Cart, Core, SlotState, StateEntry, StateRing,
-    Theme, BLUE_LIGHT_MAX, BRIGHTNESS_MAX, RING_MAX, VOLUME_MAX,
+    format_stamp, read_favorites, read_lcd, read_pixelify, read_recents, read_slot_state, scan,
+    touch_recent, write_favorites, write_lcd, write_pixelify, write_recents, write_slot_state,
+    Cart, Core, SlotState, StateEntry, StateRing, Theme, BLUE_LIGHT_MAX, BRIGHTNESS_MAX, RING_MAX,
+    VOLUME_MAX,
 };
 use slot_ui::{
     board_at, board_zoom, draw_backdrop, draw_empty_slot, draw_footer, draw_printed, draw_sticker,
@@ -415,9 +416,11 @@ pub struct App {
     /// `None` outside the binary, where there is no content root and nothing persists.
     root: Option<PathBuf>,
     favorites: BTreeSet<String>,
+    recents: Vec<String>,
     shelf_captions: BTreeMap<String, (Printed, Printed)>,
     favorite_caption: Printed,
     empty_caption: Printed,
+    empty_recents_caption: Printed,
     /// Last input on the shelf, for the idle hint. Reset whenever the row is used.
     shelf_idle_at: Millis,
     /// `A` Resume and `START` Core, uploaded once.
@@ -548,9 +551,11 @@ impl App {
             act_at: 0,
             root: None,
             favorites: BTreeSet::new(),
+            recents: Vec::new(),
             shelf_captions: BTreeMap::new(),
             favorite_caption: Printed::default(),
             empty_caption: Printed::default(),
+            empty_recents_caption: Printed::default(),
             shelf_idle_at: 0,
             shelf_idle_faces: Vec::new(),
             shelf_category_faces: Vec::new(),
@@ -604,6 +609,8 @@ impl App {
         app.root = Some(root.to_path_buf());
         app.favorites = read_favorites(root);
         app.shelf.sort_by_favorites(&app.favorites);
+        app.recents = read_recents(root);
+        app.shelf.set_recents(app.recents.clone());
         app.lcd = read_lcd(root);
         app.pixelify = read_pixelify(root);
         slot_ui::text::set_pixelify(app.pixelify);
@@ -776,6 +783,10 @@ impl App {
         self.empty_caption = caption;
     }
 
+    pub fn set_empty_recents_caption(&mut self, caption: Printed) {
+        self.empty_recents_caption = caption;
+    }
+
     pub fn set_shelf_idle_faces(&mut self, faces: Vec<(TexId, u32)>) {
         self.shelf_idle_faces = faces;
     }
@@ -809,12 +820,12 @@ impl App {
             draw_printed((OUT_W as f32 - face.w as f32) / 2.0, 8.0, face, out);
         }
         if self.shelf.carts.is_empty() {
-            draw_printed(
-                (OUT_W as f32 - self.empty_caption.w as f32) / 2.0,
-                316.0,
-                self.empty_caption,
-                out,
-            );
+            let caption = if self.shelf.category() == 1 {
+                self.empty_recents_caption
+            } else {
+                self.empty_caption
+            };
+            draw_printed((OUT_W as f32 - caption.w as f32) / 2.0, 316.0, caption, out);
             return;
         }
         let Some(stem) = self.selected_stem() else {
@@ -1577,6 +1588,9 @@ impl App {
                 Phase::Playing { cart } => Some(cart.clone()),
                 _ => None,
             };
+            if let Some(cart) = seated.as_deref() {
+                self.record_recent(cart);
+            }
             self.record_cart(seated);
         }
         self.step_screen(dt);
@@ -1710,6 +1724,17 @@ impl App {
         }
         self.state.cart = cart;
         self.persist();
+    }
+
+    fn record_recent(&mut self, stem: &str) {
+        touch_recent(&mut self.recents, stem);
+        self.shelf.set_recents(self.recents.clone());
+        let Some(root) = &self.root else {
+            return;
+        };
+        if let Err(e) = write_recents(root, &self.recents) {
+            eprintln!("slot: recents: {e}");
+        }
     }
 
     fn persist(&self) {

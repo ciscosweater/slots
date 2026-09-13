@@ -8,7 +8,7 @@ use slot::audio::Sfx;
 use slot::session::Session;
 use slot_input::{Action, Btn, RawEvent};
 use slot_store::{
-    read_favorites, read_lcd, read_pixelify, write_slot_state, Cart, Core, SlotState,
+    read_favorites, read_lcd, read_pixelify, read_recents, write_slot_state, Cart, Core, SlotState,
 };
 use slot_ui::{
     board_at, grown, lid_at, on_board, opening, shelf_cart, Draw, Placed, Printed, TexId, Toast,
@@ -688,6 +688,52 @@ fn y_toggles_a_persistent_favorite_and_moves_it_to_the_front() {
     rebooted.apply(Action::GbaDown(Btn::Y));
     assert_eq!(rebooted.toast(), Some(Toast::Unfavorited));
     assert!(read_favorites(d.path()).is_empty());
+}
+
+#[test]
+fn a_game_becomes_recent_only_after_its_core_is_ready() {
+    let (d, mut app) = on_shelf(&["Advance", "Boktai"]);
+    play(&mut app);
+    app.update(INSERT_S + 0.1);
+    assert!(read_recents(d.path()).is_empty());
+
+    app.on_core_ready();
+    app.update(1.0 / 60.0);
+    assert_eq!(read_recents(d.path()), ["Advance"]);
+}
+
+#[test]
+fn a_failed_game_does_not_become_recent() {
+    let (d, mut app) = on_shelf(&["Advance", "Boktai"]);
+    play(&mut app);
+    app.on_core_failed();
+    for _ in 0..120 {
+        app.update(1.0 / 60.0);
+    }
+    assert!(read_recents(d.path()).is_empty());
+}
+
+#[test]
+fn the_recents_category_survives_a_reboot() {
+    let (d, mut app) = on_shelf(&["Advance", "Boktai", "Crash"]);
+    app.apply(Action::GbaDown(Btn::Right));
+    play(&mut app);
+    app.on_core_ready();
+    app.update(INSERT_S + 0.1);
+    assert_eq!(read_recents(d.path()), ["Boktai"]);
+
+    // Clear the seated cart so this boot opens on the shelf, then enter REC from ALL.
+    write_slot_state(
+        d.path(),
+        &SlotState {
+            clock_set: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let mut rebooted = App::boot(d.path());
+    rebooted.apply(Action::FfStart);
+    assert_eq!(rebooted.selected_stem(), Some("Boktai"));
 }
 
 #[test]

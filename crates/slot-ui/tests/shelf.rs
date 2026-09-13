@@ -32,26 +32,54 @@ fn categories_cycle_and_filter_by_platform() {
         })
         .collect();
     let mut shelf = Shelf::new(carts);
+    shelf.set_recents(vec!["Game 2".to_string(), "Game 0".to_string()]);
     assert_eq!(shelf.carts.len(), 3);
     shelf.next_category();
     assert_eq!(
-        (shelf.category(), shelf.carts[0].platform),
-        (1, Platform::Gba)
+        shelf
+            .carts
+            .iter()
+            .map(|cart| cart.stem.as_str())
+            .collect::<Vec<_>>(),
+        ["Game 2", "Game 0"]
     );
     shelf.next_category();
     assert_eq!(
         (shelf.category(), shelf.carts[0].platform),
-        (2, Platform::Gb)
+        (2, Platform::Gba)
     );
     shelf.next_category();
     assert_eq!(
         (shelf.category(), shelf.carts[0].platform),
-        (3, Platform::Gbc)
+        (3, Platform::Gb)
+    );
+    shelf.next_category();
+    assert_eq!(
+        (shelf.category(), shelf.carts[0].platform),
+        (4, Platform::Gbc)
     );
     shelf.next_category();
     assert_eq!((shelf.category(), shelf.carts.len()), (0, 3));
     shelf.previous_category();
-    assert_eq!(shelf.category(), 3);
+    assert_eq!(shelf.category(), 4);
+}
+
+#[test]
+fn favorites_do_not_override_recent_order() {
+    use std::collections::BTreeSet;
+
+    let mut shelf = shelf_with(3);
+    shelf.set_recents(vec!["Game 2".to_string(), "Game 0".to_string()]);
+    shelf.next_category();
+    shelf.sort_by_favorites(&BTreeSet::from(["Game 0".to_string()]));
+    assert_eq!(
+        shelf
+            .carts
+            .iter()
+            .map(|cart| cart.stem.as_str())
+            .collect::<Vec<_>>(),
+        ["Game 2", "Game 0"]
+    );
 }
 
 fn placed(s: &Shelf) -> Vec<(f32, f32)> {

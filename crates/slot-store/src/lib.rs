@@ -5,6 +5,7 @@ mod font;
 mod gba;
 mod lcd;
 mod migrate;
+mod recents;
 mod ring;
 mod scan;
 mod slot_state;
@@ -20,6 +21,7 @@ pub use font::{read_pixelify, write_pixelify, FONT_FILE};
 pub use gba::{header_clean, header_code, header_title};
 pub use lcd::{read_lcd, write_lcd, LCD_FILE};
 pub use migrate::{migrate_states, MigrationReport};
+pub use recents::{read_recents, touch_recent, write_recents, RECENTS_FILE, RECENTS_MAX};
 pub use ring::{StateEntry, StateRing, RING_MAX};
 pub use scan::{is_hidden, scan, Cart, Platform, StoreError};
 pub use slot_state::{
