@@ -391,3 +391,23 @@ fn the_menu_button_still_works_after_a_chord() {
         "the chord left the menu button dead"
     );
 }
+
+#[test]
+fn r2_unlatched_mode_never_swallows_subsequent_taps() {
+    let mut g = Gestures::new();
+    g.set_ff_latch(false);
+    for tap in 0..5 {
+        let t = tap * 100;
+        assert_eq!(
+            g.feed(Down(R2), t),
+            vec![FfStart],
+            "tap {tap} down was swallowed"
+        );
+        assert_eq!(
+            g.feed(Up(R2), t + 40),
+            vec![FfStop],
+            "tap {tap} up was swallowed"
+        );
+    }
+}
+

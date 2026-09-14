@@ -113,6 +113,8 @@ struct Clocks {
     shown: String,
     battery: String,
     battery_tex: Option<TexId>,
+    shelf_count: String,
+    shelf_count_tex: Option<TexId>,
 }
 
 /// What the switcher's textures were built for. The photos and the undo cap are per opening;
@@ -245,6 +247,9 @@ impl Frontend {
                         ),
                         empty_recents.w,
                     ));
+                let recents_hint = arrows_hint_face("Categories");
+                let hint_tex = compositor.create_texture(recents_hint.w, recents_hint.h, &recents_hint.rgba);
+                self.session.app_mut().set_empty_recents_hint((hint_tex, recents_hint.w));
                 let idle = [hint_face("A", "Open"), hint_face("START", "Core")]
                     .into_iter()
                     .map(|f| (compositor.create_texture(f.w, f.h, &f.rgba), f.w))
@@ -332,6 +337,14 @@ impl Frontend {
                     })
                     .collect();
                 self.session.app_mut().set_power_menu_faces(menu);
+                let pwr_legend = [
+                    hint_face("B", "Cancel"),
+                    hint_face("A", "Select"),
+                ]
+                .into_iter()
+                .map(|f| (compositor.create_texture(f.w, f.h, &f.rgba), f.w))
+                .collect();
+                self.session.app_mut().set_power_legend_faces(pwr_legend);
                 self.static_upload_stage = 4;
             }
             4 => {
@@ -423,21 +436,16 @@ impl Frontend {
             self.upload_shelf_face(compositor, built);
             self.cart_upload_inflight = false;
         }
-        if !self.cart_upload_inflight {
-            let priority = self
-                .session
-                .app()
-                .shelf_face_upload_order()
-                .into_iter()
+        if !self.cart_upload_inflight && !self.cart_upload_queue.is_empty() {
+            let best_idx = self
+                .cart_upload_queue
+                .iter()
                 .enumerate()
-                .map(|(i, cart)| (cart.stem, i))
-                .collect::<std::collections::BTreeMap<_, _>>();
-            self.cart_upload_queue
-                .sort_by_key(|cart| priority.get(&cart.stem).copied().unwrap_or(usize::MAX));
-            if let Some(cart) = self.cart_upload_queue.first().cloned() {
-                self.cart_upload_queue.remove(0);
-                self.cart_upload_inflight = self.shelf_faces.request(cart);
-            }
+                .min_by_key(|(_, cart)| self.session.app().cart_upload_priority(&cart.stem))
+                .map(|(i, _)| i)
+                .unwrap_or(0);
+            let cart = self.cart_upload_queue.swap_remove(best_idx);
+            self.cart_upload_inflight = self.shelf_faces.request(cart);
         }
         !self.cart_upload_inflight && self.cart_upload_queue.is_empty()
     }
@@ -777,6 +785,22 @@ fn sync_clock(app: &mut App, compositor: &mut Compositor, clocks: &mut Clocks) {
             let w = face.w;
             let id = upload(compositor, &mut clocks.battery_tex, face);
             app.set_battery_percent_face(id, w);
+        }
+    }
+    let count_shown = if matches!(app.phase(), Phase::Shelf) && app.shelf_total() > 1 {
+        format!("{}/{}", app.shelf_index() + 1, app.shelf_total())
+    } else {
+        String::new()
+    };
+    if count_shown != clocks.shelf_count {
+        clocks.shelf_count = count_shown.clone();
+        if !count_shown.is_empty() {
+            let face = word_face(&count_shown);
+            let w = face.w;
+            let id = upload(compositor, &mut clocks.shelf_count_tex, face);
+            app.set_shelf_count_face(Some((id, w)));
+        } else {
+            app.set_shelf_count_face(None);
         }
     }
 }

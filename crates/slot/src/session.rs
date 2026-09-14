@@ -180,6 +180,8 @@ impl Session {
     /// Called every frame whether or not anything was pressed: the gesture windows expire on
     /// the tick, not on an event.
     pub fn feed(&mut self, events: impl IntoIterator<Item = RawEvent>, now: Millis) {
+        let on_shelf = matches!(self.app.phase(), Phase::Shelf);
+        self.gestures.set_ff_latch(!on_shelf);
         let mut actions = Vec::new();
         for ev in events {
             actions.extend(self.gestures.feed(ev, now));

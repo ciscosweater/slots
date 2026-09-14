@@ -50,49 +50,22 @@ jobs:
       # Named for the tag, so what comes out of the archive says which version it is rather
       # than landing seven unlabelled folders wherever it was opened.
       - name: Build the tree
-        run: task dist:device OUT="slot-${GITHUB_REF_NAME}"
+        run: ./scripts/build-release.sh --out "slot-${GITHUB_REF_NAME}"
 
       # Before anything is published, not after. A tree built by the wrong toolchain is a
       # download that bootloops a device, and it costs one exec to know.
       - name: Check what is about to ship
-        run: |
-          set -eu
-          out="slot-${GITHUB_REF_NAME}"
-          file "$out/System/slot" | grep -q aarch64
-          file "$out/System/mgba_libretro.so" | grep -q aarch64
-          file "$out/System/gpsp_libretro.so" | grep -q aarch64
-          file "$out/System/gambatte_libretro.so" | grep -q aarch64
-          test -x "$out/System/slot"
-          test -x "$out/.system/h700/paks/MinUI.pak/launch.sh"
-          grep -q 'SLOT_ROOT=' "$out/.system/h700/paks/MinUI.pak/launch.sh"
-          # GPL-2.0 section 3(a): the release does not ship without gpSP's corresponding
-          # source. `task dist:device` names the file for the commit `core:gpsp` recorded, so
-          # that recording is what says which file to look for. The .meta file travels with
-          # it, same naming, carrying the anchor timestamp and resolution method.
-          gpsp_src_sha="$(cat vendor/gpsp-src.sha)"
-          test -f "$out/System/licenses/gpsp-${gpsp_src_sha}.tar.gz"
-          test -f "$out/System/licenses/gpsp-${gpsp_src_sha}.meta"
-          # Same obligation for Gambatte. The pin in taskfile.yml is the commit
-          # cores/gambatte/build.sh recorded; dist names the archive for that commit.
-          gambatte_src_commit="$(grep '^commit=' vendor/gambatte_libretro.so.meta | cut -d= -f2)"
-          test -f "$out/System/licenses/gambatte-${gambatte_src_commit}.tar.gz"
-          test -f "$out/System/licenses/gambatte-${gambatte_src_commit}.meta"
-          # MPL-2.0: mGBA ships patched, so what changed travels with it. `task dist:device`
-          # names the .meta for the commit cores/mgba/build.sh recorded, and every patch that
-          # build applied ships beside it.
-          mgba_src_commit="$(grep '^commit=' vendor/mgba_libretro.so.meta | cut -d= -f2)"
-          test -f "$out/System/licenses/mgba-${mgba_src_commit}.meta"
-          for p in cores/mgba/*.patch; do
-            test -f "$out/System/licenses/mgba-$(basename "$p")"
-          done
+        run: ./scripts/verify-release.sh "slot-${GITHUB_REF_NAME}"
 
       - name: Package
         id: package
         run: |
           set -eu
           out="slot-${GITHUB_REF_NAME}"
+          ./scripts/package-release.sh "$GITHUB_REF_NAME" \
+            --tree "$out" \
+            --output-dir .
           zip="$out-h700.zip"
-          zip -qry "$zip" "$out"
           {
             echo "zip=$zip"
             # gpSP is recorded rather than pinned: it is whatever the buildbot was serving as
@@ -125,7 +98,9 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.package.outputs.zip }}
-          path: ${{ steps.package.outputs.zip }}
+          path: |
+            ${{ steps.package.outputs.zip }}
+            ${{ steps.package.outputs.zip }}.sha256
           if-no-files-found: error
 
   publish:
@@ -195,5 +170,5 @@ jobs:
           NOTES
           # --repo because this job never checks out: gh works out where to publish from the
           # git remote otherwise, and there is no repository here to ask.
-          gh release create "$GITHUB_REF_NAME" "$ZIP" --repo "$GITHUB_REPOSITORY" \
+          gh release create "$GITHUB_REF_NAME" "$ZIP" "$ZIP.sha256" --repo "$GITHUB_REPOSITORY" \
             --title "$GITHUB_REF_NAME" --notes-file notes.md

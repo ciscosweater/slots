@@ -132,6 +132,27 @@ I doubt I am gonna work on this more and add to it but in case I do here is how 
    `.system` directory so launcher updates are included.
 5. Done.
 
+## Building a release
+
+The release scripts build the aarch64 device tree, verify that all binaries and corresponding
+license sources are present, and create the ZIP plus a SHA-256 checksum. They require
+[Task](https://taskfile.dev/) and the native/container tools already used by `task dist:device`.
+
+To build and package a release in one command:
+
+```sh
+./scripts/package-release.sh v1.0.1
+```
+
+The files are written to `dist/releases/`. To build the tree without packaging it, or to package
+an existing tree:
+
+```sh
+./scripts/build-release.sh --out dist-device
+./scripts/verify-release.sh dist-device
+./scripts/package-release.sh v1.0.1 --tree dist-device
+```
+
 
 ## Credits
 

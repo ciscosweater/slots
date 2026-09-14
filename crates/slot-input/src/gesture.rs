@@ -90,7 +90,6 @@ enum Select {
     ReleaseDue(Millis),
 }
 
-#[derive(Default)]
 pub struct Gestures {
     select: Select,
     /// Buttons swallowed by a chord, so their release is swallowed too.
@@ -113,8 +112,34 @@ pub struct Gestures {
     ff_latched: bool,
     /// The press that established the latch, whose release must not clear it.
     ff_latching_press: bool,
+    ff_latch_enabled: bool,
     r2_last_release: Option<Millis>,
     rewinding: bool,
+}
+
+impl Default for Gestures {
+    fn default() -> Self {
+        Self {
+            select: Select::default(),
+            chord_held: 0,
+            menu_down_at: None,
+            menu_last_tap: None,
+            menu_eject_fired: false,
+            power_down_at: None,
+            power_hold_fired: false,
+            vol_up_at: None,
+            vol_down_at: None,
+            vol_up_ramp: None,
+            vol_down_ramp: None,
+            mute_fired: false,
+            ff_on: false,
+            ff_latched: false,
+            ff_latching_press: false,
+            ff_latch_enabled: true,
+            r2_last_release: None,
+            rewinding: false,
+        }
+    }
 }
 
 /// Whether a held key owes a step at `now`. The wait before the first is longer than the gap
@@ -132,6 +157,17 @@ fn ramp_due(down: Option<Millis>, last: Option<Millis>, now: Millis) -> bool {
 impl Gestures {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Enable or disable double-tap latching on R2. When disabled (e.g. on the shelf/menu),
+    /// every press is purely momentary and successive taps are never swallowed.
+    pub fn set_ff_latch(&mut self, enabled: bool) {
+        self.ff_latch_enabled = enabled;
+        if !enabled {
+            self.ff_latched = false;
+            self.ff_latching_press = false;
+            self.r2_last_release = None;
+        }
     }
 
     /// Whether fast forward is latched rather than held. Not an action: the latch is
@@ -379,7 +415,7 @@ impl Gestures {
         if self.ff_latched {
             // Any further press is the one whose release clears the latch.
             self.ff_latching_press = false;
-        } else {
+        } else if self.ff_latch_enabled {
             let double = self
                 .r2_last_release
                 .is_some_and(|rel| now.saturating_sub(rel) <= FF_DOUBLE_TAP_MS);

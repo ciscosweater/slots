@@ -123,7 +123,7 @@ const CORE_PICKER_DIM: f32 = 0.614;
 const CORE_LEGEND_Y: f32 = 386.0;
 /// How long the shelf sits still before the faint START/A hint appears. Short enough to teach,
 /// long enough that browsing never flashes it.
-const IDLE_HINT_MS: Millis = 4000;
+const IDLE_HINT_MS: Millis = 1500;
 const IDLE_HINT_ALPHA: f32 = 0.45;
 /// Separate tabs stay at the label font's full size. The old single string was fitted as one
 /// face, which made the whole row tiny and eventually clipped GBC off the right edge.
@@ -436,6 +436,9 @@ pub struct App {
     /// `A` Open and `START` Core, uploaded once.
     shelf_idle_faces: Vec<(TexId, u32)>,
     shelf_category_faces: Vec<Printed>,
+    shelf_count_face: Option<(TexId, u32)>,
+    power_legend_faces: Vec<(TexId, u32)>,
+    empty_recents_hint: Option<(TexId, u32)>,
     about_page: StickerPage,
     about_flip_face: Option<(TexId, u32)>,
     about_clock_hint: Option<(TexId, u32)>,
@@ -569,6 +572,9 @@ impl App {
             shelf_idle_at: 0,
             shelf_idle_faces: Vec::new(),
             shelf_category_faces: Vec::new(),
+            shelf_count_face: None,
+            power_legend_faces: Vec::new(),
+            empty_recents_hint: None,
             about_page: StickerPage::Credits,
             about_flip_face: None,
             about_clock_hint: None,
@@ -741,6 +747,14 @@ impl App {
         self.shelf.face_upload_order()
     }
 
+    pub fn shelf_category(&self) -> usize {
+        self.shelf.category()
+    }
+
+    pub fn cart_upload_priority(&self, stem: &str) -> usize {
+        self.shelf.cart_upload_priority(stem)
+    }
+
     pub fn set_wallpaper(&mut self, face: TexId) {
         self.wallpaper = Some(face);
     }
@@ -819,6 +833,40 @@ impl App {
         self.empty_recents_caption = caption;
     }
 
+    pub fn set_empty_recents_hint(&mut self, hint: (TexId, u32)) {
+        self.empty_recents_hint = Some(hint);
+    }
+
+    pub fn set_shelf_count_face(&mut self, face: Option<(TexId, u32)>) {
+        self.shelf_count_face = face;
+    }
+
+    pub fn shelf_index(&self) -> usize {
+        self.shelf.index
+    }
+
+    pub fn shelf_total(&self) -> usize {
+        self.shelf.carts.len()
+    }
+
+    pub fn set_power_legend_faces(&mut self, faces: Vec<(TexId, u32)>) {
+        self.power_legend_faces = faces;
+    }
+
+    pub fn play_held_progress(&self) -> f32 {
+        if !matches!(self.phase, Phase::Shelf) {
+            return 0.0;
+        }
+        let Some(at) = self.play_held else {
+            return 0.0;
+        };
+        let elapsed = self.now().saturating_sub(at);
+        if elapsed < 80 {
+            return 0.0;
+        }
+        ((elapsed - 80) as f32 / (PLAY_HOLD_MS - 80) as f32).clamp(0.0, 1.0)
+    }
+
     pub fn set_shelf_idle_faces(&mut self, faces: Vec<(TexId, u32)>) {
         self.shelf_idle_faces = faces;
     }
@@ -887,6 +935,17 @@ impl App {
             }
             tab_x += face.w as f32 + CATEGORY_GAP;
         }
+        if let Some((tex, w)) = self.shelf_count_face {
+            let x = OUT_W as f32 - 24.0 - w as f32;
+            out.push(Draw::Tex {
+                x,
+                y: CATEGORY_Y,
+                w: w as f32,
+                h: HINT_H as f32,
+                tex,
+                alpha: 0.65,
+            });
+        }
         if self.shelf.carts.is_empty() {
             let caption = if self.shelf.category() == 1 {
                 self.empty_recents_caption
@@ -894,31 +953,19 @@ impl App {
                 self.empty_caption
             };
             draw_printed((OUT_W as f32 - caption.w as f32) / 2.0, 316.0, caption, out);
-            return;
+            if self.shelf.category() == 1 {
+                if let Some((tex, w)) = self.empty_recents_hint {
+                    out.push(Draw::Tex {
+                        x: ((OUT_W as f32 - w as f32) / 2.0).round(),
+                        y: 352.0,
+                        w: w as f32,
+                        h: HINT_H as f32,
+                        tex,
+                        alpha: 0.75,
+                    });
+                }
+            }
         }
-        let Some(stem) = self.selected_stem() else {
-            return;
-        };
-        let Some((letter, title)) = self.shelf_captions.get(stem).copied() else {
-            return;
-        };
-        let group = if self.favorites.contains(stem) {
-            self.favorite_caption
-        } else {
-            letter
-        };
-        let (group_y, title_y) = if self
-            .shelf
-            .carts
-            .get(self.shelf.index)
-            .is_some_and(|cart| cart.platform != slot_store::Platform::Gba)
-        {
-            (58.0, 390.0)
-        } else {
-            (132.0, 316.0)
-        };
-        draw_printed((OUT_W as f32 - group.w as f32) / 2.0, group_y, group, out);
-        draw_printed((OUT_W as f32 - title.w as f32) / 2.0, title_y, title, out);
     }
 
     fn draw_idle_hints(&self, out: &mut Vec<Draw>) {
@@ -933,9 +980,12 @@ impl App {
         {
             return;
         }
-        if self.now().saturating_sub(self.shelf_idle_at) < IDLE_HINT_MS {
+        let elapsed = self.now().saturating_sub(self.shelf_idle_at);
+        if elapsed < IDLE_HINT_MS {
             return;
         }
+        let fade = ((elapsed - IDLE_HINT_MS) as f32 / 300.0).min(1.0);
+        let alpha = IDLE_HINT_ALPHA * fade;
         if let [open, core] = self.shelf_idle_faces.as_slice() {
             let seen = |w: u32| w.saturating_sub(HINT_EDGE) as f32;
             let gap = 40.0;
@@ -948,7 +998,7 @@ impl App {
                     w: *w as f32,
                     h: HINT_H as f32,
                     tex: *tex,
-                    alpha: IDLE_HINT_ALPHA,
+                    alpha,
                 });
                 x += seen(*w) + gap;
             }
@@ -1157,6 +1207,10 @@ impl App {
         self.power_menu
     }
 
+    pub fn set_power_menu(&mut self, index: Option<usize>) {
+        self.power_menu = index;
+    }
+
     /// The core the chip is in or heading for, and `None` once the picker has gone. Still
     /// `Some` while the lid is going back on.
     pub fn core_picker(&self) -> Option<Core> {
@@ -1328,6 +1382,9 @@ impl App {
                 Action::GbaDown(Btn::Up) => picker.up(),
                 Action::GbaDown(Btn::Down) => picker.down(),
                 Action::GbaDown(Btn::A) | Action::Insert => self.confirm_clock(),
+                Action::GbaDown(Btn::B) if !self.clock_needs_setting() => {
+                    self.phase = Phase::About;
+                }
                 _ => {}
             }
             return;
@@ -1949,7 +2006,30 @@ impl App {
                             .draw_row(Some(stem), 0.0, CORE_PICKER_RECEDE * open, dim, out);
                         draw_empty_slot(out);
                     }
-                    _ => self.shelf.draw(self.shelf_shake(), out),
+                    _ => {
+                        let hold = self.play_held_progress();
+                        self.shelf.draw_with_hold(self.shelf_shake(), hold, out);
+                        if hold > 0.0 {
+                            let bar_w = 120.0;
+                            let bar_h = 3.0;
+                            let bar_x = (OUT_W as f32 - bar_w) / 2.0;
+                            let bar_y = 310.0;
+                            out.push(Draw::Rect {
+                                x: bar_x,
+                                y: bar_y,
+                                w: bar_w,
+                                h: bar_h,
+                                colour: [1.0, 1.0, 1.0, 0.25],
+                            });
+                            out.push(Draw::Rect {
+                                x: bar_x,
+                                y: bar_y,
+                                w: bar_w * hold,
+                                h: bar_h,
+                                colour: [0.965, 0.957, 0.937, 0.9],
+                            });
+                        }
+                    }
                 }
                 self.draw_shelf_captions(out);
                 self.draw_idle_hints(out);
@@ -2214,6 +2294,23 @@ impl App {
             centred_top(self.power_menu_faces.len()),
             out,
         );
+        if let [cancel, select] = self.power_legend_faces.as_slice() {
+            let seen = |w: u32| w.saturating_sub(HINT_EDGE) as f32;
+            let gap = 40.0;
+            let total = seen(cancel.1) + gap + seen(select.1);
+            let mut x = (OUT_W as f32 - total) / 2.0;
+            for (tex, w) in [cancel, select] {
+                out.push(Draw::Tex {
+                    x: x.round(),
+                    y: CORE_LEGEND_Y,
+                    w: *w as f32,
+                    h: HINT_H as f32,
+                    tex: *tex,
+                    alpha: 1.0,
+                });
+                x += seen(*w) + gap;
+            }
+        }
     }
 
     /// The picker, but only once it has started opening: `None` while it is still standing on

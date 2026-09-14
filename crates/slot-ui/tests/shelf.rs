@@ -413,6 +413,25 @@ fn the_other_direction_letting_go_does_not_stop_the_repeat() {
     assert_eq!(s.index, 2, "releasing left stopped a held right");
 }
 
+#[test]
+fn holding_a_direction_accelerates_repeat_rate() {
+    let mut s = shelf_with(20);
+    s.hold_right(0);
+    assert_eq!(s.index, 1);
+    s.tick(400); // 1st repeat (+400ms delay): next due at 400 + 110 = 510
+    assert_eq!(s.index, 2);
+    s.tick(510); // 2nd repeat (+110ms): next due at 510 + 110 = 620
+    assert_eq!(s.index, 3);
+    s.tick(620); // 3rd repeat (+110ms): next due at 620 + 85 = 705
+    assert_eq!(s.index, 4);
+    s.tick(705); // 4th repeat (+85ms): next due at 705 + 85 = 790
+    assert_eq!(s.index, 5);
+    s.tick(790); // 5th repeat (+85ms): next due at 790 + 65 = 855
+    assert_eq!(s.index, 6);
+    s.tick(855); // 6th repeat (+65ms): next due at 855 + 65 = 920
+    assert_eq!(s.index, 7);
+}
+
 /// The gauge takes the shelf the wordmark had, at the same margin, so what is printed on the
 /// case still lines up with the row above it. Charging, with a bolt supplied: the bolt's own
 /// slot is reserved ahead of the capsule, so it is only while charging that anything actually
@@ -700,3 +719,44 @@ fn a_favorite_cart_wears_the_mark_on_its_label() {
         "the favorite mark was not drawn: {out:?}"
     );
 }
+
+#[test]
+fn recents_navigation_does_not_wrap_and_clamps_at_edges() {
+    let mut s = shelf_with(5);
+    s.set_recents((0..5).map(|i| format!("Game {i}")).collect());
+    s.next_category(); // Switch to category 1 (Recents)
+    assert_eq!(s.category(), 1);
+    assert_eq!(s.index, 0);
+
+    // Left at the beginning should NOT wrap to index 4
+    s.left();
+    assert_eq!(s.index, 0, "left at the first cart should not wrap in recents");
+
+    // Right to the end
+    for _ in 0..10 {
+        s.right();
+    }
+    assert_eq!(s.index, 4, "right at the end should clamp to the last cart in recents");
+
+    // Off edge slots should be None
+    assert_eq!(s.cart_at_offset(1), None, "no cart should wrap to the right of the last cart");
+    assert_eq!(s.cart_at_offset(-1), Some(3));
+
+    // Jump letter in recents goes to extremes without wrapping
+    s.previous_letter();
+    assert_eq!(s.index, 0, "previous letter should jump to the start of recents");
+    assert_eq!(s.cart_at_offset(-1), None, "no cart should wrap to the left of the first cart");
+    s.next_letter();
+    assert_eq!(s.index, 4, "next letter should jump to the end of recents");
+}
+
+#[test]
+fn recents_is_capped_at_ten_items() {
+    let mut s = shelf_with(20);
+    let many_recents: Vec<String> = (0..20).map(|i| format!("Game {i}")).collect();
+    s.set_recents(many_recents);
+    s.next_category(); // Switch to category 1 (Recents)
+    assert_eq!(s.category(), 1);
+    assert_eq!(s.carts.len(), 10, "recents shelf should contain at most 10 items");
+}
+

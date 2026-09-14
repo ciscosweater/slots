@@ -20,7 +20,7 @@ const SIDE_ALPHA: f32 = 0.55;
 /// Carts stand on the row rather than float: the foot stays put as a cart shrinks away.
 pub(crate) const FOOT_Y: f32 = (OUT_H + CART_H) as f32 / 2.0;
 /// Critically damped, so a flick lands on a cart instead of bouncing past and returning.
-const OMEGA: f32 = 16.0;
+const OMEGA: f32 = 20.0;
 /// How far the cart next to the selection is pushed aside as the chosen one goes in. Enough
 /// to clear the frame from where it stands.
 const PART: f32 = 130.0;
@@ -56,9 +56,8 @@ pub struct Shelf {
     placeholder: Option<TexId>,
     gb_placeholder: Option<TexId>,
     vel: f32,
-    /// The direction being held and when it next repeats. Repeat lives here rather than in
-    /// the gesture layer so nothing in game starts auto firing.
-    held: Option<(i32, Millis)>,
+    /// The direction being held, when it next repeats, and the repeat count for acceleration.
+    held: Option<(i32, Millis, u32)>,
     favorites: BTreeSet<String>,
     recents: Vec<String>,
     favorite_mark: Option<(TexId, u32, u32)>,
@@ -147,6 +146,10 @@ impl Shelf {
         self.category
     }
 
+    pub fn is_linear(&self) -> bool {
+        self.category == 1
+    }
+
     pub fn category_available(&self, category: usize) -> bool {
         match category {
             0 | 1 => true,
@@ -188,7 +191,8 @@ impl Shelf {
 
     /// Filename stems in most-recent-first order. Rebuild the current category because a
     /// game can become recent while its cart is still away from the shelf.
-    pub fn set_recents(&mut self, recents: Vec<String>) {
+    pub fn set_recents(&mut self, mut recents: Vec<String>) {
+        recents.truncate(slot_store::RECENTS_MAX);
         self.recents = recents;
         self.set_category(self.category);
     }
@@ -250,7 +254,8 @@ impl Shelf {
             let n = self.carts.len() as i32;
             let mut offsets = Vec::with_capacity(self.carts.len());
             offsets.push(0);
-            for distance in 1..=n / 2 {
+            let max_dist = if self.is_linear() { n } else { n / 2 };
+            for distance in 1..=max_dist {
                 offsets.push(-distance);
                 offsets.push(distance);
             }
@@ -278,6 +283,34 @@ impl Shelf {
                     .cloned()
             })
             .collect()
+    }
+
+    /// Priority order for asset hydration: visible carts in the ring around the current
+    /// selection first (alternating left/right), followed by off-screen carts. Zero-alloc.
+    pub fn cart_upload_priority(&self, stem: &str) -> usize {
+        if let Some(pos) = self.carts.iter().position(|c| c.stem == stem) {
+            let n = self.carts.len() as i32;
+            if n <= 1 {
+                return 0;
+            }
+            if self.is_linear() {
+                let diff = (pos as i32 - self.index as i32).abs();
+                return (diff * 2) as usize;
+            }
+            let diff = (pos as i32 - self.index as i32).rem_euclid(n);
+            let signed = if diff * 2 > n { diff - n } else { diff };
+            if signed == 0 {
+                0
+            } else if signed < 0 {
+                (-signed * 2 - 1) as usize
+            } else {
+                (signed * 2) as usize
+            }
+        } else if let Some(all_pos) = self.all_carts.iter().position(|c| c.stem == stem) {
+            self.carts.len() * 2 + all_pos
+        } else {
+            usize::MAX
+        }
     }
 
     pub fn left(&mut self) {
@@ -336,6 +369,9 @@ impl Shelf {
                     .then_with(|| a.stem.cmp(&b.stem))
             }
         });
+        if self.category == 1 {
+            paired.truncate(slot_store::RECENTS_MAX);
+        }
         self.carts = paired.iter().map(|(cart, _)| cart.clone()).collect();
         if have_faces {
             self.faces = paired.iter().map(|(_, face)| *face).collect();
@@ -361,7 +397,7 @@ impl Shelf {
     /// rather than what it produces.
     fn hold(&mut self, by: i32, now: Millis) {
         self.step(by);
-        self.held = Some((by, now + REPEAT_DELAY_MS));
+        self.held = Some((by, now + REPEAT_DELAY_MS, 0));
     }
 
     pub fn release_left(&mut self) {
@@ -375,7 +411,7 @@ impl Shelf {
     /// Only the direction that is being held stops it. Letting go of the other one is a
     /// change of direction the shelf has already acted on.
     fn release(&mut self, by: i32) {
-        if matches!(self.held, Some((held, _)) if held == by) {
+        if matches!(self.held, Some((held, _, _)) if held == by) {
             self.held = None;
         }
     }
@@ -387,15 +423,22 @@ impl Shelf {
 
     /// Fires the repeat. Due from `now` rather than from the deadline it passed, so a frame
     /// the app was late for costs one cart instead of a burst of catching up.
+    /// Progressively accelerates the repeat rate as the direction continues to be held.
     pub fn tick(&mut self, now: Millis) {
-        let Some((by, due)) = self.held else {
+        let Some((by, due, count)) = self.held else {
             return;
         };
         if now < due {
             return;
         }
         self.step(by);
-        self.held = Some((by, now + REPEAT_MS));
+        let next_interval = match count {
+            0..=1 => REPEAT_MS,
+            2..=3 => 85,
+            4..=6 => 65,
+            _ => 50,
+        };
+        self.held = Some((by, now + next_interval, count + 1));
     }
 
     fn step(&mut self, by: i32) {
@@ -403,12 +446,23 @@ impl Shelf {
         if n == 0 {
             return;
         }
-        self.index = (self.index as i32 + by).rem_euclid(n as i32) as usize;
+        if self.is_linear() {
+            let next = (self.index as i32 + by).clamp(0, n as i32 - 1);
+            self.index = next as usize;
+        } else {
+            self.index = (self.index as i32 + by).rem_euclid(n as i32) as usize;
+        }
     }
 
     fn jump_letter(&mut self, by: i32) {
         let n = self.carts.len();
         if n < 2 {
+            return;
+        }
+        if self.is_linear() {
+            let target = if by < 0 { 0 } else { n - 1 };
+            self.index = target;
+            self.held = None;
             return;
         }
         let initial = |i: usize| {
@@ -450,6 +504,9 @@ impl Shelf {
         if n == 0 {
             return 0.0;
         }
+        if self.is_linear() {
+            return self.index as f32;
+        }
         let n = n as f32;
         self.scroll + (self.index as f32 - self.scroll + n / 2.0).rem_euclid(n) - n / 2.0
     }
@@ -463,6 +520,10 @@ impl Shelf {
         if n == 0 {
             return None;
         }
+        if self.is_linear() {
+            let target = self.index as i32 + off;
+            return (target >= 0 && target < n).then_some(target as usize);
+        }
         let r = off.rem_euclid(n);
         let nearest = if r * 2 > n { r - n } else { r };
         (nearest == off).then(|| (self.index as i32 + off).rem_euclid(n) as usize)
@@ -472,12 +533,21 @@ impl Shelf {
         let accel = -2.0 * OMEGA * self.vel - OMEGA * OMEGA * (self.scroll - self.scroll_target());
         self.vel += accel * dt;
         self.scroll += self.vel * dt;
+        let target = self.scroll_target();
+        if (self.scroll - target).abs() < 1e-4 && self.vel.abs() < 1e-3 {
+            self.scroll = target;
+            self.vel = 0.0;
+        }
     }
 
     /// The shelf screen: the row of carts and the slot under it. What is printed on the case
     /// is drawn after this, by whoever holds the type.
     pub fn draw(&self, shake: f32, out: &mut Vec<Draw>) {
-        self.draw_row(None, shake, 0.0, 1.0, out);
+        self.draw_with_hold(shake, 0.0, out);
+    }
+
+    pub fn draw_with_hold(&self, shake: f32, hold_progress: f32, out: &mut Vec<Draw>) {
+        self.draw_row_with_hold(None, shake, 0.0, 1.0, hold_progress, out);
         draw_empty_slot(out);
     }
 
@@ -502,6 +572,18 @@ impl Shelf {
         shake: f32,
         recede: f32,
         dim: f32,
+        out: &mut Vec<Draw>,
+    ) {
+        self.draw_row_with_hold(hidden, shake, recede, dim, 0.0, out);
+    }
+
+    pub fn draw_row_with_hold(
+        &self,
+        hidden: Option<&str>,
+        shake: f32,
+        recede: f32,
+        dim: f32,
+        hold_progress: f32,
         out: &mut Vec<Draw>,
     ) {
         let recede = recede.clamp(0.0, 1.0);
@@ -533,7 +615,12 @@ impl Shelf {
             }
             let x = x + shake;
             let foot_y = (OUT_H + base_h) as f32 / 2.0;
-            let y = foot_y - h;
+            let dip = if slot == 0 {
+                (hold_progress * 6.0).round()
+            } else {
+                0.0
+            };
+            let y = foot_y - h + dip;
             // Black in the cart's own shape, under the dimmed face. Without it the dimming is
             // transparency, and over a wallpaper the row reads as ghosts of carts.
             if alpha < 1.0 {

@@ -864,7 +864,7 @@ fn select_toggles_the_persistent_font() {
 }
 
 #[test]
-fn shelf_names_the_current_letter_or_favorites_above_and_the_game_below() {
+fn shelf_does_not_draw_redundant_letter_above_or_game_title_below() {
     let (_d, mut app) = on_shelf(&["Advance (USA) [Rev 1]", "Boktai"]);
     let letter = Printed::new(TexId::from_raw(101), 20);
     let title = Printed::new(TexId::from_raw(102), 360);
@@ -876,18 +876,8 @@ fn shelf_names_the_current_letter_or_favorites_above_and_the_game_below() {
 
     let mut out = Vec::new();
     app.draw(&mut out);
-    assert!(out.iter().any(|draw| matches!(draw,
-        Draw::Tex { y, tex, .. } if *y == 132.0 && *tex == TexId::from_raw(101)
-    )));
-    assert!(out.iter().any(|draw| matches!(draw,
-        Draw::Tex { y, tex, .. } if *y == 316.0 && *tex == TexId::from_raw(102)
-    )));
-
-    app.apply(Action::GbaDown(Btn::Y));
-    out.clear();
-    app.draw(&mut out);
-    assert!(out.iter().any(|draw| matches!(draw,
-        Draw::Tex { y, tex, .. } if *y == 132.0 && *tex == TexId::from_raw(103)
+    assert!(!out.iter().any(|draw| matches!(draw,
+        Draw::Tex { tex, .. } if *tex == TexId::from_raw(101) || *tex == TexId::from_raw(102) || *tex == TexId::from_raw(103)
     )));
 }
 
@@ -1913,3 +1903,116 @@ fn gpsp_can_be_selected_immediately_after_start() {
         "the chip did not open in gpSP"
     );
 }
+
+#[test]
+fn holding_a_shows_charging_bar_and_progresses_to_clean_start() {
+    let (_d, mut app) = on_shelf(&["Emerald", "Fusion"]);
+    fake_boot_faces(&mut app);
+    let mut out = Vec::new();
+    app.draw(&mut out);
+    assert_eq!(app.play_held_progress(), 0.0);
+
+    app.apply(Action::GbaDown(Btn::A));
+    app.update(0.04);
+    assert_eq!(app.play_held_progress(), 0.0, "short press should not progress yet");
+
+    app.update(0.20);
+    assert!(app.play_held_progress() > 0.0, "held A should show progress");
+    out.clear();
+    app.draw(&mut out);
+    assert!(
+        out.iter().any(|d| matches!(d, Draw::Rect { y, h, .. } if (*y - 310.0).abs() < 0.1 && *h == 3.0)),
+        "charging bar should be drawn while holding A"
+    );
+
+    app.update(0.30);
+    assert!(
+        matches!(app.phase(), Phase::Inserting { clean: true, .. }),
+        "holding A past threshold should start clean"
+    );
+}
+
+#[test]
+fn shelf_count_face_draws_at_top_right_when_set() {
+    let (_d, mut app) = on_shelf(&["Emerald", "Fusion"]);
+    fake_boot_faces(&mut app);
+    let tex = TexId::from_raw(99);
+    app.set_shelf_count_face(Some((tex, 40)));
+    let mut out = Vec::new();
+    app.draw(&mut out);
+    assert!(
+        out.iter().any(|d| matches!(d, Draw::Tex { tex: t, y, .. } if *t == tex && (*y - 8.0).abs() < 0.1)),
+        "shelf count face should be drawn at top right"
+    );
+}
+
+#[test]
+fn power_menu_draws_action_legend() {
+    let (_d, mut app) = on_shelf(&["Emerald", "Fusion"]);
+    fake_boot_faces(&mut app);
+    let cancel = (TexId::from_raw(88), 30);
+    let select = (TexId::from_raw(89), 35);
+    app.set_power_legend_faces(vec![cancel, select]);
+    app.set_power_menu(Some(0));
+    let mut out = Vec::new();
+    app.draw(&mut out);
+    assert!(
+        out.iter().any(|d| matches!(d, Draw::Tex { tex, .. } if *tex == cancel.0)),
+        "power menu should draw cancel legend"
+    );
+    assert!(
+        out.iter().any(|d| matches!(d, Draw::Tex { tex, .. } if *tex == select.0)),
+        "power menu should draw select legend"
+    );
+}
+
+#[test]
+fn set_clock_can_be_cancelled_with_b_when_clock_valid() {
+    let (_d, mut app) = on_shelf(&["Emerald", "Fusion"]);
+    fake_boot_faces(&mut app);
+    app.apply(Action::OpenAbout);
+    assert!(matches!(app.phase(), Phase::About));
+    app.apply(Action::GbaDown(Btn::A));
+    app.update(0.6);
+    assert!(matches!(app.phase(), Phase::SetClock { .. }));
+    app.apply(Action::GbaDown(Btn::B));
+    assert!(matches!(app.phase(), Phase::About), "B should return to About");
+}
+
+#[test]
+fn empty_recents_shows_hint_to_browse_categories() {
+    let (_d, mut app) = on_shelf(&["Emerald", "Fusion"]);
+    fake_boot_faces(&mut app);
+    let hint_tex = TexId::from_raw(77);
+    app.set_empty_recents_hint((hint_tex, 60));
+    app.apply(Action::FfStart);
+    assert_eq!(app.shelf_total(), 0);
+    let mut out = Vec::new();
+    app.draw(&mut out);
+    assert!(
+        out.iter().any(|d| matches!(d, Draw::Tex { tex, y, .. } if *tex == hint_tex && (*y - 352.0).abs() < 0.1)),
+        "empty recents should display hint"
+    );
+}
+
+#[test]
+fn r2_rapid_taps_on_shelf_advance_category_without_swallowing() {
+    let d = common::tmp_root_with_real_carts(&["Emerald", "Fusion"]);
+    common::clocked(d.path());
+    let mut s = Session::boot(d.path().to_path_buf());
+    assert_eq!(s.app().shelf_category(), 0);
+    // Tap 1: ALL -> RECENTS
+    s.feed([RawEvent::Down(Btn::R2), RawEvent::Up(Btn::R2)], 100);
+    assert_eq!(s.app().shelf_category(), 1);
+    // Tap 2: RECENTS -> GBA
+    s.feed([RawEvent::Down(Btn::R2), RawEvent::Up(Btn::R2)], 200);
+    assert_eq!(s.app().shelf_category(), 2);
+    // Tap 3: GBA -> ALL (would have been swallowed by FF double-tap latch previously)
+    s.feed([RawEvent::Down(Btn::R2), RawEvent::Up(Btn::R2)], 300);
+    assert_eq!(s.app().shelf_category(), 0);
+    // Tap 4: ALL -> RECENTS
+    s.feed([RawEvent::Down(Btn::R2), RawEvent::Up(Btn::R2)], 400);
+    assert_eq!(s.app().shelf_category(), 1);
+}
+
+
