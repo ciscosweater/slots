@@ -121,18 +121,11 @@ const CORE_PICKER_RECEDE: f32 = 0.26;
 const CORE_PICKER_DIM: f32 = 0.614;
 /// The legend's line, under the open cart and clear of the case band.
 const CORE_LEGEND_Y: f32 = 386.0;
-/// How long the shelf sits still before the faint START/A hint appears. Short enough to teach,
-/// long enough that browsing never flashes it.
-const IDLE_HINT_MS: Millis = 1500;
-const IDLE_HINT_ALPHA: f32 = 0.45;
 /// Separate tabs stay at the label font's full size. The old single string was fitted as one
 /// face, which made the whole row tiny and eventually clipped GBC off the right edge.
 const CATEGORY_GAP: f32 = 24.0;
 const CATEGORY_Y: f32 = 8.0;
-const CATEGORY_IDLE_ALPHA: f32 = 0.42;
-const CATEGORY_RULE_W_INSET: f32 = 5.0;
-const CATEGORY_RULE_H: f32 = 2.0;
-const CATEGORY_RULE_GAP: f32 = 2.0;
+const CATEGORY_IDLE_ALPHA: f32 = 0.35;
 /// Top of the link screen's one line of text: its baseline lands near y 74.
 const LINK_TEXT_Y: f32 = 44.0;
 /// The legend, centred on the console strip (y 388–480).
@@ -923,28 +916,7 @@ impl App {
                     alpha: if selected { 1.0 } else { CATEGORY_IDLE_ALPHA },
                 });
             }
-            if selected {
-                let w = (face.w as f32 - CATEGORY_RULE_W_INSET * 2.0).max(10.0);
-                out.push(Draw::Rect {
-                    x: (tab_x + (face.w as f32 - w) / 2.0).round(),
-                    y: CATEGORY_Y + HINT_H as f32 + CATEGORY_RULE_GAP,
-                    w,
-                    h: CATEGORY_RULE_H,
-                    colour: [0.965, 0.957, 0.937, 0.9],
-                });
-            }
             tab_x += face.w as f32 + CATEGORY_GAP;
-        }
-        if let Some((tex, w)) = self.shelf_count_face {
-            let x = OUT_W as f32 - 24.0 - w as f32;
-            out.push(Draw::Tex {
-                x,
-                y: CATEGORY_Y,
-                w: w as f32,
-                h: HINT_H as f32,
-                tex,
-                alpha: 0.65,
-            });
         }
         if self.shelf.carts.is_empty() {
             let caption = if self.shelf.category() == 1 {
@@ -964,43 +936,6 @@ impl App {
                         alpha: 0.75,
                     });
                 }
-            }
-        }
-    }
-
-    fn draw_idle_hints(&self, out: &mut Vec<Draw>) {
-        if self.core_picker.is_some() || self.shelf.carts.is_empty() {
-            return;
-        }
-        if self
-            .shelf
-            .carts
-            .get(self.shelf.index)
-            .is_some_and(|cart| cart.platform != slot_store::Platform::Gba)
-        {
-            return;
-        }
-        let elapsed = self.now().saturating_sub(self.shelf_idle_at);
-        if elapsed < IDLE_HINT_MS {
-            return;
-        }
-        let fade = ((elapsed - IDLE_HINT_MS) as f32 / 300.0).min(1.0);
-        let alpha = IDLE_HINT_ALPHA * fade;
-        if let [open, core] = self.shelf_idle_faces.as_slice() {
-            let seen = |w: u32| w.saturating_sub(HINT_EDGE) as f32;
-            let gap = 40.0;
-            let total = seen(open.1) + gap + seen(core.1);
-            let mut x = (OUT_W as f32 - total) / 2.0;
-            for (tex, w) in [open, core] {
-                out.push(Draw::Tex {
-                    x: x.round(),
-                    y: CORE_LEGEND_Y,
-                    w: *w as f32,
-                    h: HINT_H as f32,
-                    tex: *tex,
-                    alpha,
-                });
-                x += seen(*w) + gap;
             }
         }
     }
@@ -2009,30 +1944,9 @@ impl App {
                     _ => {
                         let hold = self.play_held_progress();
                         self.shelf.draw_with_hold(self.shelf_shake(), hold, out);
-                        if hold > 0.0 {
-                            let bar_w = 120.0;
-                            let bar_h = 3.0;
-                            let bar_x = (OUT_W as f32 - bar_w) / 2.0;
-                            let bar_y = 310.0;
-                            out.push(Draw::Rect {
-                                x: bar_x,
-                                y: bar_y,
-                                w: bar_w,
-                                h: bar_h,
-                                colour: [1.0, 1.0, 1.0, 0.25],
-                            });
-                            out.push(Draw::Rect {
-                                x: bar_x,
-                                y: bar_y,
-                                w: bar_w * hold,
-                                h: bar_h,
-                                colour: [0.965, 0.957, 0.937, 0.9],
-                            });
-                        }
                     }
                 }
                 self.draw_shelf_captions(out);
-                self.draw_idle_hints(out);
                 draw_footer(
                     self.battery,
                     self.battery_percent,

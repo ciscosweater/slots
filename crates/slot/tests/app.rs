@@ -579,7 +579,7 @@ fn tapping_a_on_about_leaves_a_live_clock_alone() {
 }
 
 #[test]
-fn idle_hints_appear_after_a_pause_and_leave_on_input() {
+fn idle_hints_do_not_appear_on_shelf() {
     let (_d, mut app) = on_shelf(&["Emerald", "Fusion"]);
     app.set_shelf_idle_faces(vec![(TexId::from_raw(7), 40), (TexId::from_raw(8), 50)]);
     let mut out = Vec::new();
@@ -593,75 +593,9 @@ fn idle_hints_appear_after_a_pause_and_leave_on_input() {
     out.clear();
     app.draw(&mut out);
     assert!(
-        out.iter().any(|d| matches!(
-            d,
-            Draw::Tex { y, tex, alpha, .. }
-            if *tex == TexId::from_raw(7) && (*y - 386.0).abs() < 0.1 && *alpha < 0.5
-        )),
-        "the idle hint did not appear: {out:?}"
-    );
-    app.apply(Action::GbaDown(Btn::Right));
-    out.clear();
-    app.draw(&mut out);
-    assert!(
         !out.iter()
             .any(|d| matches!(d, Draw::Tex { tex, .. } if *tex == TexId::from_raw(7))),
-        "the idle hint stayed after the row moved"
-    );
-}
-
-#[test]
-fn idle_hints_stay_off_an_empty_shelf() {
-    let mut app = app_with_carts(&[]);
-    app.set_shelf_idle_faces(vec![(TexId::from_raw(7), 40), (TexId::from_raw(8), 50)]);
-    app.update(5.0);
-    let mut out = Vec::new();
-    app.draw(&mut out);
-    assert!(
-        !out.iter()
-            .any(|d| matches!(d, Draw::Tex { tex, .. } if *tex == TexId::from_raw(7))),
-        "an empty shelf showed insert hints"
-    );
-}
-
-#[test]
-fn idle_hints_stay_off_for_gb_and_gbc_carts() {
-    let mut app = App::new(vec![
-        Cart {
-            stem: "Tetris".into(),
-            rom: "Games/Tetris.gb".into(),
-            label: None,
-            code: String::new(),
-            title: "TETRIS".into(),
-            platform: slot_store::Platform::Gb,
-        },
-        Cart {
-            stem: "Zelda".into(),
-            rom: "Games/Zelda.gbc".into(),
-            label: None,
-            code: String::new(),
-            title: "ZELDA".into(),
-            platform: slot_store::Platform::Gbc,
-        },
-    ]);
-    app.set_shelf_idle_faces(vec![(TexId::from_raw(7), 40), (TexId::from_raw(8), 50)]);
-    app.update(5.0);
-    let mut out = Vec::new();
-    app.draw(&mut out);
-    assert!(
-        !out.iter()
-            .any(|d| matches!(d, Draw::Tex { tex, .. } if *tex == TexId::from_raw(7))),
-        "GB cart showed idle hints which would overlap the ROM title"
-    );
-
-    app.apply(Action::GbaDown(Btn::Right));
-    app.update(5.0);
-    out.clear();
-    app.draw(&mut out);
-    assert!(
-        !out.iter()
-            .any(|d| matches!(d, Draw::Tex { tex, .. } if *tex == TexId::from_raw(7))),
-        "GBC cart showed idle hints which would overlap the ROM title"
+        "idle hints should not appear on the minimalist shelf"
     );
 }
 
@@ -1905,7 +1839,7 @@ fn gpsp_can_be_selected_immediately_after_start() {
 }
 
 #[test]
-fn holding_a_shows_charging_bar_and_progresses_to_clean_start() {
+fn holding_a_progresses_to_clean_start_without_charging_bar() {
     let (_d, mut app) = on_shelf(&["Emerald", "Fusion"]);
     fake_boot_faces(&mut app);
     let mut out = Vec::new();
@@ -1921,8 +1855,8 @@ fn holding_a_shows_charging_bar_and_progresses_to_clean_start() {
     out.clear();
     app.draw(&mut out);
     assert!(
-        out.iter().any(|d| matches!(d, Draw::Rect { y, h, .. } if (*y - 310.0).abs() < 0.1 && *h == 3.0)),
-        "charging bar should be drawn while holding A"
+        !out.iter().any(|d| matches!(d, Draw::Rect { y, h, .. } if (*y - 310.0).abs() < 0.1 && *h == 3.0)),
+        "charging bar should NOT be drawn while holding A"
     );
 
     app.update(0.30);
@@ -1933,7 +1867,7 @@ fn holding_a_shows_charging_bar_and_progresses_to_clean_start() {
 }
 
 #[test]
-fn shelf_count_face_draws_at_top_right_when_set() {
+fn shelf_count_face_is_not_drawn_when_set() {
     let (_d, mut app) = on_shelf(&["Emerald", "Fusion"]);
     fake_boot_faces(&mut app);
     let tex = TexId::from_raw(99);
@@ -1941,8 +1875,8 @@ fn shelf_count_face_draws_at_top_right_when_set() {
     let mut out = Vec::new();
     app.draw(&mut out);
     assert!(
-        out.iter().any(|d| matches!(d, Draw::Tex { tex: t, y, .. } if *t == tex && (*y - 8.0).abs() < 0.1)),
-        "shelf count face should be drawn at top right"
+        !out.iter().any(|d| matches!(d, Draw::Tex { tex: t, y, .. } if *t == tex && (*y - 8.0).abs() < 0.1)),
+        "shelf count face should not be drawn for a minimalist shelf"
     );
 }
 
