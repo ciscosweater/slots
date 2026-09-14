@@ -34,6 +34,30 @@ fn resume_is_not_part_of_the_ring() {
 }
 
 #[test]
+fn a_rejected_resume_is_preserved_outside_the_ring() {
+    let d = tempdir().unwrap();
+    let r = StateRing::new(d.path(), Core::Gambatte, "Zelda");
+    r.write_resume(b"old incompatible state").unwrap();
+
+    let first = r.quarantine_resume().unwrap().expect("resume existed");
+    assert_eq!(std::fs::read(&first).unwrap(), b"old incompatible state");
+    assert!(r.read_resume().unwrap().is_none());
+    assert!(r.list().unwrap().is_empty());
+
+    r.write_resume(b"another incompatible state").unwrap();
+    let second = r
+        .quarantine_resume()
+        .unwrap()
+        .expect("second resume existed");
+    assert_ne!(first, second, "the first rejected state was overwritten");
+    assert_eq!(std::fs::read(first).unwrap(), b"old incompatible state");
+    assert_eq!(
+        std::fs::read(second).unwrap(),
+        b"another incompatible state"
+    );
+}
+
+#[test]
 fn a_cart_with_no_saves_lists_empty_rather_than_erroring() {
     let d = tempdir().unwrap();
     let r = StateRing::new(d.path(), Core::Mgba, "Never Played");

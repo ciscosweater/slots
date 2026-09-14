@@ -6,6 +6,16 @@ members = ["crates/*"]
 edition = "2021"
 rust-version = "1.96"
 
+# Device startup pays for every page read from the SD card. Thin LTO and symbol stripping keep
+# the shipped executable smaller while retaining enough optimization for the frame loop; abort
+# panics remove unwinding tables that are not useful on a fixed-function appliance.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
+
 [workspace.dependencies]
 lz4_flex = { version = "0.11", default-features = false, features = ["std"] }
 png = "0.17"

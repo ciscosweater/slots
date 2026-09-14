@@ -55,11 +55,11 @@ fn platform(d: &TempDir) -> DevicePlatform {
 fn the_backlight_steps_follow_the_perceptual_curve() {
     let d = sysfs("255", "87");
     let mut p = platform(&d);
-    p.set_backlight(9);
+    p.set_backlight(16);
     assert_eq!(brightness(&d), 255);
-    p.set_backlight(5);
+    p.set_backlight(9);
     assert_eq!(brightness(&d), 42);
-    p.set_backlight(2);
+    p.set_backlight(3);
     assert_eq!(brightness(&d), 4);
 }
 
@@ -76,12 +76,24 @@ fn the_first_lit_step_uses_the_panels_lowest_nonzero_value() {
 }
 
 #[test]
+fn the_new_night_levels_fill_the_gap_above_the_dimmest_step() {
+    let d = sysfs("255", "87");
+    let mut p = platform(&d);
+    p.set_backlight(1);
+    assert_eq!(brightness(&d), 1);
+    p.set_backlight(2);
+    assert_eq!(brightness(&d), 2);
+    p.set_backlight(3);
+    assert_eq!(brightness(&d), 4);
+}
+
+#[test]
 fn the_curve_scales_to_the_range_the_kernel_reports() {
     let d = sysfs("100", "87");
     let mut p = platform(&d);
-    p.set_backlight(5);
-    assert_eq!(brightness(&d), 16);
     p.set_backlight(9);
+    assert_eq!(brightness(&d), 16);
+    p.set_backlight(16);
     assert_eq!(brightness(&d), 100);
 }
 
@@ -228,7 +240,7 @@ fn dispdbg(d: &TempDir, file: &str) -> String {
 fn a_tree_with_no_backlight_class_drives_the_panel_through_dispdbg() {
     let d = dispdbg_tree();
     let mut p = DevicePlatform::probe(d.path(), PathBuf::from("/mnt/sdcard"));
-    p.set_backlight(9);
+    p.set_backlight(16);
     assert_eq!(dispdbg(&d, "name"), "lcd0");
     assert_eq!(dispdbg(&d, "command"), "setbl");
     assert_eq!(
@@ -255,7 +267,7 @@ fn a_backlight_class_still_wins_over_dispdbg() {
     let dbg = d.path().join("kernel/debug/dispdbg");
     fs::create_dir_all(&dbg).unwrap();
     fs::write(dbg.join("param"), "").unwrap();
-    platform(&d).set_backlight(9);
+    platform(&d).set_backlight(16);
     assert_eq!(brightness(&d), 255);
     assert_eq!(dispdbg(&d, "param"), "", "dispdbg was written to as well");
 }

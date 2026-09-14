@@ -10,7 +10,7 @@ use crate::core::open_core;
 use crate::emu::{CoreState, EmuHandle, Speed};
 use crate::frames::FrameRef;
 use crate::input::Pad;
-use crate::persist;
+use crate::persist::{self, Snapshot};
 
 /// Everything the frontend is that is not a window: the app, the core behind it, and the
 /// gesture layer between the two. The binary owns the GL and hands raw events in.
@@ -24,6 +24,10 @@ pub struct Session {
     /// biased, which is a hiss with the screen and LED already off.
     sink: Box<dyn AudioSink>,
     sink_open: bool,
+    /// Hardware open is allowed to finish after the first frame. While true, the ring stays
+    /// empty and the emulator remains valid; `sync_sink` picks up the completion without ever
+    /// blocking the UI thread on a driver.
+    sink_pending: bool,
     /// Last `want` `sync_sink` acted on. Open is attempted on the rising edge, not every
     /// frame a failed open leaves the device silent — ALSA `snd_pcm_open` on a dead host
     /// blocks, and retrying it from `update` drowned the rewind tests in the same error.
@@ -40,13 +44,13 @@ pub struct Session {
 impl Session {
     pub fn boot(root: PathBuf) -> Self {
         let mut sink: Box<dyn AudioSink> = open_sink();
-        // A frontend for one console knows the rate before it knows the cart. A device that
-        // refuses it still opens, and the worker resamples to whatever it did take.
-        let sink_open = match sink.open(GBA_HZ) {
-            Ok(()) => true,
+        // A frontend for one console knows the rate before it knows the cart. Starting this on
+        // the sink's worker removes ALSA/cpal discovery from the first-frame critical path.
+        let (sink_open, sink_pending) = match sink.open_async(GBA_HZ) {
+            Ok(pending) => (!pending, pending),
             Err(e) => {
                 eprintln!("slot: audio: {e}");
-                false
+                (false, false)
             }
         };
         Session {
@@ -55,6 +59,7 @@ impl Session {
             emu: None,
             sink,
             sink_open,
+            sink_pending,
             sink_wanted: true,
             gestures: Gestures::new(),
             pad: Pad::default(),
@@ -391,13 +396,28 @@ impl Session {
     /// only when the machine is actually going to make sound. The open is edge-triggered:
     /// a failed codec is not retried every frame.
     fn sync_sink(&mut self) {
+        if self.sink_pending {
+            if let Some(result) = self.sink.poll_open() {
+                self.sink_pending = false;
+                match result {
+                    Ok(()) => self.sink_open = true,
+                    Err(e) => {
+                        eprintln!("slot: audio: {e}");
+                        self.sink_open = false;
+                    }
+                }
+            }
+        }
         let want = !self.app.shutting_down() && !self.dozing();
         if want == self.sink_wanted {
             return;
         }
         if want {
-            match self.sink.open(GBA_HZ) {
-                Ok(()) => self.sink_open = true,
+            match self.sink.open_async(GBA_HZ) {
+                Ok(pending) => {
+                    self.sink_pending = pending;
+                    self.sink_open = !pending;
+                }
                 Err(e) => {
                     eprintln!("slot: audio: {e}");
                     self.sink_open = false;
@@ -406,6 +426,9 @@ impl Session {
         } else if self.sink_open {
             self.sink.close();
             self.sink_open = false;
+        } else if self.sink_pending {
+            self.sink.close();
+            self.sink_pending = false;
         }
         self.sink_wanted = want;
     }
@@ -415,6 +438,7 @@ impl Session {
     pub fn silence(&mut self) {
         self.sink.close();
         self.sink_open = false;
+        self.sink_pending = false;
         self.sink_wanted = false;
     }
 
@@ -496,7 +520,35 @@ impl Session {
         }
         match self.emu.as_ref().map(EmuHandle::state) {
             Some(CoreState::Loading) => {}
-            Some(CoreState::Ready) => self.app.on_core_ready(),
+            Some(CoreState::Ready) => {
+                // A real core can legitimately reject a state written by an older core
+                // build. Preserve those bytes, then let this known-good core establish a
+                // fresh resume lineage instead of refusing every autosave forever.
+                if self
+                    .emu
+                    .as_ref()
+                    .is_some_and(|emu| !emu.snapshot().resume_trusted())
+                {
+                    let ring = slot_store::StateRing::new(&self.root, self.app.core(), &stem);
+                    match ring.quarantine_resume() {
+                        Ok(path) => {
+                            if let Some(path) = path {
+                                eprintln!(
+                                    "slot: resume: preserved rejected state as {}",
+                                    path.display()
+                                );
+                            }
+                            if let Some(emu) = &self.emu {
+                                emu.accept_cold_start_after_resume_backup();
+                            }
+                        }
+                        Err(e) => eprintln!(
+                            "slot: resume: could not preserve rejected state, autosave remains disabled: {e}"
+                        ),
+                    }
+                }
+                self.app.on_core_ready()
+            }
             // A refused cart leaves a dead worker behind. Dropping it here is what frees the
             // core for the next insert, since libretro allows only one.
             Some(CoreState::Failed) | None => {

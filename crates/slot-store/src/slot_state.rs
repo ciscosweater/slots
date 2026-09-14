@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use crate::atomic::atomic_write;
 
-pub const BRIGHTNESS_MAX: u8 = 9;
+pub const BRIGHTNESS_MAX: u8 = 16;
 pub const BLUE_LIGHT_MAX: u8 = 9;
 pub const VOLUME_MAX: u8 = 100;
 
@@ -60,7 +60,7 @@ pub fn read_slot_state(root: &Path) -> SlotState {
 
 pub fn write_slot_state(root: &Path, s: &SlotState) -> std::io::Result<()> {
     let text = format!(
-        "cart={}\nbrightness={}\nblue_light={}\nvolume={}\nmuted={}\nclock_set={}\nutc_offset_min={}\n",
+        "version=2\ncart={}\nbrightness={}\nblue_light={}\nvolume={}\nmuted={}\nclock_set={}\nutc_offset_min={}\n",
         s.cart.as_deref().unwrap_or(""),
         s.brightness,
         s.blue_light,
@@ -75,6 +75,7 @@ pub fn write_slot_state(root: &Path, s: &SlotState) -> std::io::Result<()> {
 /// All or nothing. A file we only half recognise is not one we wrote, and inheriting the
 /// missing fields from the defaults would hide the corruption behind plausible values.
 fn parse(text: &str) -> Option<SlotState> {
+    let mut version = None;
     let mut cart = None;
     let mut brightness = None;
     let mut blue_light = None;
@@ -85,8 +86,11 @@ fn parse(text: &str) -> Option<SlotState> {
     for line in text.lines().filter(|l| !l.is_empty()) {
         let (key, value) = line.split_once('=')?;
         match key {
+            "version" => version = Some(value.parse::<u8>().ok().filter(|v| *v == 2)?),
             "cart" => cart = Some(value.to_string()),
-            "brightness" => brightness = Some(level(value, BRIGHTNESS_MAX)?),
+            // Version 1 had ten positions. Keep their physical brightness on upgrade while
+            // version 2 adds intermediate night-time levels between them.
+            "brightness" => brightness = Some(value.parse::<u8>().ok()?),
             "blue_light" => blue_light = Some(level(value, BLUE_LIGHT_MAX)?),
             "volume" => volume = Some(level(value, VOLUME_MAX)?),
             "muted" => muted = Some(level(value, 1)? == 1),
@@ -95,10 +99,15 @@ fn parse(text: &str) -> Option<SlotState> {
             _ => return None,
         }
     }
+    let brightness = match version {
+        Some(2) => level(&brightness?.to_string(), BRIGHTNESS_MAX)?,
+        None => *[0, 1, 3, 5, 7, 9, 11, 13, 15, 16].get(brightness? as usize)?,
+        _ => return None,
+    };
     let cart = cart?;
     Some(SlotState {
         cart: (!cart.is_empty()).then_some(cart),
-        brightness: brightness?,
+        brightness,
         blue_light: blue_light?,
         volume: volume?,
         muted: muted?,

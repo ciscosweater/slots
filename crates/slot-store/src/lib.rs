@@ -23,7 +23,7 @@ pub use lcd::{read_lcd, write_lcd, LCD_FILE};
 pub use migrate::{migrate_states, MigrationReport};
 pub use recents::{read_recents, touch_recent, write_recents, RECENTS_FILE, RECENTS_MAX};
 pub use ring::{StateEntry, StateRing, RING_MAX};
-pub use scan::{is_hidden, scan, Cart, Platform, StoreError};
+pub use scan::{is_hidden, scan, scan_cached, Cart, Platform, StoreError};
 pub use slot_state::{
     read_slot_state, write_slot_state, SlotState, BLUE_LIGHT_MAX, BRIGHTNESS_MAX, UTC_OFFSET_MAX,
     UTC_OFFSET_MIN, VOLUME_MAX,

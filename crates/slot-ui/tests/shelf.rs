@@ -18,6 +18,53 @@ fn shelf_with(n: usize) -> Shelf {
 }
 
 #[test]
+fn face_upload_order_prioritises_both_edges_of_the_ring() {
+    let shelf = shelf_with(8);
+    let order = shelf
+        .face_upload_order()
+        .into_iter()
+        .map(|cart| cart.stem)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        &order[..5],
+        ["Game 0", "Game 7", "Game 1", "Game 6", "Game 2"],
+        "the wrapped neighbour must be hydrated before the far end of the queue"
+    );
+}
+
+#[test]
+fn a_missing_face_can_use_a_shape_placeholder_instead_of_a_square() {
+    let mut shelf = shelf_with(1);
+    shelf.set_placeholder(TexId::from_raw(77));
+    let mut out = Vec::new();
+    shelf.draw_row(None, 0.0, 0.0, 1.0, &mut out);
+    assert!(
+        matches!(out.first(), Some(Draw::Tex { tex, .. }) if *tex == TexId::from_raw(77)),
+        "the shelf fell back to a rectangular placeholder: {out:?}"
+    );
+}
+
+#[test]
+fn uploading_a_face_does_not_restart_shelf_motion_or_repeat() {
+    let mut shelf = shelf_with(5);
+    shelf.hold_right(0);
+    shelf.update(0.02);
+    let moving_scroll = shelf.scroll;
+
+    shelf.set_face("Game 4", TexId::from_raw(123));
+
+    assert_eq!(
+        shelf.scroll, moving_scroll,
+        "a late face upload snapped the spring back to the selected cart"
+    );
+    shelf.tick(400);
+    assert_eq!(
+        shelf.index, 2,
+        "a late face upload cancelled the held-direction repeat"
+    );
+}
+
+#[test]
 fn categories_cycle_and_filter_by_platform() {
     let carts = [Platform::Gba, Platform::Gb, Platform::Gbc]
         .into_iter()

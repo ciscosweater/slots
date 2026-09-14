@@ -4,21 +4,24 @@ use std::io::Write;
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::{Battery, Charge, LedState, Platform};
 
-/// The top step. Levels are 0 to 9 everywhere above the trait; what that spans in the
+/// The top step. Levels are 0 to 16 everywhere above the trait; what that spans in the
 /// kernel's own units is whatever `max_brightness` says, which is 255 on some panels and
 /// 100 on others.
-const TOP_STEP: u32 = 9;
+const TOP_STEP: u32 = 16;
 
 /// Perceptual brightness curve in H700's native eight-bit units. Human brightness perception
 /// is not linear, so spend more of the nine visible levels at the dark end where equal raw
 /// increments are useful and spread them increasingly far apart toward full brightness.
-const BACKLIGHT_CURVE: [u32; 10] = [0, 1, 4, 10, 22, 42, 72, 112, 172, 255];
+/// The extra values at 2 and 7 are the useful levels the old nine-step curve skipped.
+const BACKLIGHT_CURVE: [u32; 17] = [
+    0, 1, 2, 4, 7, 10, 15, 22, 31, 42, 57, 72, 91, 112, 140, 172, 255,
+];
 
-/// Turn the frontend's nine visible levels into the panel's native range. Scale the curve
+/// Turn the frontend's sixteen visible levels into the panel's native range. Scale the curve
 /// against the range reported by other kernels, keeping every lit step non-zero even on a
 /// particularly narrow backlight range.
 fn backlight_value(step: u32, max: u32) -> u32 {
@@ -167,7 +170,12 @@ impl DevicePlatform {
             .open(self.root.join("ags-shutdown-trace.log"))
         {
             let _ = writeln!(f, "{} {line}", self.now());
-            let _ = f.sync_all();
+            // The boot breadcrumb is observability only and sits on the first-frame path.
+            // Shutdown breadcrumbs still force the card because they are crash evidence; the
+            // normal boot marker can safely be flushed by the filesystem in the background.
+            if !line.starts_with("boot:") {
+                let _ = f.sync_all();
+            }
         }
     }
 
@@ -520,11 +528,23 @@ fn axp2202_poweroff_or_timeout() -> std::io::Result<()> {
 /// inside `echo mem`.
 const SUPER_STANDBY: Duration = Duration::from_secs(300);
 
-/// Anbernic's `os_sleep` is Super Standby's auto-off, in minutes. Round up so a remainder
-/// of ninety seconds still asks the PMIC for two, and never write zero — that would mean
-/// "no timeout" on this node and sleep until a button.
-fn os_sleep_minutes(remaining: Duration) -> u64 {
-    remaining.as_secs().div_ceil(60).max(1)
+/// The stock H700 userspace writes 16 here. This is an enable switch, not a duration: the
+/// vendor driver treats every non-zero value alike. A timed shutdown therefore needs an RTC
+/// alarm to bring userspace back from suspend; writing `5` here does not mean five minutes.
+const OS_SLEEP_ENABLED: &str = "16";
+
+fn arm_wakealarm(rtc: Option<&Path>, after: Duration) -> std::io::Result<()> {
+    let rtc = rtc.ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "no RTC available for timed wake",
+        )
+    })?;
+    let alarm = rtc.join("wakealarm");
+    fs::write(&alarm, "0")?;
+    // Linux's RTC sysfs accepts a relative alarm. This does not depend on the wall clock
+    // having been set yet, which matters on a freshly flashed unit without network time.
+    fs::write(alarm, format!("+{}", after.as_secs().max(1)))
 }
 
 impl Platform for DevicePlatform {
@@ -594,9 +614,13 @@ impl Platform for DevicePlatform {
         let _ = fs::write(&work_led, "0");
         let _ = Command::new("sync").status();
 
-        let started = Instant::now();
+        let deadline = SystemTime::now() + SUPER_STANDBY;
         loop {
-            let remaining = SUPER_STANDBY.saturating_sub(started.elapsed());
+            // `Instant` is CLOCK_MONOTONIC on Linux and stops while the machine is suspended.
+            // Wall time advances across suspend, so the RTC wake can actually exhaust this.
+            let remaining = deadline
+                .duration_since(SystemTime::now())
+                .unwrap_or(Duration::ZERO);
             if remaining.is_zero() {
                 // Five minutes in Super Standby with the lid still shut: cut the rails.
                 // resume.state was written before this loop, so the next boot seats the cart.
@@ -604,10 +628,14 @@ impl Platform for DevicePlatform {
                 return false;
             }
             if os_sleep.is_file() {
-                // Anbernic's node is Super Standby's auto-off, in minutes. Writing the
-                // remainder is what asks the PMIC to wake us (or cut the rails) instead of
-                // sleeping until a button, which this board's RTC cannot do.
-                let _ = fs::write(&os_sleep, os_sleep_minutes(remaining).to_string());
+                // Match the vendor userspace and NextUI's H700 port: non-zero enables Super
+                // Standby. The RTC alarm below, not this value, supplies the five-minute wake.
+                let _ = fs::write(&os_sleep, OS_SLEEP_ENABLED);
+            }
+            if let Err(e) = arm_wakealarm(self.rtc.as_deref(), remaining) {
+                eprintln!("slot: suspend: could not arm timed wake: {e}");
+                let _ = fs::write(&work_led, "1");
+                return false;
             }
             let status = Command::new("sh")
                 .args(["-c", "echo mem > /sys/power/state"])
@@ -622,6 +650,9 @@ impl Platform for DevicePlatform {
                 break;
             }
             std::thread::sleep(Duration::from_secs(1));
+        }
+        if let Some(rtc) = self.rtc.as_deref() {
+            let _ = fs::write(rtc.join("wakealarm"), "0");
         }
         let _ = fs::write(&work_led, "1");
         true
@@ -770,10 +801,13 @@ mod tests {
     }
 
     #[test]
-    fn os_sleep_minutes_rounds_up_and_never_writes_zero() {
-        assert_eq!(os_sleep_minutes(Duration::from_secs(300)), 5);
-        assert_eq!(os_sleep_minutes(Duration::from_secs(61)), 2);
-        assert_eq!(os_sleep_minutes(Duration::from_secs(1)), 1);
-        assert_eq!(os_sleep_minutes(Duration::ZERO), 1);
+    fn a_relative_rtc_alarm_is_armed_without_needing_a_valid_wall_clock() {
+        let d = tempfile::tempdir().unwrap();
+        fs::write(d.path().join("wakealarm"), "").unwrap();
+        arm_wakealarm(Some(d.path()), Duration::from_secs(300)).unwrap();
+        assert_eq!(
+            fs::read_to_string(d.path().join("wakealarm")).unwrap(),
+            "+300"
+        );
     }
 }

@@ -6,7 +6,7 @@ use slot_input::{Action, Btn, MUTE_CHORD_MS};
 use slot_power::{Battery, Charge, LedState, LidPolicy, Power};
 use slot_retro::LinkChannel;
 use slot_store::{
-    format_stamp, read_favorites, read_lcd, read_pixelify, read_recents, read_slot_state, scan,
+    format_stamp, read_favorites, read_lcd, read_pixelify, read_recents, read_slot_state,
     touch_recent, write_favorites, write_lcd, write_pixelify, write_recents, write_slot_state,
     Cart, Core, SlotState, StateEntry, StateRing, Theme, BLUE_LIGHT_MAX, BRIGHTNESS_MAX, RING_MAX,
     VOLUME_MAX,
@@ -615,7 +615,7 @@ impl App {
         // Before anything is drawn. The card's palette cannot change while the device is on,
         // so it is read once and never asked for again.
         slot_ui::set_theme(Theme::read(root));
-        let mut app = App::new(scan(root).unwrap_or_default());
+        let mut app = App::new(slot_store::scan_cached(root).unwrap_or_default());
         app.root = Some(root.to_path_buf());
         app.favorites = read_favorites(root);
         app.shelf.sort_by_favorites(&app.favorites);
@@ -727,6 +727,20 @@ impl App {
         self.shelf.set_shadow(face);
     }
 
+    pub fn set_cart_placeholder(&mut self, face: TexId) {
+        self.shelf.set_placeholder(face);
+    }
+
+    pub fn set_gb_cart_placeholder(&mut self, face: TexId) {
+        self.shelf.set_gb_placeholder(face);
+    }
+
+    /// Initial asset order for the shelf. Visible carts come first, including the wrapped tail
+    /// at the opposite edge, so the first presented row has no square loading gaps.
+    pub fn shelf_face_upload_order(&self) -> Vec<Cart> {
+        self.shelf.face_upload_order()
+    }
+
     pub fn set_wallpaper(&mut self, face: TexId) {
         self.wallpaper = Some(face);
     }
@@ -774,6 +788,14 @@ impl App {
     /// Face textures in `carts` order. Only the compositor can mint a `TexId`.
     pub fn set_faces(&mut self, faces: Vec<TexId>) {
         self.shelf.set_faces(faces);
+    }
+
+    pub fn set_face(&mut self, stem: &str, face: TexId) {
+        self.shelf.set_face(stem, face);
+    }
+
+    pub fn set_shelf_caption(&mut self, stem: String, caption: (Printed, Printed)) {
+        self.shelf_captions.insert(stem, caption);
     }
 
     pub fn set_gb_shadow(&mut self, face: TexId) {
@@ -948,6 +970,10 @@ impl App {
     /// ask `core_for` again.
     pub fn set_core(&mut self, core: Core) {
         self.core = core;
+    }
+
+    pub fn core(&self) -> Core {
+        self.core
     }
 
     /// Whether a netpacket session is live right now. libretro disables an entire class of

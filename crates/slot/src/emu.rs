@@ -142,6 +142,13 @@ struct Shared {
 }
 
 impl EmuHandle {
+    /// A real core that loaded the ROM but rejected an older resume may start a new resume
+    /// lineage once the caller has moved the rejected bytes somewhere safe. The session is
+    /// the only production caller; fallback cores never receive this release.
+    pub fn accept_cold_start_after_resume_backup(&self) {
+        self.shared.resume_refused.store(false, Ordering::Release);
+    }
+
     /// The ring rather than the device: it was opened before this cart and it outlives it,
     /// so the slot can still make a noise with no core running.
     pub fn spawn(

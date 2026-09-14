@@ -2,6 +2,8 @@
 //! difference between the host and the device, so it is the only thing left above this.
 
 use std::collections::BTreeMap;
+use std::path::PathBuf;
+use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
 
 use slot_gfx::{Compositor, Draw, TexId, OUT_H, OUT_W};
@@ -9,21 +11,20 @@ use slot_input::{InputSource, Millis};
 use slot_power::{Platform, Power};
 use slot_store::format_stamp;
 use slot_ui::{
-    arrows_hint_face, badge_face, cart_face, cart_shadow, cart_shadow_for, category_face,
-    chip_face, chip_shadow_face, clean_label, favorite_mark_face, hhmm, hint_face, icon_face,
+    arrows_hint_face, badge_face, cart_placeholder_for, cart_shadow, cart_shadow_for,
+    category_face, chip_face, chip_shadow_face, favorite_mark_face, hhmm, hint_face, icon_face,
     menu_face, photo_face, set_clock_hint_face, socket_face, sticker_face, title_face, toast_face,
-    wallpaper_face, word_face, Icon, LinkBadge, PowerChoice, Printed, StickerFields, StickerPage,
-    Toast, ALERT_PX, BOLT_PX, EMPTY_SHELF, HUD_ICON_PX, HUD_INK, LEGEND,
+    word_face, Icon, LinkBadge, PowerChoice, Printed, StickerFields, StickerPage, Toast, ALERT_PX,
+    BOLT_PX, EMPTY_SHELF, HUD_ICON_PX, HUD_INK, LEGEND,
 };
 
 use crate::app::{App, LinkRow, Phase};
 use crate::build_info::Build;
-use crate::face_builder::FaceBuilder;
+use crate::face_builder::{FaceBuilder, ShelfFaceBuilder};
 use crate::link_art_builder::LinkArtBuilder;
 use crate::link_screen::{LinkSprites, Sprite};
 use crate::link_start::{LinkFail, LinkStep};
 use crate::session::Session;
-use crate::wallpaper;
 
 /// How long a dark panel waits before Super Standby. The dark is immediate — the lid or
 /// the button kills the backlight on the edge — but the device is still running flat out
@@ -56,6 +57,19 @@ pub struct Frontend {
     title_tex: Option<TexId>,
     /// Builds the open cart's faces off the frame loop.
     faces: FaceBuilder,
+    /// Builds shelf faces and captions away from the frame loop. The queue is ordered with the
+    /// visible ring slots first, including the wrapped tail at the opposite edge.
+    shelf_faces: ShelfFaceBuilder,
+    cart_upload_queue: Vec<slot_store::Cart>,
+    cart_upload_inflight: bool,
+    /// Static assets are intentionally hydrated in small batches after the first present. A
+    /// single monolithic upload made the shelf appear frozen while fonts, icons and wallpaper
+    /// were still being decoded.
+    static_upload_stage: u8,
+    /// The silhouette placeholders are tiny and are uploaded before the first render, so the
+    /// very first shelf frame cannot expose a rectangular loading block.
+    placeholders_uploaded: bool,
+    wallpaper: WallpaperBuilder,
     /// Builds the link screen's artwork off the frame loop, once, at boot.
     link_art: LinkArtBuilder,
     /// Whether the link art has been uploaded and handed to `App` already.
@@ -109,6 +123,35 @@ struct Switcher {
     titled: Option<String>,
 }
 
+/// Decodes the optional user wallpaper away from the render thread. Large PNGs on the card can
+/// take long enough to make a staged static upload look frozen if decoding happens inline.
+struct WallpaperBuilder {
+    built: Receiver<Option<Vec<u8>>>,
+}
+
+impl WallpaperBuilder {
+    fn spawn(root: Option<PathBuf>, seed: u64) -> Self {
+        let (tx, built) = mpsc::channel();
+        let spawned = std::thread::Builder::new()
+            .name("slot-wallpaper".into())
+            .spawn(move || {
+                let face = root
+                    .as_deref()
+                    .and_then(|root| crate::wallpaper::pick(root, seed))
+                    .and_then(|path| slot_ui::wallpaper_face(&path));
+                let _ = tx.send(face);
+            });
+        if let Err(e) = spawned {
+            eprintln!("slot: wallpaper: worker thread failed to start: {e}");
+        }
+        WallpaperBuilder { built }
+    }
+
+    fn take(&self) -> Option<Option<Vec<u8>>> {
+        self.built.try_recv().ok()
+    }
+}
+
 impl Frontend {
     pub fn boot(platform: Box<dyn Platform>) -> Self {
         let now = Instant::now();
@@ -116,6 +159,11 @@ impl Frontend {
         session
             .app_mut()
             .set_power(Power::new(platform, DOZE_TIMEOUT));
+        let cart_upload_queue = session.app().shelf_face_upload_order();
+        let wallpaper = WallpaperBuilder::spawn(
+            session.app().root().map(PathBuf::from),
+            session.app().wall_secs().unsigned_abs(),
+        );
         Frontend {
             session,
             start: now,
@@ -124,6 +172,12 @@ impl Frontend {
             polaroid_texes: Vec::new(),
             title_tex: None,
             faces: FaceBuilder::spawn(),
+            shelf_faces: ShelfFaceBuilder::spawn(),
+            cart_upload_queue,
+            cart_upload_inflight: false,
+            static_upload_stage: 0,
+            placeholders_uploaded: false,
+            wallpaper,
             link_art: LinkArtBuilder::spawn(),
             link_art_done: false,
             core_asked: None,
@@ -144,248 +198,307 @@ impl Frontend {
         self.session.presented();
     }
 
-    /// Everything that never changes: the carts, the HUD glyphs and the key caps. All of it
-    /// needs a live context, so it happens after the compositor and not at boot.
+    /// Reset the staged upload after a font/theme revision. The next frames repopulate the
+    /// static plates and the shelf worker without blocking animation on one giant pass.
     pub fn upload_faces(&mut self, compositor: &mut Compositor) {
-        self.gb_overlay = upload_png(compositor, include_bytes!("../../../jeltron/GB_DMG.png"));
-        self.gbc_overlay = upload_png(compositor, include_bytes!("../../../jeltron/GB_Color.png"));
-        let faces = self
-            .session
-            .app()
-            .carts()
-            .iter()
-            .map(|c| {
-                let f = cart_face(c);
-                compositor.create_texture(f.w, f.h, &f.rgba)
-            })
-            .collect();
-        self.session.app_mut().set_faces(faces);
+        self.static_upload_stage = 0;
+        self.upload_static_faces(compositor);
+        self.cart_upload_queue = self.session.app().shelf_face_upload_order();
+        self.cart_upload_inflight = false;
+    }
+
+    /// Upload all static batches synchronously for a deliberate reload (font changes). The
+    /// device loop uses `upload_next_static_faces` instead, one batch after each present.
+    pub fn upload_static_faces(&mut self, compositor: &mut Compositor) {
+        while !self.upload_next_static_faces(compositor) {}
+    }
+
+    pub fn upload_next_static_faces(&mut self, compositor: &mut Compositor) -> bool {
+        match self.static_upload_stage {
+            0 => {
+                self.gb_overlay =
+                    upload_png(compositor, include_bytes!("../../../jeltron/GB_DMG.png"));
+                self.gbc_overlay =
+                    upload_png(compositor, include_bytes!("../../../jeltron/GB_Color.png"));
+                self.upload_placeholders(compositor);
+                let favorite = word_face("Favorites");
+                let favorite = Printed::new(
+                    compositor.create_texture(favorite.w, favorite.h, &favorite.rgba),
+                    favorite.w,
+                );
+                self.session
+                    .app_mut()
+                    .set_shelf_captions(BTreeMap::new(), favorite);
+                let empty = title_face(EMPTY_SHELF);
+                self.session.app_mut().set_empty_caption(Printed::new(
+                    compositor.create_texture(empty.w, empty.h, &empty.rgba),
+                    empty.w,
+                ));
+                let empty_recents = title_face("no recently played games");
+                self.session
+                    .app_mut()
+                    .set_empty_recents_caption(Printed::new(
+                        compositor.create_texture(
+                            empty_recents.w,
+                            empty_recents.h,
+                            &empty_recents.rgba,
+                        ),
+                        empty_recents.w,
+                    ));
+                let idle = [hint_face("A", "Open"), hint_face("START", "Core")]
+                    .into_iter()
+                    .map(|f| (compositor.create_texture(f.w, f.h, &f.rgba), f.w))
+                    .collect();
+                self.session.app_mut().set_shelf_idle_faces(idle);
+                self.static_upload_stage = 1;
+            }
+            1 => {
+                let category_faces = ["ALL", "REC", "GBA", "GB", "GBC"]
+                    .into_iter()
+                    .map(|label| {
+                        let face = category_face(label);
+                        Printed::new(
+                            compositor.create_texture(face.w, face.h, &face.rgba),
+                            face.w,
+                        )
+                    })
+                    .collect();
+                self.session
+                    .app_mut()
+                    .set_shelf_category_faces(category_faces);
+                let flip = arrows_hint_face("Flip");
+                self.session.app_mut().set_about_flip_face(
+                    compositor.create_texture(flip.w, flip.h, &flip.rgba),
+                    flip.w,
+                );
+                let clock_hint = set_clock_hint_face();
+                self.session.app_mut().set_about_clock_hint(
+                    compositor.create_texture(clock_hint.w, clock_hint.h, &clock_hint.rgba),
+                    clock_hint.w,
+                );
+                let mark = favorite_mark_face();
+                if mark.w > 0 {
+                    self.session.app_mut().set_favorite_mark(
+                        compositor.create_texture(mark.w, mark.h, &mark.rgba),
+                        mark.w,
+                        mark.h,
+                    );
+                }
+                self.static_upload_stage = 2;
+            }
+            2 => {
+                let icons = Icon::ALL
+                    .iter()
+                    .map(|i| {
+                        let f = icon_face(*i, HUD_ICON_PX, HUD_INK);
+                        compositor.create_texture(f.w, f.h, &f.rgba)
+                    })
+                    .collect();
+                self.session.app_mut().set_icon_faces(icons);
+                let link_badges = LinkBadge::FACES
+                    .iter()
+                    .map(|b| {
+                        let (badge, ink) = (
+                            b.badge().expect("a face has a glyph"),
+                            b.colour().expect("and a colour"),
+                        );
+                        let f = badge_face(badge, HUD_ICON_PX, ink);
+                        compositor.create_texture(f.w, f.h, &f.rgba)
+                    })
+                    .collect();
+                self.session.app_mut().set_link_badge_faces(link_badges);
+                let alert = icon_face(Icon::Alert, ALERT_PX, ALERT_INK);
+                let alert = compositor.create_texture(alert.w, alert.h, &alert.rgba);
+                self.session.app_mut().set_alert_face(alert);
+                self.static_upload_stage = 3;
+            }
+            3 => {
+                let lines = PowerChoice::ALL
+                    .iter()
+                    .map(|c| {
+                        let f = menu_face(match c {
+                            PowerChoice::Restart => "Restarting",
+                            PowerChoice::PowerOff => "Powering Down",
+                        });
+                        (compositor.create_texture(f.w, f.h, &f.rgba), f.w, f.h)
+                    })
+                    .collect();
+                self.session.app_mut().set_shutdown_faces(lines);
+                let menu = PowerChoice::ALL
+                    .iter()
+                    .map(|c| {
+                        let f = menu_face(c.text());
+                        (compositor.create_texture(f.w, f.h, &f.rgba), f.w, f.h)
+                    })
+                    .collect();
+                self.session.app_mut().set_power_menu_faces(menu);
+                self.static_upload_stage = 4;
+            }
+            4 => {
+                let sockets = slot_store::Core::PICKABLE
+                    .iter()
+                    .map(|c| {
+                        let f = socket_face(*c);
+                        compositor.create_texture(f.w, f.h, &f.rgba)
+                    })
+                    .collect();
+                let chips = slot_store::Core::PICKABLE
+                    .iter()
+                    .map(|c| {
+                        let f = chip_face(Some(*c));
+                        compositor.create_texture(f.w, f.h, &f.rgba)
+                    })
+                    .collect();
+                let blank = chip_face(None);
+                let blank = compositor.create_texture(blank.w, blank.h, &blank.rgba);
+                let shadow = chip_shadow_face();
+                let shadow = compositor.create_texture(shadow.w, shadow.h, &shadow.rgba);
+                self.session
+                    .app_mut()
+                    .set_core_part_faces(sockets, chips, blank, shadow);
+                let legend = [
+                    hint_face("B", "Cancel"),
+                    arrows_hint_face("Swap"),
+                    hint_face("A", "Choose"),
+                ]
+                .into_iter()
+                .map(|f| (compositor.create_texture(f.w, f.h, &f.rgba), f.w))
+                .collect();
+                self.session.app_mut().set_core_legend_faces(legend);
+                self.static_upload_stage = 5;
+            }
+            5 => {
+                let roles = menu_faces(compositor, LinkRow::ALL.iter().map(|r| r.text()));
+                self.session.app_mut().set_link_menu_faces(roles);
+                if let Some(linked) = menu_faces(compositor, ["Linked"].into_iter()).pop() {
+                    self.session.app_mut().set_link_linked_face(linked);
+                }
+                let legend = [
+                    hint_face("B", "Cancel"),
+                    arrows_hint_face("Swap"),
+                    hint_face("A", "Link"),
+                    hint_face("A", "OK"),
+                ]
+                .into_iter()
+                .map(|f| (compositor.create_texture(f.w, f.h, &f.rgba), f.w))
+                .collect();
+                self.session.app_mut().set_link_legend_faces(legend);
+                let steps = menu_faces(compositor, LinkStep::ALL.iter().map(|s| s.line()));
+                self.session.app_mut().set_link_step_faces(steps);
+                let fails = menu_faces(compositor, LinkFail::SHOWN.iter().map(|f| f.line()));
+                self.session.app_mut().set_link_fail_faces(fails);
+                let toasts = Toast::ALL
+                    .iter()
+                    .map(|t| {
+                        let f = toast_face(*t);
+                        compositor.create_texture(f.w, f.h, &f.rgba)
+                    })
+                    .collect();
+                self.session.app_mut().set_toast_faces(toasts);
+                self.static_upload_stage = 6;
+            }
+            6 => {
+                self.font_revision = self.session.app().font_revision();
+                let legend = legend_faces(compositor, &LEGEND);
+                self.session.app_mut().set_legend_faces(legend);
+                let bolt = icon_face(Icon::Charging, BOLT_PX, HUD_INK);
+                let bolt_id = compositor.create_texture(bolt.w, bolt.h, &bolt.rgba);
+                self.session.app_mut().set_bolt_face(bolt_id);
+                self.static_upload_stage = 7;
+            }
+            _ => return true,
+        }
+        false
+    }
+
+    /// Poll the worker and upload at most one finished cart per frame. Requests are sent only
+    /// one at a time; the queue is therefore both cancellable and ordered by the visible ring.
+    pub fn upload_next_cart_face(&mut self, compositor: &mut Compositor) -> bool {
+        // A resumed cart has no shelf on screen. Leave its CPU and SD bandwidth to the core
+        // until the user actually returns home; the pending queue is retained for that moment.
+        if !matches!(self.session.app().phase(), Phase::Shelf) {
+            return self.cart_upload_queue.is_empty() && !self.cart_upload_inflight;
+        }
+        if let Some(built) = self.shelf_faces.take() {
+            self.upload_shelf_face(compositor, built);
+            self.cart_upload_inflight = false;
+        }
+        if !self.cart_upload_inflight {
+            let priority = self
+                .session
+                .app()
+                .shelf_face_upload_order()
+                .into_iter()
+                .enumerate()
+                .map(|(i, cart)| (cart.stem, i))
+                .collect::<std::collections::BTreeMap<_, _>>();
+            self.cart_upload_queue
+                .sort_by_key(|cart| priority.get(&cart.stem).copied().unwrap_or(usize::MAX));
+            if let Some(cart) = self.cart_upload_queue.first().cloned() {
+                self.cart_upload_queue.remove(0);
+                self.cart_upload_inflight = self.shelf_faces.request(cart);
+            }
+        }
+        !self.cart_upload_inflight && self.cart_upload_queue.is_empty()
+    }
+
+    fn upload_shelf_face(
+        &mut self,
+        compositor: &mut Compositor,
+        built: crate::face_builder::BuiltShelfFace,
+    ) {
+        let tex = compositor.create_texture(built.face.w, built.face.h, &built.face.rgba);
+        self.session.app_mut().set_face(&built.stem, tex);
+        let caption = (
+            Printed::new(
+                compositor.create_texture(built.group.w, built.group.h, &built.group.rgba),
+                built.group.w,
+            ),
+            Printed::new(
+                compositor.create_texture(built.title.w, built.title.h, &built.title.rgba),
+                built.title.w,
+            ),
+        );
+        self.session
+            .app_mut()
+            .set_shelf_caption(built.stem, caption);
+    }
+
+    fn upload_placeholders(&mut self, compositor: &mut Compositor) {
+        if self.placeholders_uploaded {
+            return;
+        }
         let shadow = cart_shadow_for(slot_store::Platform::Gb);
         self.session
             .app_mut()
             .set_gb_shadow(compositor.create_texture(shadow.w, shadow.h, &shadow.rgba));
-        let captions = self
-            .session
-            .app()
-            .carts()
-            .iter()
-            .map(|cart| {
-                let clean = clean_label(&cart.stem);
-                let group = clean
-                    .chars()
-                    .next()
-                    .map(|c| c.to_ascii_uppercase().to_string())
-                    .unwrap_or_else(|| "#".to_string());
-                let letter = word_face(&group);
-                let title = title_face(&clean);
-                let letter = Printed::new(
-                    compositor.create_texture(letter.w, letter.h, &letter.rgba),
-                    letter.w,
-                );
-                let title = Printed::new(
-                    compositor.create_texture(title.w, title.h, &title.rgba),
-                    title.w,
-                );
-                (cart.stem.clone(), (letter, title))
-            })
-            .collect::<BTreeMap<_, _>>();
-        let favorite = word_face("Favorites");
-        let favorite = Printed::new(
-            compositor.create_texture(favorite.w, favorite.h, &favorite.rgba),
-            favorite.w,
-        );
+        let placeholder = cart_placeholder_for(slot_store::Platform::Gb);
         self.session
             .app_mut()
-            .set_shelf_captions(captions, favorite);
-        let empty = title_face(EMPTY_SHELF);
-        self.session.app_mut().set_empty_caption(Printed::new(
-            compositor.create_texture(empty.w, empty.h, &empty.rgba),
-            empty.w,
-        ));
-        let empty_recents = title_face("no recently played games");
-        self.session
-            .app_mut()
-            .set_empty_recents_caption(Printed::new(
-                compositor.create_texture(empty_recents.w, empty_recents.h, &empty_recents.rgba),
-                empty_recents.w,
+            .set_gb_cart_placeholder(compositor.create_texture(
+                placeholder.w,
+                placeholder.h,
+                &placeholder.rgba,
             ));
-        let idle = [hint_face("A", "Open"), hint_face("START", "Core")]
-            .into_iter()
-            .map(|f| (compositor.create_texture(f.w, f.h, &f.rgba), f.w))
-            .collect();
-        self.session.app_mut().set_shelf_idle_faces(idle);
-        let category_faces = ["ALL", "REC", "GBA", "GB", "GBC"]
-            .into_iter()
-            .map(|label| {
-                let face = category_face(label);
-                Printed::new(
-                    compositor.create_texture(face.w, face.h, &face.rgba),
-                    face.w,
-                )
-            })
-            .collect();
+        let placeholder = cart_placeholder_for(slot_store::Platform::Gba);
         self.session
             .app_mut()
-            .set_shelf_category_faces(category_faces);
-        let flip = arrows_hint_face("Flip");
-        self.session.app_mut().set_about_flip_face(
-            compositor.create_texture(flip.w, flip.h, &flip.rgba),
-            flip.w,
-        );
-        let clock_hint = set_clock_hint_face();
-        self.session.app_mut().set_about_clock_hint(
-            compositor.create_texture(clock_hint.w, clock_hint.h, &clock_hint.rgba),
-            clock_hint.w,
-        );
-        let mark = favorite_mark_face();
-        if mark.w > 0 {
-            self.session.app_mut().set_favorite_mark(
-                compositor.create_texture(mark.w, mark.h, &mark.rgba),
-                mark.w,
-                mark.h,
-            );
-        }
-        let icons = Icon::ALL
-            .iter()
-            .map(|i| {
-                let f = icon_face(*i, HUD_ICON_PX, HUD_INK);
-                compositor.create_texture(f.w, f.h, &f.rgba)
-            })
-            .collect();
-        self.session.app_mut().set_icon_faces(icons);
-        let link_badges = LinkBadge::FACES
-            .iter()
-            .map(|b| {
-                let (badge, ink) = (
-                    b.badge().expect("a face has a glyph"),
-                    b.colour().expect("and a colour"),
-                );
-                let f = badge_face(badge, HUD_ICON_PX, ink);
-                compositor.create_texture(f.w, f.h, &f.rgba)
-            })
-            .collect();
-        self.session.app_mut().set_link_badge_faces(link_badges);
-        // Its own upload rather than one of the HUD's: it is drawn on a cart, at its own
-        // size, and in a warning colour the level glyphs have no business borrowing.
-        let alert = icon_face(Icon::Alert, ALERT_PX, ALERT_INK);
-        let alert = compositor.create_texture(alert.w, alert.h, &alert.rgba);
-        self.session.app_mut().set_alert_face(alert);
-        // Uploaded at boot like everything else: a shutdown is the one moment there is no
-        // time to rasterise anything, and the GPU is about to be taken away. One line per
-        // choice, in `PowerChoice::ALL` order, at the menu's own size so the screen that
-        // follows a choice is set in the same voice as the row that was chosen.
-        let lines = PowerChoice::ALL
-            .iter()
-            .map(|c| {
-                let f = menu_face(match c {
-                    PowerChoice::Restart => "Restarting",
-                    PowerChoice::PowerOff => "Powering Down",
-                });
-                (compositor.create_texture(f.w, f.h, &f.rgba), f.w, f.h)
-            })
-            .collect();
-        self.session.app_mut().set_shutdown_faces(lines);
-        let menu = PowerChoice::ALL
-            .iter()
-            .map(|c| {
-                let f = menu_face(c.text());
-                (compositor.create_texture(f.w, f.h, &f.rgba), f.w, f.h)
-            })
-            .collect();
-        self.session.app_mut().set_power_menu_faces(menu);
-        // The open cart's parts that never change: each socket, the chip seated in each, the
-        // blank chip in flight and its shadow, in `Core::ALL` order. At boot like the power
-        // menu's rows, so the first frame of a lid coming off is not spent in a rasteriser.
-        let sockets = slot_store::Core::PICKABLE
-            .iter()
-            .map(|c| {
-                let f = socket_face(*c);
-                compositor.create_texture(f.w, f.h, &f.rgba)
-            })
-            .collect();
-        let chips = slot_store::Core::PICKABLE
-            .iter()
-            .map(|c| {
-                let f = chip_face(Some(*c));
-                compositor.create_texture(f.w, f.h, &f.rgba)
-            })
-            .collect();
-        let blank = chip_face(None);
-        let blank = compositor.create_texture(blank.w, blank.h, &blank.rgba);
-        let shadow = chip_shadow_face();
-        let shadow = compositor.create_texture(shadow.w, shadow.h, &shadow.rgba);
-        self.session
-            .app_mut()
-            .set_core_part_faces(sockets, chips, blank, shadow);
-        // Every action the picker takes, the way out first and the choice last, as the
-        // switcher's legend is ordered.
-        let legend = [
-            hint_face("B", "Cancel"),
-            arrows_hint_face("Swap"),
-            hint_face("A", "Choose"),
-        ]
-        .into_iter()
-        .map(|f| (compositor.create_texture(f.w, f.h, &f.rgba), f.w))
-        .collect();
-        self.session.app_mut().set_core_legend_faces(legend);
-        // The in-game menu: the HOST/JOIN labels, the LINKED line, the step and failure
-        // sentences, and the key legend. All of it at the same size and through the same
-        // rasteriser as the two menus above, because they are the same object — and all of it
-        // at boot, because a link that is failing is the worst moment to be asking a font for
-        // a sentence.
-        let roles = menu_faces(compositor, LinkRow::ALL.iter().map(|r| r.text()));
-        self.session.app_mut().set_link_menu_faces(roles);
-        if let Some(linked) = menu_faces(compositor, ["Linked"].into_iter()).pop() {
-            self.session.app_mut().set_link_linked_face(linked);
-        }
-        let legend = [
-            hint_face("B", "Cancel"),
-            arrows_hint_face("Swap"),
-            hint_face("A", "Link"),
-            hint_face("A", "OK"),
-        ]
-        .into_iter()
-        .map(|f| (compositor.create_texture(f.w, f.h, &f.rgba), f.w))
-        .collect();
-        self.session.app_mut().set_link_legend_faces(legend);
-        let steps = menu_faces(compositor, LinkStep::ALL.iter().map(|s| s.line()));
-        self.session.app_mut().set_link_step_faces(steps);
-        let fails = menu_faces(compositor, LinkFail::SHOWN.iter().map(|f| f.line()));
-        self.session.app_mut().set_link_fail_faces(fails);
-        let toasts = Toast::ALL
-            .iter()
-            .map(|t| {
-                let f = toast_face(*t);
-                compositor.create_texture(f.w, f.h, &f.rgba)
-            })
-            .collect();
-        self.session.app_mut().set_toast_faces(toasts);
-        self.font_revision = self.session.app().font_revision();
-        let legend = legend_faces(compositor, &LEGEND);
-        self.session.app_mut().set_legend_faces(legend);
+            .set_cart_placeholder(compositor.create_texture(
+                placeholder.w,
+                placeholder.h,
+                &placeholder.rgba,
+            ));
         let shadow = cart_shadow();
         let id = compositor.create_texture(shadow.w, shadow.h, &shadow.rgba);
         self.session.app_mut().set_cart_shadow(id);
-        // `draw_gauge` now draws the bolt beside the capsule, on the housing, in its own
-        // reserved slot rather than over the fill. The housing tint was only ever needed to
-        // hide the bolt inside the fill it sat on; out here it sits where every other HUD
-        // glyph does, so it takes the same ink they do.
-        let bolt = icon_face(Icon::Charging, BOLT_PX, HUD_INK);
-        let bolt_id = compositor.create_texture(bolt.w, bolt.h, &bolt.rgba);
-        self.session.app_mut().set_bolt_face(bolt_id);
-        self.upload_wallpaper(compositor);
+        self.placeholders_uploaded = true;
     }
 
-    /// One decode, at boot. A card with no `Wallpapers`, no readable picture in it, or a
-    /// picture the decoder will not take, gets the plain ground it had before.
-    fn upload_wallpaper(&mut self, compositor: &mut Compositor) {
-        let app = self.session.app();
-        let seed = app.wall_secs().unsigned_abs();
-        let Some(rgba) = app
-            .root()
-            .and_then(|root| wallpaper::pick(root, seed))
-            .and_then(|path| wallpaper_face(&path))
-        else {
+    fn sync_wallpaper(&mut self, compositor: &mut Compositor) {
+        let Some(result) = self.wallpaper.take() else {
+            return;
+        };
+        let Some(rgba) = result else {
             return;
         };
         let id = compositor.create_texture(OUT_W, OUT_H, &rgba);
@@ -395,6 +508,8 @@ impl Frontend {
     /// One frame into the offscreen target and out to a surface of `window` pixels. The
     /// caller swaps: only it knows what presenting costs.
     pub fn render(&mut self, compositor: &mut Compositor, window: (u32, u32)) {
+        self.upload_placeholders(compositor);
+        self.sync_wallpaper(compositor);
         if self.font_revision != self.session.app().font_revision() {
             self.title_tex = None;
             self.undo_tex = None;

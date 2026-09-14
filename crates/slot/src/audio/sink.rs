@@ -29,6 +29,17 @@ pub trait AudioSink: Send {
     /// The rate is a preference. A device that will not take it opens at its own, which the
     /// ring then reports and the resampler converts to.
     fn open(&mut self, sample_rate: u32) -> Result<(), AudioError>;
+    /// Start opening the device without making the caller wait for a driver or mixer.
+    /// Returns `true` when completion must be collected with `poll_open`. The default keeps
+    /// small/test sinks synchronous while hardware sinks can move their slow probe off boot.
+    fn open_async(&mut self, sample_rate: u32) -> Result<bool, AudioError> {
+        self.open(sample_rate)?;
+        Ok(false)
+    }
+    /// Collect the result of an asynchronous open, if it has completed.
+    fn poll_open(&mut self) -> Option<Result<(), AudioError>> {
+        None
+    }
     /// Close the hardware synchronously. An open H700 PCM keeps the speaker amp biased,
     /// which is a hiss with the panel already dark — so this runs before suspend, doze, and
     /// power off, not only when the sink is being replaced.

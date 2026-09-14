@@ -11,6 +11,7 @@ pub const DIRS: [&str; 7] = [
     "System",
     "Wallpapers",
 ];
+const MIGRATION_MARKER: &str = "states-v2.checked";
 
 /// Best effort: an unmounted or read only card is an empty shelf, not a boot failure.
 pub fn ensure(root: &Path) {
@@ -28,8 +29,11 @@ pub fn ensure(root: &Path) {
 /// nothing on the card to say so. Logged here, once per boot, rather than inside
 /// `migrate_states` itself, which only counts and has no read on where "once per boot" ends.
 pub fn migrate(root: &Path) {
-    match slot_store::migrate_states(root) {
-        Ok(report) if report.failed > 0 => {
+    if migration_marker_current(root) {
+        return;
+    }
+    if let Ok(report) = slot_store::migrate_states(root) {
+        if report.failed > 0 {
             eprintln!(
                 "slot: migrate: {} of {} state director{} did not move",
                 report.failed,
@@ -40,9 +44,26 @@ pub fn migrate(root: &Path) {
                     "ies"
                 }
             );
+        } else {
+            // This marker avoids re-walking a large, already namespaced States tree on
+            // every boot. It is derived metadata; a failed write merely costs a future
+            // cheap check and never affects correctness.
+            let marker = root.join("System").join(MIGRATION_MARKER);
+            let _ = std::fs::write(marker, b"1\n");
         }
-        _ => {}
     }
+}
+
+fn migration_marker_current(root: &Path) -> bool {
+    let marker = root.join("System").join(MIGRATION_MARKER);
+    let states = root.join("States");
+    let (Ok(marker), Ok(states)) = (std::fs::metadata(marker), std::fs::metadata(states)) else {
+        return false;
+    };
+    let (Ok(marker), Ok(states)) = (marker.modified(), states.modified()) else {
+        return false;
+    };
+    marker >= states
 }
 
 /// Reported to the core as the libretro system directory. `gba_bios.bin`, `gb_bios.bin`

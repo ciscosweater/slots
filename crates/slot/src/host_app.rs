@@ -11,6 +11,7 @@ struct Slot {
     gfx: Option<(HostSurface, Compositor)>,
     frontend: Frontend,
     input: HostInput,
+    asset_stage: u8,
 }
 
 impl Slot {
@@ -19,6 +20,7 @@ impl Slot {
             gfx: None,
             frontend: Frontend::boot(Box::new(SimPlatform::new())),
             input: HostInput::new(),
+            asset_stage: 0,
         }
     }
 }
@@ -29,7 +31,7 @@ impl ApplicationHandler for Slot {
             return;
         }
         let built = HostSurface::new(events).and_then(|s| Compositor::new(&s).map(|c| (s, c)));
-        let (surface, mut compositor) = match built {
+        let (surface, compositor) = match built {
             Ok(gfx) => gfx,
             Err(e) => {
                 eprintln!("slot: {e}");
@@ -37,7 +39,6 @@ impl ApplicationHandler for Slot {
                 return;
             }
         };
-        self.frontend.upload_faces(&mut compositor);
         self.gfx = Some((surface, compositor));
     }
 
@@ -55,6 +56,18 @@ impl ApplicationHandler for Slot {
                     eprintln!("slot: {e}");
                     events.exit();
                     return;
+                }
+                match self.asset_stage {
+                    0 => {
+                        self.asset_stage = 1;
+                    }
+                    1 if self.frontend.upload_next_static_faces(compositor)
+                        && self.frontend.upload_next_cart_face(compositor) =>
+                    {
+                        self.asset_stage = 2;
+                    }
+                    1 => {}
+                    _ => {}
                 }
                 surface.request_redraw();
                 self.frontend.advance(&mut self.input);

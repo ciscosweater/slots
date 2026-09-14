@@ -137,10 +137,19 @@ impl Alsa {
 pub struct AlsaSink {
     ring: Arc<Ring>,
     device: Option<Device>,
+    opening: Option<Opening>,
 }
 
 struct Device {
     stop: Arc<AtomicBool>,
+    join: JoinHandle<()>,
+}
+
+/// An ALSA open can block in the kernel while the mixer graph settles. Keep its stop flag,
+/// completion channel and join handle together until the frontend observes completion.
+struct Opening {
+    stop: Arc<AtomicBool>,
+    ready: mpsc::Receiver<Result<(), AudioError>>,
     join: JoinHandle<()>,
 }
 
@@ -149,10 +158,15 @@ impl AlsaSink {
         AlsaSink {
             ring: Arc::new(Ring::new(0)),
             device: None,
+            opening: None,
         }
     }
 
     fn close(&mut self) {
+        if let Some(o) = self.opening.take() {
+            o.stop.store(true, Ordering::Relaxed);
+            let _ = o.join.join();
+        }
         if let Some(d) = self.device.take() {
             d.stop.store(true, Ordering::Relaxed);
             let _ = d.join.join();
@@ -176,6 +190,68 @@ impl AudioSink for AlsaSink {
     /// The PCM is opened on the thread that writes to it, so the handle never crosses one.
     fn open(&mut self, sample_rate: u32) -> Result<(), AudioError> {
         self.close();
+        let opening = self.start_open(sample_rate)?;
+        match opening.ready.recv() {
+            Ok(Ok(())) => {
+                self.device = Some(Device {
+                    stop: opening.stop,
+                    join: opening.join,
+                });
+                Ok(())
+            }
+            Ok(Err(e)) => {
+                let _ = opening.join.join();
+                Err(e)
+            }
+            Err(_) => {
+                let _ = opening.join.join();
+                Err(AudioError::Device("output thread stopped".into()))
+            }
+        }
+    }
+
+    fn open_async(&mut self, sample_rate: u32) -> Result<bool, AudioError> {
+        self.close();
+        self.opening = Some(self.start_open(sample_rate)?);
+        Ok(true)
+    }
+
+    fn poll_open(&mut self) -> Option<Result<(), AudioError>> {
+        let opening = self.opening.take()?;
+        match opening.ready.try_recv() {
+            Ok(Ok(())) => {
+                self.device = Some(Device {
+                    stop: opening.stop,
+                    join: opening.join,
+                });
+                Some(Ok(()))
+            }
+            Ok(Err(e)) => {
+                let _ = opening.join.join();
+                Some(Err(e))
+            }
+            Err(mpsc::TryRecvError::Empty) => {
+                self.opening = Some(opening);
+                None
+            }
+            Err(mpsc::TryRecvError::Disconnected) => {
+                let _ = opening.join.join();
+                Some(Err(AudioError::Device("output thread stopped".into())))
+            }
+        }
+    }
+
+    fn close(&mut self) {
+        AlsaSink::close(self);
+    }
+
+    fn ring(&self) -> Arc<Ring> {
+        self.ring.clone()
+    }
+}
+
+impl AlsaSink {
+    fn start_open(&self, sample_rate: u32) -> Result<Opening, AudioError> {
         let ring = self.ring.clone();
         let stop = Arc::new(AtomicBool::new(false));
         let flag = stop.clone();
@@ -192,28 +268,11 @@ impl AudioSink for AlsaSink {
                 }
             })
             .map_err(|e| AudioError::Device(e.to_string()))?;
-        match ready_rx.recv() {
-            Ok(Ok(())) => {
-                self.device = Some(Device { stop, join });
-                Ok(())
-            }
-            Ok(Err(e)) => {
-                let _ = join.join();
-                Err(e)
-            }
-            Err(_) => {
-                let _ = join.join();
-                Err(AudioError::Device("output thread stopped".into()))
-            }
-        }
-    }
-
-    fn close(&mut self) {
-        AlsaSink::close(self);
-    }
-
-    fn ring(&self) -> Arc<Ring> {
-        self.ring.clone()
+        Ok(Opening {
+            stop,
+            ready: ready_rx,
+            join,
+        })
     }
 }
 

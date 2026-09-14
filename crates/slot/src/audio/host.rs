@@ -19,6 +19,12 @@ struct Device {
     join: JoinHandle<()>,
 }
 
+struct Opening {
+    stop: mpsc::Sender<()>,
+    ready: mpsc::Receiver<Result<(), AudioError>>,
+    join: JoinHandle<()>,
+}
+
 impl HostAudio {
     pub fn new() -> Self {
         HostAudio {
@@ -50,6 +56,37 @@ impl Drop for HostAudio {
 impl AudioSink for HostAudio {
     fn open(&mut self, sample_rate: u32) -> Result<(), AudioError> {
         self.close();
+        let opening = self.start_open(sample_rate)?;
+        match opening.ready.recv() {
+            Ok(Ok(())) => {
+                self.device = Some(Device {
+                    stop: opening.stop,
+                    join: opening.join,
+                });
+                Ok(())
+            }
+            Ok(Err(e)) => {
+                let _ = opening.join.join();
+                Err(e)
+            }
+            Err(_) => {
+                let _ = opening.join.join();
+                Err(AudioError::Device("output thread stopped".into()))
+            }
+        }
+    }
+
+    fn close(&mut self) {
+        HostAudio::close(self);
+    }
+
+    fn ring(&self) -> Arc<Ring> {
+        self.ring.clone()
+    }
+}
+
+impl HostAudio {
+    fn start_open(&self, sample_rate: u32) -> Result<Opening, AudioError> {
         let ring = self.ring.clone();
         let (ready_tx, ready_rx) = mpsc::channel();
         let (stop_tx, stop_rx) = mpsc::channel::<()>();
@@ -66,31 +103,11 @@ impl AudioSink for HostAudio {
                 }
             })
             .map_err(|e| AudioError::Device(e.to_string()))?;
-        match ready_rx.recv() {
-            Ok(Ok(())) => {
-                self.device = Some(Device {
-                    stop: stop_tx,
-                    join,
-                });
-                Ok(())
-            }
-            Ok(Err(e)) => {
-                let _ = join.join();
-                Err(e)
-            }
-            Err(_) => {
-                let _ = join.join();
-                Err(AudioError::Device("output thread stopped".into()))
-            }
-        }
-    }
-
-    fn close(&mut self) {
-        HostAudio::close(self);
-    }
-
-    fn ring(&self) -> Arc<Ring> {
-        self.ring.clone()
+        Ok(Opening {
+            stop: stop_tx,
+            ready: ready_rx,
+            join,
+        })
     }
 }
 

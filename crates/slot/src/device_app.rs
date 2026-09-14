@@ -12,6 +12,7 @@ use slot_power::DevicePlatform;
 const CARD: &str = "/mnt/sdcard";
 
 pub fn run() {
+    let boot_started = Instant::now();
     let root = std::env::var_os("SLOT_ROOT")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(CARD));
@@ -22,6 +23,10 @@ pub fn run() {
             return;
         }
     };
+    eprintln!(
+        "slot: boot stage=surface elapsed_ms={}",
+        boot_started.elapsed().as_secs_f64() * 1000.0
+    );
     let mut compositor = match Compositor::new(&surface) {
         Ok(c) => c,
         Err(e) => {
@@ -29,20 +34,50 @@ pub fn run() {
             return;
         }
     };
+    eprintln!(
+        "slot: boot stage=compositor elapsed_ms={}",
+        boot_started.elapsed().as_secs_f64() * 1000.0
+    );
     let platform = DevicePlatform::new(root.clone());
     eprintln!("slot: {}", platform.report());
     platform.trace_boot();
     let mut frontend = Frontend::boot(Box::new(platform));
-    frontend.upload_faces(&mut compositor);
+    eprintln!(
+        "slot: boot stage=state elapsed_ms={}",
+        boot_started.elapsed().as_secs_f64() * 1000.0
+    );
     let mut input = DeviceInput::open(&root);
     eprintln!("slot: panel clock {PANEL_HZ:.3} Hz");
     let vsync = surface.vsync_active();
     let mut deadline = Instant::now();
+    let mut asset_stage = 0u8;
     loop {
         frontend.render(&mut compositor, surface.window_size());
         if let Err(e) = surface.swap() {
             eprintln!("slot: {e}");
             return;
+        }
+        match asset_stage {
+            0 => {
+                eprintln!(
+                    "slot: boot stage=first_frame elapsed_ms={}",
+                    boot_started.elapsed().as_secs_f64() * 1000.0
+                );
+                asset_stage = 1;
+            }
+            1 if frontend.upload_next_static_faces(&mut compositor) => {
+                // Hydrate one static batch per frame. Once those are in place, the shelf-face
+                // worker feeds one completed cart at a time without stopping the spring clock.
+                if frontend.upload_next_cart_face(&mut compositor) {
+                    asset_stage = 2;
+                    eprintln!(
+                        "slot: boot stage=assets elapsed_ms={}",
+                        boot_started.elapsed().as_secs_f64() * 1000.0
+                    );
+                }
+            }
+            1 => {}
+            _ => {}
         }
         frontend.advance(&mut input);
         // NextUI's core and swap live on one thread. This acknowledgement releases one core

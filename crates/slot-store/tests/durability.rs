@@ -79,6 +79,17 @@ fn a_first_boot_is_neither_dark_nor_silent() {
     assert!(s.volume > 0, "boots muted");
 }
 
+#[test]
+fn an_old_nine_step_brightness_keeps_the_same_physical_level() {
+    let d = tmp_root();
+    std::fs::write(
+        d.path().join("System/slot.state"),
+        "cart=\nbrightness=5\nblue_light=0\nvolume=60\nmuted=0\nclock_set=1\nutc_offset_min=0\n",
+    )
+    .unwrap();
+    assert_eq!(read_slot_state(d.path()).brightness, 9);
+}
+
 /// The offset is what turns the card's UTC into the time on the shelf, so it has to outlive
 /// the session that chose it.
 #[test]

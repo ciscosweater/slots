@@ -44,13 +44,17 @@ pub struct Shelf {
     all_carts: Vec<Cart>,
     pub index: usize,
     pub scroll: f32,
-    faces: Vec<TexId>,
-    all_faces: Vec<TexId>,
+    faces: Vec<Option<TexId>>,
+    all_faces: Vec<Option<TexId>>,
     category: usize,
     /// The cart silhouette in black, drawn under a dimmed cart. One texture for the whole
     /// row: every cart is the same shape.
     shadow: Option<TexId>,
     gb_shadow: Option<TexId>,
+    /// Platform-shaped placeholders used while the real face is being built off-thread. They
+    /// are silhouettes rather than rectangles, so the ring remains legible while it hydrates.
+    placeholder: Option<TexId>,
+    gb_placeholder: Option<TexId>,
     vel: f32,
     /// The direction being held and when it next repeats. Repeat lives here rather than in
     /// the gesture layer so nothing in game starts auto firing.
@@ -72,6 +76,8 @@ impl Shelf {
             category: 0,
             shadow: None,
             gb_shadow: None,
+            placeholder: None,
+            gb_placeholder: None,
             vel: 0.0,
             held: None,
             favorites: BTreeSet::new(),
@@ -90,14 +96,47 @@ impl Shelf {
         self.gb_shadow = Some(face);
     }
 
+    pub fn set_placeholder(&mut self, face: TexId) {
+        self.placeholder = Some(face);
+    }
+
+    pub fn set_gb_placeholder(&mut self, face: TexId) {
+        self.gb_placeholder = Some(face);
+    }
+
     pub fn set_favorite_mark(&mut self, face: TexId, w: u32, h: u32) {
         self.favorite_mark = Some((face, w, h));
     }
 
     pub fn set_faces(&mut self, faces: Vec<TexId>) {
+        let faces = faces.into_iter().map(Some).collect::<Vec<_>>();
         self.all_faces = faces.clone();
         self.faces = faces;
         self.set_category(self.category);
+    }
+
+    /// Publish one library face while the rest of the shelf still uses cheap colour
+    /// placeholders. Resolve by stem so a favorite/category reorder during hydration cannot
+    /// pair a texture with the wrong cart.
+    pub fn set_face(&mut self, stem: &str, face: TexId) {
+        let Some(all_index) = self.all_carts.iter().position(|cart| cart.stem == stem) else {
+            return;
+        };
+        if self.all_faces.len() < self.all_carts.len() {
+            self.all_faces.resize(self.all_carts.len(), None);
+        }
+        self.all_faces[all_index] = Some(face);
+
+        // Face building happens asynchronously while the user can already browse. Do not
+        // rebuild the category here: set_category also snaps the spring, clears its velocity,
+        // and cancels button-repeat. A late texture upload must only replace the face at the
+        // matching slot, never restart the motion currently visible on screen.
+        if self.faces.len() < self.carts.len() {
+            self.faces.resize(self.carts.len(), None);
+        }
+        if let Some(current_index) = self.carts.iter().position(|cart| cart.stem == stem) {
+            self.faces[current_index] = Some(face);
+        }
     }
 
     pub fn all_carts(&self) -> &[Cart] {
@@ -192,7 +231,53 @@ impl Shelf {
     /// In `hints` order.
     pub fn find(&self, stem: &str) -> Option<(&Cart, Option<TexId>)> {
         let i = self.carts.iter().position(|c| c.stem == stem)?;
-        Some((&self.carts[i], self.faces.get(i).copied()))
+        let cart = &self.carts[i];
+        let face = self.faces.get(i).copied().flatten().or_else(|| {
+            Some(match cart.platform {
+                slot_store::Platform::Gba => self.placeholder?,
+                slot_store::Platform::Gb | slot_store::Platform::Gbc => self.gb_placeholder?,
+            })
+        });
+        Some((cart, face))
+    }
+
+    /// Carts nearest the current selection first, then the rest of the library. The shelf is a
+    /// ring: the visible tail when index zero is selected is the last cart, so a plain FIFO
+    /// leaves exactly the end of the row as rectangles during boot.
+    pub fn face_upload_order(&self) -> Vec<Cart> {
+        let mut stems = Vec::with_capacity(self.all_carts.len());
+        if !self.carts.is_empty() {
+            let n = self.carts.len() as i32;
+            let mut offsets = Vec::with_capacity(self.carts.len());
+            offsets.push(0);
+            for distance in 1..=n / 2 {
+                offsets.push(-distance);
+                offsets.push(distance);
+            }
+            for offset in offsets {
+                let Some(index) = self.cart_at_offset(offset) else {
+                    continue;
+                };
+                let stem = &self.carts[index].stem;
+                if !stems.iter().any(|seen| seen == stem) {
+                    stems.push(stem.clone());
+                }
+            }
+        }
+        for cart in &self.all_carts {
+            if !stems.iter().any(|seen| seen == &cart.stem) {
+                stems.push(cart.stem.clone());
+            }
+        }
+        stems
+            .into_iter()
+            .filter_map(|stem| {
+                self.all_carts
+                    .iter()
+                    .find(|cart| cart.stem == stem)
+                    .cloned()
+            })
+            .collect()
     }
 
     pub fn left(&mut self) {
@@ -225,7 +310,15 @@ impl Shelf {
         let mut paired: Vec<_> = std::mem::take(&mut self.carts)
             .into_iter()
             .enumerate()
-            .map(|(i, cart)| (cart, faces.as_ref().and_then(|faces| faces.get(i).copied())))
+            .map(|(i, cart)| {
+                (
+                    cart,
+                    faces
+                        .as_ref()
+                        .and_then(|faces| faces.get(i).copied())
+                        .flatten(),
+                )
+            })
             .collect();
         paired.sort_by(|(a, _), (b, _)| {
             if self.category == 1 {
@@ -245,7 +338,7 @@ impl Shelf {
         });
         self.carts = paired.iter().map(|(cart, _)| cart.clone()).collect();
         if have_faces {
-            self.faces = paired.iter().filter_map(|(_, face)| *face).collect();
+            self.faces = paired.iter().map(|(_, face)| *face).collect();
         }
         self.index = selected
             .and_then(|stem| self.carts.iter().position(|cart| cart.stem == stem))
@@ -459,13 +552,17 @@ impl Shelf {
                     });
                 }
             }
-            out.push(match self.faces.get(i) {
+            let placeholder = match cart.platform {
+                slot_store::Platform::Gba => self.placeholder,
+                slot_store::Platform::Gb | slot_store::Platform::Gbc => self.gb_placeholder,
+            };
+            out.push(match self.faces.get(i).copied().flatten().or(placeholder) {
                 Some(tex) => Draw::Tex {
                     x,
                     y,
                     w,
                     h,
-                    tex: *tex,
+                    tex,
                     alpha: alpha * dim,
                 },
                 // A cart whose face has not been uploaded still holds its place. A gap in

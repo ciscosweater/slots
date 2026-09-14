@@ -8,7 +8,9 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 
 use slot_store::Cart;
-use slot_ui::{board_face, cart_face, padded, CartFace, TURN_PAD};
+use slot_ui::{
+    board_face, cart_face, clean_label, padded, title_face, word_face, CartFace, UndoFace, TURN_PAD,
+};
 
 pub struct BuiltFaces {
     pub stem: String,
@@ -19,6 +21,64 @@ pub struct BuiltFaces {
 pub struct FaceBuilder {
     requests: Sender<Cart>,
     built: Receiver<BuiltFaces>,
+}
+
+/// A shelf cart's complete visual payload. Rasterising a cart (and its two captions) touches
+/// the label image and font for every entry, so it must never happen on the render thread.
+pub struct BuiltShelfFace {
+    pub stem: String,
+    pub face: CartFace,
+    pub group: UndoFace,
+    pub title: UndoFace,
+}
+
+/// Builds the library faces away from the frame loop. Requests are deliberately FIFO: the
+/// frontend chooses their order, putting the carts visible at the two ends of the ring first.
+pub struct ShelfFaceBuilder {
+    requests: Sender<Cart>,
+    built: Receiver<BuiltShelfFace>,
+}
+
+impl ShelfFaceBuilder {
+    pub fn spawn() -> Self {
+        let (requests, inbox) = mpsc::channel::<Cart>();
+        let (outbox, built) = mpsc::channel();
+        let spawned = thread::Builder::new()
+            .name("slot-shelf-faces".into())
+            .spawn(move || {
+                while let Ok(cart) = inbox.recv() {
+                    let clean = clean_label(&cart.stem);
+                    let group = clean
+                        .chars()
+                        .next()
+                        .map(|c| c.to_ascii_uppercase().to_string())
+                        .unwrap_or_else(|| "#".to_string());
+                    let faces = BuiltShelfFace {
+                        stem: cart.stem.clone(),
+                        face: cart_face(&cart),
+                        group: word_face(&group),
+                        title: title_face(&clean),
+                    };
+                    if outbox.send(faces).is_err() {
+                        return;
+                    }
+                }
+            });
+        if let Err(e) = spawned {
+            eprintln!("slot: shelf faces: worker thread failed to start: {e}");
+        }
+        ShelfFaceBuilder { requests, built }
+    }
+
+    /// Returns false when the worker has already gone away, so the caller can clear its
+    /// in-flight bit instead of waiting forever for a result that cannot arrive.
+    pub fn request(&self, cart: Cart) -> bool {
+        self.requests.send(cart).is_ok()
+    }
+
+    pub fn take(&self) -> Option<BuiltShelfFace> {
+        self.built.try_recv().ok()
+    }
 }
 
 impl FaceBuilder {

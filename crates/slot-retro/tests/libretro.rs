@@ -22,6 +22,48 @@ fn test_core() -> Option<LibretroCore> {
     Some(LibretroCore::open(&p).expect("vendored core is present but would not open"))
 }
 
+fn gambatte_core() -> Option<LibretroCore> {
+    let p = Path::new(env!("CARGO_MANIFEST_DIR")).join(format!(
+        "../../target/gambatte/src/gambatte_libretro.{}",
+        std::env::consts::DLL_EXTENSION
+    ));
+    if !p.exists() {
+        return None;
+    }
+    let content = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../sdcard");
+    Some(
+        LibretroCore::open_with_options(
+            &p,
+            &content.join("BIOS"),
+            &content.join("Saves"),
+            &[("gambatte_gb_bootloader", "enabled")],
+        )
+        .expect("vendored Gambatte core is present but would not open"),
+    )
+}
+
+#[test]
+fn gambatte_round_trips_a_gbc_state() {
+    let _g = lock();
+    let Some(mut c) = gambatte_core() else { return };
+    let rom = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target-device-cross/mgba/mgba/cinema/gb/acid/cgb-acid2/test.gbc");
+    if !rom.exists() {
+        return;
+    }
+    c.load(&rom).unwrap();
+    for _ in 0..60 {
+        c.run_frame(ButtonMask::default());
+    }
+    let state = c.serialize().expect("Gambatte did not save a state");
+    assert!(!state.is_empty());
+    for _ in 0..60 {
+        c.run_frame(ButtonMask::default());
+    }
+    c.unserialize(&state)
+        .expect("Gambatte did not load the state it just saved");
+}
+
 /// The one real `gba_bios.bin` in the tree. Without it mGBA falls back to its own HLE bios,
 /// which has no boot animation to play whatever the core is told about skipping it.
 fn core_with_bios() -> Option<LibretroCore> {

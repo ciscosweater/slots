@@ -95,6 +95,25 @@ impl StateRing {
         atomic_write(&self.path(RESUME, STATE_EXT), state)
     }
 
+    /// Moves a resume rejected by a successfully loaded core out of the live slot without
+    /// destroying it. Rejected files deliberately do not match the timestamp grammar, so
+    /// they stay out of the manual-state carousel while remaining available for recovery.
+    pub fn quarantine_resume(&self) -> std::io::Result<Option<PathBuf>> {
+        let source = self.path(RESUME, STATE_EXT);
+        if !source.exists() {
+            return Ok(None);
+        }
+        for n in 0u32.. {
+            let target = self.path(&format!("resume.rejected-{n}"), STATE_EXT);
+            if target.exists() {
+                continue;
+            }
+            std::fs::rename(&source, &target)?;
+            return Ok(Some(target));
+        }
+        unreachable!("u32 filenames exhausted")
+    }
+
     pub fn read_resume(&self) -> std::io::Result<Option<Vec<u8>>> {
         match std::fs::read(self.path(RESUME, STATE_EXT)) {
             Ok(b) => Ok(Some(b)),

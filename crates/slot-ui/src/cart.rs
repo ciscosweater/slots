@@ -117,6 +117,22 @@ pub fn cart_shadow_for(platform: slot_store::Platform) -> CartFace {
     }
 }
 
+/// A cheap silhouette shown while a library face is being rasterised. It keeps the real cart
+/// outline (including the GB/GBC proportions) without pretending a rectangular colour block is
+/// a loaded label. One copy per platform is enough; the shelf uses it for every missing face.
+pub fn cart_placeholder_for(platform: slot_store::Platform) -> CartFace {
+    let mut face = cart_shadow_for(platform);
+    let colour = match platform {
+        slot_store::Platform::Gba => [0x4f, 0x54, 0x5f],
+        slot_store::Platform::Gb => [0x9b, 0x9c, 0x96],
+        slot_store::Platform::Gbc => [0x49, 0x70, 0x83],
+    };
+    for px in face.rgba.chunks_exact_mut(4) {
+        px[..3].copy_from_slice(&colour);
+    }
+    face
+}
+
 fn gb_cart_face(cart: &Cart) -> CartFace {
     let (shell, mask, depth, detail) = match cart.platform {
         slot_store::Platform::Gb => (
