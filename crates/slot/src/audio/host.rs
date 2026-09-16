@@ -70,10 +70,15 @@ impl AudioSink for HostAudio {
             }
             Ok(Err(e)) => {
                 let _ = opening.join.join();
+                // `build` may have resized the ring from a device config before the stream
+                // failed to start. Restore a usable silent fallback, including when that
+                // unavailable device reported a zero sample rate.
+                self.ring.reopen(sample_rate);
                 Err(e)
             }
             Err(_) => {
                 let _ = opening.join.join();
+                self.ring.reopen(sample_rate);
                 Err(AudioError::Device("output thread stopped".into()))
             }
         }
