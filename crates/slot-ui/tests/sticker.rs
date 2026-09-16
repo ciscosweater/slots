@@ -55,10 +55,10 @@ fn a_missing_gauge_is_not_drawn_as_empty() {
 #[test]
 fn the_compliance_block_is_the_credits() {
     let all = sticker_lines(&fields()).join("\n").to_uppercase();
-    // What README.md credits, minus the parts a label has no room for. The cartridge sounds
-    // are a recording of the author's own console, so nobody is owed for them.
+    // What README.md credits, minus the parts a label has no room for. The upstream author
+    // remains named on the physical about label shipped by this fork.
     for owed in [
-        "MGBA", "GPSP", "GAMBATTE", "PIXELIFY", "NERD", "LCD3X", "CLAUDE",
+        "SLOTS", "SLOT", "BRANDON", "MGBA", "GPSP", "GAMBATTE", "PIXELIFY", "NERD", "LCD3X", "AI",
     ] {
         assert!(all.contains(owed), "the credits do not mention {owed}");
     }

@@ -27,6 +27,41 @@ pub fn cover(path: &Path, w: u32, h: u32) -> Option<Vec<u8>> {
     Some(out)
 }
 
+/// Decodes `path` and scales the complete image to exactly `w` pixels wide, preserving its
+/// aspect ratio. The returned buffer has the image's resulting height — there is no added
+/// letterbox or transparent padding. Unlike [`cover`], no part of the source is cropped.
+pub fn fit_width(path: &Path, w: u32) -> Option<(Vec<u8>, u32, u32)> {
+    if w == 0 {
+        return None;
+    }
+    let (src, sw, sh) = decode(path)?;
+    if sw == 0 || sh == 0 {
+        return None;
+    }
+
+    let scale = w as f32 / sw as f32;
+    let h_f = sh as f32 * scale;
+    // A user supplied PNG can advertise an absurdly tall canvas. Keep the width-driven path
+    // bounded just like the fixed-size label decoder, and let the normal fallback handle it.
+    if !h_f.is_finite() || h_f > 4096.0 {
+        return None;
+    }
+    let h = h_f.round().max(1.0) as u32;
+    let mut out = vec![0u8; (w * h * 4) as usize];
+    for y in 0..h {
+        let y0 = y as f32 / scale;
+        let y1 = (y + 1) as f32 / scale;
+        for x in 0..w {
+            let x0 = x as f32 / scale;
+            let x1 = (x + 1) as f32 / scale;
+            let px = box_average(&src, sw, sh, x0, y0, x1, y1);
+            let d = ((y * w + x) * 4) as usize;
+            out[d..d + 4].copy_from_slice(&px);
+        }
+    }
+    Some((out, w, h))
+}
+
 /// Averages the source footprint of one destination pixel. Collapses to a single sample when
 /// upscaling, so it doubles as nearest neighbour there.
 fn box_average(src: &[u8], sw: u32, sh: u32, x0: f32, y0: f32, x1: f32, y1: f32) -> [u8; 4] {

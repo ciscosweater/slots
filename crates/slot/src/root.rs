@@ -1,9 +1,10 @@
 use std::path::{Path, PathBuf};
 
-/// The six top level folders of a content root. A card that has never held slot. has none
+/// The eight top level folders of a content root. A card that has never held slot. has none
 /// of them, and every write path below assumes its own is already there.
-pub const DIRS: [&str; 7] = [
+pub const DIRS: [&str; 8] = [
     "BIOS",
+    "Cartridges",
     "Games",
     "Labels",
     "Saves",

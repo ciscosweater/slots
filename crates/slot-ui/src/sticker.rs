@@ -93,20 +93,21 @@ impl StickerPage {
 
 /// What the article gives ten lines of regulatory small print to. Set to the width of the
 /// column rather than to the sentence: the original's type is condensed and Pixelify is not,
-/// so the same wording at the same size would run out from under the barcode panel.
+/// so the same wording at the same size would run out from under the barcode panel. The fork
+/// keeps the upstream author visible here as well as in README.md.
 ///
 /// This is what README.md credits, in the space a label has for it.
 pub const CREDITS: [&str; 10] = [
-    "EMULATION POWERED BY MGBA,",
-    "GPSP AND GAMBATTE. AGS-102",
-    "IS A FORK OF BASEOS BY",
-    "PVAIBHAV. TYPE IS PIXELIFY",
-    "AND NERD FONTS SYMBOLS BY",
-    "RYAN L MCINTYRE. THE PANEL",
-    "MASK IS GIGAHERZ'S LCD3X.",
-    "CART SOUNDS ARE MY",
-    "CHILDHOOD GAMEBOY. I",
-    "WASTED WATER WITH CLAUDE.",
+    "SLOTS IS A FORK OF SLOT",
+    "BY BRANDON T KOWALSKI.",
+    "GBA, GB AND GBC EMULATION",
+    "BY MGBA, GPSP AND GAMBATTE.",
+    "AGS-102 IS A FORK OF BASEOS",
+    "BY PVAIBHAV. PIXELIFY AND",
+    "NERD FONTS BY RYAN L MCINTYRE.",
+    "LCD3X BY GIGAHERZ. AI HELPED",
+    "MAKE THIS FORK. SEE README.",
+    "CART SOUNDS ARE FROM UPSTREAM.",
 ];
 
 /// The other face of the same plate: how the device is actually used. Same ten lines, same

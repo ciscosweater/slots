@@ -41,7 +41,7 @@ pub trait AudioSink: Send {
         None
     }
     /// Close the hardware synchronously. An open H700 PCM keeps the speaker amp biased,
-    /// which is a hiss with the panel already dark — so this runs before suspend, doze, and
+    /// which is a hiss with the panel already dark — so this runs before standby, doze, and
     /// power off, not only when the sink is being replaced.
     fn close(&mut self);
     fn ring(&self) -> Arc<Ring>;

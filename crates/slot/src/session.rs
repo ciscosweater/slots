@@ -261,14 +261,12 @@ impl Session {
     }
 
     pub fn update(&mut self, dt: f32) {
-        // Before `update`: a doze that is about to cross into kernel suspend must not still
-        // hold the PCM. The H700 codec stays powered for as long as `plug:default` is open,
-        // which is the hiss behind a dark panel.
+        // Before `update`: a doze must not still hold the PCM. The H700 codec stays powered for
+        // as long as `plug:default` is open, which is the hiss behind a dark panel.
         self.sync_sink();
         self.bridge_link(|app| app.update(dt));
-        // After: a successful suspend woke into Playing and needs the device back; a
-        // shutdown that started inside `update` (doze timeout, critical battery) needs it
-        // dropped before `poweroff` blocks on init.
+        // After: a shutdown that started inside `update` (doze timeout, critical battery) needs
+        // the sink dropped before `poweroff` blocks on init.
         self.sync_sink();
         // The wire a link that just came up runs over. `App` holds a session's own
         // bookkeeping and never a transport (see `App::link`), so this is the hop that

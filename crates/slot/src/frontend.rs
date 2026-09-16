@@ -15,7 +15,7 @@ use slot_ui::{
     category_face, chip_face, chip_shadow_face, favorite_mark_face, hhmm, hint_face, icon_face,
     menu_face, photo_face, set_clock_hint_face, socket_face, sticker_face, title_face, toast_face,
     word_face, Icon, LinkBadge, PowerChoice, Printed, StickerFields, StickerPage, Toast, ALERT_PX,
-    BOLT_PX, EMPTY_SHELF, HUD_ICON_PX, HUD_INK, LEGEND,
+    BOLT_PX, CART_H, CART_W, EMPTY_SHELF, HUD_ICON_PX, HUD_INK, LEGEND, TURN_PAD,
 };
 
 use crate::app::{App, LinkRow, Phase};
@@ -26,16 +26,16 @@ use crate::link_screen::{LinkSprites, Sprite};
 use crate::link_start::{LinkFail, LinkStep};
 use crate::session::Session;
 
-/// How long a dark panel waits before Super Standby. The dark is immediate — the lid or
+/// How long a dark panel waits before userspace standby. The dark is immediate — the lid or
 /// the button kills the backlight on the edge — but the device is still running flat out
 /// behind it at 400-700 mA, so this is the window in which the user might come straight
 /// back, not a power saving.
 ///
-/// Five minutes, and then the device asks the H700 for Super Standby. Five more minutes
-/// in that state with the lid still shut cuts the rails; resume.state was written when the
-/// panel went dark, so the next boot seats the cart. Open the lid or press POWER inside
-/// that Super Standby window and you're back in the game. A platform without working
-/// suspend, or a suspend that fails, falls back to a real power off immediately.
+/// Five minutes, and then the device stops rendering and polls input and timers at 5 Hz. Five
+/// more minutes in that state with the lid still shut cuts the rails; resume.state was written
+/// when the panel went dark, so the next boot seats the cart. Open the lid or press POWER inside
+/// that standby window and you're back in the game. External power and an enumerated USB host
+/// keep the dark panel in the first stage instead.
 const DOZE_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// A hitch longer than this would jump the shelf spring and the insert. The emu paces itself
@@ -218,6 +218,8 @@ impl Frontend {
     pub fn upload_next_static_faces(&mut self, compositor: &mut Compositor) -> bool {
         match self.static_upload_stage {
             0 => {
+                // Overlay artwork from Jeltr0n's Retro-Overlays:
+                // https://github.com/Jeltr0n/Retro-Overlays
                 self.gb_overlay =
                     upload_png(compositor, include_bytes!("../../../jeltron/GB_DMG.png"));
                 self.gbc_overlay =
@@ -456,7 +458,12 @@ impl Frontend {
         built: crate::face_builder::BuiltShelfFace,
     ) {
         let tex = compositor.create_texture(built.face.w, built.face.h, &built.face.rgba);
-        self.session.app_mut().set_face(&built.stem, tex);
+        self.session.app_mut().set_face_with_size_and_artwork(
+            &built.stem,
+            tex,
+            (built.face.w, built.face.h),
+            built.complete_artwork,
+        );
         let caption = (
             Printed::new(
                 compositor.create_texture(built.group.w, built.group.h, &built.group.rgba),
@@ -621,6 +628,12 @@ impl Frontend {
     /// whether or not anything was pressed, so it is called every frame.
     pub fn advance(&mut self, input: &mut dyn InputSource) {
         let now = self.now();
+        // Standby can last for minutes while the animation clock is intentionally throttled.
+        // Move the app clock to wall time before input and the single normal update pass; calling
+        // `tick_ms` here would run the timer scheduler twice on every rendered frame.
+        if self.session.app().standby() {
+            self.session.app_mut().set_clock_ms(now);
+        }
         let events = input.poll(now);
         self.session.feed(events, now);
         // A hitch would otherwise jump the shelf spring and the insert. The emu paces itself
@@ -636,6 +649,10 @@ impl Frontend {
 
     pub fn powering_off(&self) -> bool {
         self.session.app().ready_to_power_off()
+    }
+
+    pub fn standby(&self) -> bool {
+        self.session.app().standby()
     }
 
     pub fn restarting(&self) -> bool {
@@ -868,7 +885,15 @@ fn sync_core_picker(
         &faces.board.rgba,
     );
     let lid_id = upload_rgba(compositor, lid, faces.lid.w, faces.lid.h, &faces.lid.rgba);
-    app.set_core_board_faces(board_id, lid_id);
+    if (faces.lid.w, faces.lid.h) == (CART_W + 2 * TURN_PAD, CART_H + 2 * TURN_PAD) {
+        app.set_core_board_faces(board_id, lid_id);
+    } else {
+        let artwork_size = (
+            faces.lid.w.saturating_sub(2 * TURN_PAD),
+            faces.lid.h.saturating_sub(2 * TURN_PAD),
+        );
+        app.set_core_board_faces_with_size(board_id, lid_id, artwork_size);
+    }
     *built = Some(faces.stem);
 }
 

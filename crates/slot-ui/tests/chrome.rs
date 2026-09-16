@@ -1,13 +1,14 @@
 use slot_store::Cart;
 use slot_ui::{
-    draw_empty_slot, edge, housing, icon_box, opening, recess, Draw, Shelf, SlotChrome, ALERT_PX,
-    CART_H, CART_W, LABEL_H, LABEL_Y, MOUTH_H, OUT_H, OUT_W,
+    draw_empty_slot, edge, housing, icon_box, opening, recess, Draw, Shelf, SlotChrome, TexId,
+    ALERT_PX, CART_H, CART_W, LABEL_H, LABEL_Y, MOUTH_H, OUT_H, OUT_W,
 };
 
 fn cart() -> Cart {
     Cart {
         stem: "Emerald".into(),
         rom: "Games/Emerald.gba".into(),
+        artwork: None,
         label: None,
         code: String::new(),
         title: "POKEMON EMER".into(),
@@ -114,6 +115,7 @@ fn chrome_into(seat: f32, out: &mut Vec<Draw>) {
     SlotChrome {
         cart: &c,
         face: None,
+        face_size: None,
         seat,
         alert: None,
         dim: 0.5,
@@ -130,6 +132,7 @@ fn draw_powering_on(t: f32, out: &mut Vec<Draw>) {
     SlotChrome {
         cart: &c,
         face: None,
+        face_size: None,
         seat: 1.0,
         alert: None,
         dim: 0.0,
@@ -239,6 +242,7 @@ fn gb_cart_stands_where_the_shelf_left_it_and_keeps_its_dimensions() {
     let gb_cart = Cart {
         stem: "Red".into(),
         rom: "Games/Red.gb".into(),
+        artwork: None,
         label: None,
         code: String::new(),
         title: "POKEMON RED".into(),
@@ -252,6 +256,7 @@ fn gb_cart_stands_where_the_shelf_left_it_and_keeps_its_dimensions() {
     SlotChrome {
         cart: &gb_cart,
         face: None,
+        face_size: None,
         seat: 0.0,
         alert: None,
         dim: 0.0,
@@ -271,6 +276,47 @@ fn gb_cart_stands_where_the_shelf_left_it_and_keeps_its_dimensions() {
         (on_shelf.x - in_slot.x).abs() < 0.01 && (on_shelf.y - in_slot.y).abs() < 0.01,
         "GB cart jumps from {on_shelf:?} to {in_slot:?} on insert"
     );
+}
+
+#[test]
+fn complete_artwork_stands_where_the_shelf_left_it() {
+    let c = cart();
+    let mut shelf = Shelf::new(vec![c.clone()]);
+    shelf.set_face_with_size("Emerald", TexId::from_raw(88), (CART_W, 142));
+    let mut shelf_out = Vec::new();
+    shelf.draw_row(None, 0.0, 0.0, 1.0, &mut shelf_out);
+    let on_shelf = shelf_out
+        .iter()
+        .find_map(|draw| match *draw {
+            Draw::Tex {
+                tex, x, y, w, h, ..
+            } if tex == TexId::from_raw(88) => Some(Quad { x, y, w, h }),
+            _ => None,
+        })
+        .expect("the artwork was not drawn on the shelf");
+
+    let mut out = Vec::new();
+    SlotChrome {
+        cart: &c,
+        face: Some(TexId::from_raw(88)),
+        face_size: Some((CART_W, 142)),
+        seat: 0.0,
+        alert: None,
+        dim: 0.0,
+        screen: 0.0,
+        game: false,
+    }
+    .draw(&mut out);
+    let in_slot = out
+        .iter()
+        .find_map(|draw| match *draw {
+            Draw::Tex {
+                tex, x, y, w, h, ..
+            } if tex == TexId::from_raw(88) => Some(Quad { x, y, w, h }),
+            _ => None,
+        })
+        .expect("the artwork was not drawn in the slot");
+    assert_eq!(on_shelf, in_slot);
 }
 
 /// In means *in*. The cart comes to rest filling the opening, so the base of the slot ends up
@@ -462,6 +508,7 @@ fn the_empty_slot_is_the_same_slot_the_chrome_draws() {
     SlotChrome {
         cart: &c,
         face: None,
+        face_size: None,
         seat: 1.0,
         alert: None,
         dim: 0.0,

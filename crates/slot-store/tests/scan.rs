@@ -16,6 +16,11 @@ fn write_png(d: &TempDir, name: &str) {
     std::fs::write(d.path().join("Labels").join(name), b"\x89PNG\r\n\x1a\n").expect("write png");
 }
 
+fn write_artwork(d: &TempDir, name: &str) {
+    std::fs::write(d.path().join("Cartridges").join(name), b"\x89PNG\r\n\x1a\n")
+        .expect("write artwork");
+}
+
 #[test]
 fn a_png_in_labels_is_paired_to_its_rom_by_stem() {
     let d = tmp_root();
@@ -31,6 +36,17 @@ fn a_png_in_labels_is_paired_to_its_rom_by_stem() {
         "a label in Labels/ was not picked up"
     );
     assert_eq!(carts[1].title, "POKEMON EMER");
+}
+
+#[test]
+fn a_png_in_cartridges_is_paired_separately_from_the_label() {
+    let d = tmp_root();
+    write_rom(&d, "Pokemon Emerald.gba", "POKEMON EMER");
+    write_png(&d, "Pokemon Emerald.png");
+    write_artwork(&d, "Pokemon Emerald.png");
+    let carts = scan(d.path()).unwrap();
+    assert!(carts[0].label.is_some());
+    assert!(carts[0].artwork.is_some());
 }
 
 #[test]

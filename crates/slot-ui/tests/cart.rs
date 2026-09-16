@@ -7,7 +7,7 @@ use tempfile::TempDir;
 
 fn tmp_root() -> TempDir {
     let d = tempfile::tempdir().expect("tempdir");
-    for sub in ["Games", "Labels", "Saves", "States", "System"] {
+    for sub in ["Games", "Cartridges", "Labels", "Saves", "States", "System"] {
         std::fs::create_dir(d.path().join(sub)).expect("create content dir");
     }
     d
@@ -27,6 +27,23 @@ fn write_label(d: &TempDir, name: &str, w: u32, h: u32, px: impl Fn(u32, u32) ->
         }
     }
     let f = std::fs::File::create(d.path().join("Labels").join(name)).expect("create label");
+    let mut enc = png::Encoder::new(std::io::BufWriter::new(f), w, h);
+    enc.set_color(png::ColorType::Rgb);
+    enc.set_depth(png::BitDepth::Eight);
+    enc.write_header()
+        .expect("png header")
+        .write_image_data(&rgb)
+        .expect("png data");
+}
+
+fn write_artwork(d: &TempDir, name: &str, w: u32, h: u32, px: impl Fn(u32, u32) -> [u8; 3]) {
+    let mut rgb = Vec::with_capacity((w * h * 3) as usize);
+    for y in 0..h {
+        for x in 0..w {
+            rgb.extend_from_slice(&px(x, y));
+        }
+    }
+    let f = std::fs::File::create(d.path().join("Cartridges").join(name)).expect("create artwork");
     let mut enc = png::Encoder::new(std::io::BufWriter::new(f), w, h);
     enc.set_color(png::ColorType::Rgb);
     enc.set_depth(png::BitDepth::Eight);
@@ -56,6 +73,33 @@ fn a_malformed_label_falls_back_to_a_generated_one() {
     let face = cart_face(cart);
     assert_eq!((face.w, face.h), (CART_W, CART_H));
     assert!(face.rgba.iter().any(|b| *b != 0), "face is blank");
+}
+
+#[test]
+fn complete_artwork_uses_slot_width_and_keeps_its_natural_height() {
+    let d = tmp_root();
+    write_rom(&d, "Ruby.gba", "RUBY");
+    write_artwork(&d, "Ruby.png", 600, 355, |_, _| [0xd0, 0x20, 0xa0]);
+    let cart = &scan(d.path()).unwrap()[0];
+    let face = cart_face(cart);
+    assert_eq!((face.w, face.h), (CART_W, 142));
+    assert!(face
+        .rgba
+        .chunks_exact(4)
+        .all(|px| px == [0xd0, 0x20, 0xa0, 255]));
+}
+
+#[test]
+fn malformed_complete_artwork_falls_back_to_the_label() {
+    let d = tmp_root();
+    write_rom(&d, "Fallback.gba", "FALLBACK");
+    std::fs::write(d.path().join("Cartridges/Fallback.png"), b"not a png").unwrap();
+    write_label(&d, "Fallback.png", 64, 64, |_, _| [0x12, 0x34, 0x56]);
+    let face = cart_face(&scan(d.path()).unwrap()[0]);
+    assert_eq!(
+        label_pixel(&face, LABEL_W / 2, LABEL_H / 2),
+        [0x12, 0x34, 0x56]
+    );
 }
 
 #[test]

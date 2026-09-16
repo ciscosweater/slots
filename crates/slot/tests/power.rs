@@ -4,7 +4,7 @@ use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use common::{
-    app_playing_in, boot, panel, session_with_platform, tmp_root_with_carts,
+    app_playing_in, boot, panel, panel_with_charge, session_with_platform, tmp_root_with_carts,
     tmp_root_with_real_carts, StubSnapshot,
 };
 use slot::app::Phase;
@@ -94,9 +94,7 @@ fn lid_close_over_the_switcher_wakes_into_the_game() {
     );
 }
 
-/// A dozing app is still ticking, which is the only clock the timeout has — and still
-/// drawing 400-700 mA behind the dark panel. The stub has no Super Standby, so the timeout
-/// ends in a real power off.
+/// The first timeout enters the throttled standby stage; the second powers off.
 #[test]
 fn a_doze_that_outlasts_the_timeout_powers_off_by_itself() {
     let d = tmp_root_with_carts(&["Emerald"]);
@@ -110,7 +108,79 @@ fn a_doze_that_outlasts_the_timeout_powers_off_by_itself() {
     for _ in 0..40 {
         a.update(1.0 / 60.0);
     }
+    assert!(a.standby(), "the first timeout did not enter standby");
+    assert!(!a.powering_off(), "standby skipped its five-minute window");
+    for _ in 0..120 {
+        a.update(1.0 / 60.0);
+    }
     assert!(a.powering_off());
+    assert!(
+        !a.standby(),
+        "the shutdown screen must leave standby so it can render"
+    );
+}
+
+#[test]
+fn standby_deadlines_use_absolute_time_not_frame_time() {
+    let d = tmp_root_with_carts(&["Emerald"]);
+    let mut a = app_playing_in(d.path(), "Emerald");
+    a.set_power(panel(d.path(), Duration::from_secs(2)).0);
+    a.apply(Action::LidClose);
+
+    a.tick_ms(10_000);
+    assert!(a.standby());
+    assert!(!a.powering_off());
+
+    a.tick_ms(12_000);
+    assert!(a.powering_off(), "the second absolute deadline was missed");
+}
+
+#[test]
+fn plugging_in_during_standby_cancels_it_and_restarts_the_grace_period() {
+    let d = tmp_root_with_carts(&["Emerald"]);
+    let mut a = app_playing_in(d.path(), "Emerald");
+    let (power, charge) = panel_with_charge(d.path(), Duration::from_secs(2), 1);
+    a.set_power(power);
+    a.apply(Action::LidClose);
+
+    a.tick_ms(4_000);
+    assert!(a.standby());
+
+    charge.store(2, Ordering::Relaxed);
+    a.tick_ms(4_500);
+    assert!(
+        !a.standby(),
+        "charger insertion should leave userspace standby"
+    );
+
+    charge.store(1, Ordering::Relaxed);
+    a.tick_ms(6_000);
+    assert!(
+        !a.powering_off(),
+        "unplugging should get a fresh doze grace period"
+    );
+}
+
+#[test]
+fn standby_keeps_the_led_off_while_charge_polling_continues() {
+    let d = tmp_root_with_carts(&["Emerald"]);
+    let (mut a, _charge, _percent, led, _writes) =
+        common::app_playing_with_led(d.path(), "Emerald");
+    a.apply(Action::LidClose);
+
+    a.tick_ms(100_000);
+    assert!(a.standby());
+    assert_eq!(
+        led.load(Ordering::Relaxed),
+        common::led_code(slot_power::LedState::Off)
+    );
+
+    // The fast LED tick runs again, but it must not light the case behind the closed lid.
+    a.tick_ms(110_000);
+    assert_eq!(
+        led.load(Ordering::Relaxed),
+        common::led_code(slot_power::LedState::Off)
+    );
 }
 
 #[test]
@@ -122,24 +192,19 @@ fn a_stray_doze_timeout_does_not_power_off_a_running_game() {
     assert!(matches!(a.phase(), Phase::Playing { .. }));
 }
 
-/// Super Standby that returns is a wake, not a shutdown. The rails stay up and the cart
-/// is still in the slot.
+/// Kernel suspend support is deliberately irrelevant: the reliable first stage is the
+/// userspace standby whose POWER polling and second deadline keep running.
 #[test]
-fn a_successful_suspend_wakes_instead_of_powering_off() {
+fn a_platform_with_suspend_still_uses_the_reliable_standby_stage() {
     let d = tmp_root_with_carts(&["Emerald"]);
     let mut a = app_playing_in(d.path(), "Emerald");
     a.set_power(common::panel_that_wakes(d.path(), Duration::from_secs(2)));
     a.apply(Action::LidClose);
     assert!(matches!(a.phase(), Phase::Doze { .. }));
     a.on_doze_timeout();
-    assert!(
-        !a.powering_off(),
-        "a wake from Super Standby is not a shutdown"
-    );
-    assert!(
-        matches!(a.phase(), Phase::Playing { .. }),
-        "the cart is still seated"
-    );
+    assert!(a.standby());
+    assert!(!a.powering_off());
+    assert!(matches!(a.phase(), Phase::Doze { .. }));
     assert!(
         StateRing::new(d.path(), Core::Mgba, "Emerald")
             .read_resume()
@@ -326,9 +391,14 @@ fn a_dozing_device_powers_off_by_itself_rather_than_waiting_for_the_lid() {
     for _ in 0..180 {
         a.update(1.0 / 60.0);
     }
+    assert!(a.standby(), "three seconds should reach the standby stage");
+    assert!(!a.powering_off(), "the second timeout has not elapsed");
+    for _ in 0..120 {
+        a.update(1.0 / 60.0);
+    }
     assert!(
         a.powering_off(),
-        "three seconds is past the two second timeout"
+        "two standby seconds should start poweroff"
     );
     assert!(
         !a.ready_to_power_off(),
@@ -377,7 +447,7 @@ fn a_committed_shutdown_closes_the_audio_device() {
 }
 
 /// Same hiss, earlier: a shut lid blanks the panel and the amp has to follow, not wait for
-/// the suspend timeout. Wake puts the device back only if it was running before.
+/// the standby timeout. Wake puts the device back only if it was running before.
 #[test]
 fn doze_closes_the_audio_device() {
     let d = tmp_root_with_carts(&["Emerald"]);

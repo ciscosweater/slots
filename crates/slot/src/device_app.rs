@@ -52,44 +52,53 @@ pub fn run() {
     let mut deadline = Instant::now();
     let mut asset_stage = 0u8;
     loop {
-        frontend.render(&mut compositor, surface.window_size());
-        if let Err(e) = surface.swap() {
-            eprintln!("slot: {e}");
-            return;
-        }
-        match asset_stage {
-            0 => {
-                eprintln!(
-                    "slot: boot stage=first_frame elapsed_ms={}",
-                    boot_started.elapsed().as_secs_f64() * 1000.0
-                );
-                asset_stage = 1;
+        if !frontend.standby() {
+            frontend.render(&mut compositor, surface.window_size());
+            if let Err(e) = surface.swap() {
+                eprintln!("slot: {e}");
+                return;
             }
-            1 if frontend.upload_next_static_faces(&mut compositor) => {
-                // Hydrate one static batch per frame. Once those are in place, the shelf-face
-                // worker feeds one completed cart at a time without stopping the spring clock.
-                if frontend.upload_next_cart_face(&mut compositor) {
-                    asset_stage = 2;
+            match asset_stage {
+                0 => {
                     eprintln!(
-                        "slot: boot stage=assets elapsed_ms={}",
+                        "slot: boot stage=first_frame elapsed_ms={}",
                         boot_started.elapsed().as_secs_f64() * 1000.0
                     );
+                    asset_stage = 1;
                 }
+                1 if frontend.upload_next_static_faces(&mut compositor) => {
+                    // Hydrate one static batch per frame. Once those are in place, the shelf-face
+                    // worker feeds one completed cart at a time without stopping the spring clock.
+                    if frontend.upload_next_cart_face(&mut compositor) {
+                        asset_stage = 2;
+                        eprintln!(
+                            "slot: boot stage=assets elapsed_ms={}",
+                            boot_started.elapsed().as_secs_f64() * 1000.0
+                        );
+                    }
+                }
+                1 => {}
+                _ => {}
             }
-            1 => {}
-            _ => {}
         }
         frontend.advance(&mut input);
         // NextUI's core and swap live on one thread. This acknowledgement releases one core
         // frame and waits until it has been published, preserving that ordering without
         // giving up the worker isolation that keeps audio stable.
-        frontend.presented();
+        if !frontend.standby() {
+            frontend.presented();
+        }
         if frontend.restarting() {
             frontend.restart();
         }
         if frontend.powering_off() {
             frontend.poweroff();
             return;
+        }
+        if frontend.standby() {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            deadline = Instant::now();
+            continue;
         }
         // eglSwapBuffers is the primary clock.  The absolute deadline is the fallback for
         // Mali drivers that accept swap interval 1 but do not actually block on it; unlike a

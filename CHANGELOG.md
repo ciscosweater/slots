@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased — `slots` fork
+
+This fork starts from [`slot`](https://github.com/BrandonKowalski/slot) by Brandon T. Kowalski.
+The original GBA-focused frontend remains the foundation; this fork adds:
+
+- Game Boy and Game Boy Color support through Gambatte.
+- Platform filters for `GBA`, `GB` and `GBC`, with platform-specific cartridge shells.
+- Optional complete cartridge artwork in `Cartridges/` and labels for all three platforms.
+- BaseOS v1.1.0 installation support for both one-card and two-card setups.
+
 ## 1.0.0
 
 A focused GBA, Game Boy and Game Boy Color frontend for the Anbernic RG SP.
@@ -14,7 +24,7 @@ A focused GBA, Game Boy and Game Boy Color frontend for the Anbernic RG SP.
   favorites on Y, recently played.
 - GBA cores still pickable with START (mGBA or gpSP). GB and GBC always use Gambatte.
 - Cart silhouettes match the real plastic: GBA landscape, GB with the lock notch, GBC
-  without it. Labels cover 196x86 on GBA and 168x148 (42:37) on GB/GBC.
+  without it. Labels render at 176x90 on GBA and 192x169 (42:37) on GB/GBC.
 - SELECT toggles Pixelify against the original label font.
 - The compositor's GBA LCD mask stays off while a GB or GBC cart is seated; Gambatte
   already supplies that image.
@@ -22,12 +32,13 @@ A focused GBA, Game Boy and Game Boy Color frontend for the Anbernic RG SP.
 ### Device
 
 - Lid close writes a save state and darkens the panel. Open within five minutes and
-  the game is still there. After that the H700 enters Super Standby. Open the lid or
-  press POWER within five more minutes and you're back in the game; after that, slot
-  powers off and the next boot resumes from the same save state. If suspend is missing
-  or fails, slot powers off when the dark-panel grace ends.
-- Power-off talks to the AXP2202 with `I2C_SLAVE_FORCE` and a two-second timeout, so a
-  hung I2C write cannot pin the shutdown screen until a ten-second hardware hold.
+  the game is still there. After that the H700 enters a lower-frequency userspace
+  standby. Open the lid or press POWER within five more minutes and you're back in
+  the game; after that, slot powers off and the next boot resumes from the same save
+  state. External power and an enumerated USB debugging session keep the device out
+  of standby.
+- Power-off hands shutdown to BaseOS/BusyBox after syncing, leaving service teardown,
+  filesystem unmounts and the final PMIC cut to the operating system.
 - Installs on AGS-102 (two-card) and BaseOS v1.1.0 (one-card or two-card).
 
 ### Release

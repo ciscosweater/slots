@@ -1,5 +1,5 @@
 use std::ffi::{c_int, c_ulong, c_void};
-use std::fs::{self, OpenOptions};
+use std::fs;
 use std::io::Write;
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
@@ -40,8 +40,6 @@ const DEV_INPUT: &str = "/dev/input";
 
 const EV_FF: u16 = 0x15;
 const FF_RUMBLE: u16 = 0x50;
-const I2C_SLAVE_FORCE: c_ulong = 0x0706;
-const AXP_ADDR: c_int = 0x34;
 /// `_IOW('E', 0x80, struct ff_effect)`. The struct is 48 bytes once the union's eight byte
 /// alignment is counted, which is where the size in the middle of this comes from.
 const EVIOCSFF: c_ulong = 0x4030_4580;
@@ -447,85 +445,8 @@ fn active_charge(battery: &Path, charger: Option<&Path>) -> Charge {
     }
 }
 
-/// Sysfs node for the PMIC, e.g. `/sys/bus/i2c/devices/5-0034`.
-fn axp_i2c_sysfs() -> Option<PathBuf> {
-    let entries = fs::read_dir("/sys/bus/i2c/devices").ok()?;
-    for entry in entries.flatten() {
-        let leaf = entry.file_name().to_string_lossy().into_owned();
-        let Some((_, address)) = leaf.split_once('-') else {
-            continue;
-        };
-        if address != "0034" && address != "34" {
-            continue;
-        }
-        if fs::read_to_string(entry.path().join("name"))
-            .is_ok_and(|n| n.trim_start().starts_with("axp"))
-        {
-            return Some(entry.path());
-        }
-    }
-    None
-}
-
-fn axp_i2c_devnode(sysfs: Option<&Path>) -> PathBuf {
-    sysfs
-        .and_then(|p| p.file_name())
-        .and_then(|n| n.to_str())
-        .and_then(|leaf| {
-            leaf.split_once('-')
-                .map(|(bus, _)| format!("/dev/i2c-{bus}"))
-        })
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/dev/i2c-5"))
-}
-
-/// `I2C_SLAVE` is EBUSY here: the kernel axp2202 driver already owns 0x34. Unbinding that
-/// driver to free the address hung the process in D-state (the shutdown trace stopped at
-/// "trying AXP2202 rail cut" and the panel sat on Powering Down until a 10 s hardware hold).
-/// `I2C_SLAVE_FORCE` is what `i2cset -f` uses — talk to the chip without ripping the MFD out.
-fn claim_axp_i2c() -> std::io::Result<std::fs::File> {
-    let path = axp_i2c_devnode(axp_i2c_sysfs().as_deref());
-    let bus = OpenOptions::new().read(true).write(true).open(&path)?;
-    if unsafe { ioctl(bus.as_raw_fd(), I2C_SLAVE_FORCE, AXP_ADDR) } < 0 {
-        return Err(std::io::Error::last_os_error());
-    }
-    Ok(bus)
-}
-
-/// The stock H700 kernel's generic AXP power-off register is wrong for the AXP2202. Quiesce
-/// pending wake IRQs before asking its real soft-power register to cut the rails; otherwise
-/// a held button or attached charger can turn a black-screen shutdown straight back on.
-fn axp2202_poweroff() -> std::io::Result<()> {
-    let mut bus = claim_axp_i2c()?;
-    let mut register = |reg: u8, value: u8| bus.write_all(&[reg, value]);
-    for reg in 0x40..=0x44 {
-        register(reg, 0x00)?;
-    }
-    for reg in 0x48..=0x4c {
-        register(reg, 0xff)?;
-    }
-    register(0x22, 0x0a)?;
-    std::thread::sleep(Duration::from_millis(50));
-    register(0x27, 0x01)
-}
-
-/// I2C can block uninterruptibly. A hung write must not pin the shutdown screen forever;
-/// init still has a chance if this gives up.
-fn axp2202_poweroff_or_timeout() -> std::io::Result<()> {
-    let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::Builder::new()
-        .name("axp-poweroff".into())
-        .spawn(move || {
-            let _ = tx.send(axp2202_poweroff());
-        })
-        .map_err(std::io::Error::other)?;
-    rx.recv_timeout(Duration::from_secs(2))
-        .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "AXP I2C did not return"))?
-}
-
-/// How long Super Standby may last before the rails are cut. The dark-panel grace is
-/// `Power`'s own timeout (five minutes of 400-700 mA); this is the second stage, spent
-/// inside `echo mem`.
+/// How long the optional kernel-suspend hook may wait before returning failure. The frontend does
+/// not call it: its reliable H700 path is userspace standby, which keeps POWER polling alive.
 const SUPER_STANDBY: Duration = Duration::from_secs(300);
 
 /// The stock H700 userspace writes 16 here. This is an enable switch, not a duration: the
@@ -540,11 +461,24 @@ fn arm_wakealarm(rtc: Option<&Path>, after: Duration) -> std::io::Result<()> {
             "no RTC available for timed wake",
         )
     })?;
+    // The alarm existing does not imply it is allowed to wake the SoC. H700's kernel leaves
+    // this switch exposed under the RTC device; without enabling it, the alarm counts down
+    // while suspended but userspace never runs again to perform the power-off.
+    let wakeup = rtc.join("device/power/wakeup");
+    if wakeup.exists() {
+        fs::write(&wakeup, "enabled")?;
+    }
     let alarm = rtc.join("wakealarm");
     fs::write(&alarm, "0")?;
     // Linux's RTC sysfs accepts a relative alarm. This does not depend on the wall clock
     // having been set yet, which matters on a freshly flashed unit without network time.
-    fs::write(alarm, format!("+{}", after.as_secs().max(1)))
+    // Round upward: truncating 299.9 seconds to 299 wakes before the deadline and looks like
+    // a user wake on H700 models without a hall sensor.
+    let seconds = after
+        .as_secs()
+        .saturating_add(u64::from(after.subsec_nanos() != 0))
+        .max(1);
+    fs::write(alarm, format!("+{seconds}"))
 }
 
 impl Platform for DevicePlatform {
@@ -622,7 +556,7 @@ impl Platform for DevicePlatform {
                 .duration_since(SystemTime::now())
                 .unwrap_or(Duration::ZERO);
             if remaining.is_zero() {
-                // Five minutes in Super Standby with the lid still shut: cut the rails.
+                // Five minutes in the kernel suspend window with the lid still shut: cut the rails.
                 // resume.state was written before this loop, so the next boot seats the cart.
                 let _ = fs::write(&work_led, "1");
                 return false;
@@ -637,10 +571,29 @@ impl Platform for DevicePlatform {
                 let _ = fs::write(&work_led, "1");
                 return false;
             }
+            self.breadcrumb(&format!(
+                "suspend: RTC armed for {} seconds, entering mem",
+                remaining.as_secs()
+            ));
             let status = Command::new("sh")
                 .args(["-c", "echo mem > /sys/power/state"])
                 .status();
             if !status.is_ok_and(|s| s.success()) {
+                self.breadcrumb("suspend: kernel refused mem");
+                let _ = fs::write(&work_led, "1");
+                return false;
+            }
+            let remaining = deadline
+                .duration_since(SystemTime::now())
+                .unwrap_or(Duration::ZERO);
+            self.breadcrumb(&format!(
+                "suspend: kernel resumed with {} seconds remaining",
+                remaining.as_secs()
+            ));
+            // RTC resolution and scheduler latency are whole-second affairs. Treat a wake
+            // at the edge as the timer, not as a user wake (especially on slab models whose
+            // hallkey permanently reads open).
+            if remaining <= Duration::from_secs(1) {
                 let _ = fs::write(&work_led, "1");
                 return false;
             }
@@ -695,22 +648,25 @@ impl Platform for DevicePlatform {
     fn poweroff(&mut self) -> ! {
         self.breadcrumb("poweroff: reached slot, about to sync");
         let _ = Command::new("sync").status();
-        self.breadcrumb("poweroff: sync returned, trying AXP2202 rail cut");
-        match axp2202_poweroff_or_timeout() {
-            Ok(()) => {
-                // A successful PMIC write normally never reaches the end of this sleep.
-                std::thread::sleep(Duration::from_secs(1));
-                self.breadcrumb("poweroff: AXP2202 write returned but rails stayed up");
-            }
-            Err(e) => self.breadcrumb(&format!("poweroff: AXP2202 unavailable: {e}")),
+        self.breadcrumb("poweroff: handing shutdown to BaseOS");
+
+        // Follow the same ownership boundary as NextUI on H700: the frontend requests a
+        // shutdown and the OS performs service teardown, filesystem unmounts and the final
+        // PMIC cut.  Talking to the AXP2202 from this process races the kernel driver and can
+        // leave the machine alive on the dark shutdown frame.
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::unix::process::CommandExt;
+
+            let error = Command::new("/sbin/poweroff").exec();
+            self.breadcrumb(&format!(
+                "poweroff: /sbin/poweroff exec failed ({error}), trying /usr/sbin/poweroff"
+            ));
+            let error = Command::new("/usr/sbin/poweroff").exec();
+            self.breadcrumb(&format!("poweroff: poweroff exec failed ({error})"));
         }
-        self.breadcrumb("poweroff: about to signal init fallback");
-        let _ = Command::new("poweroff").status();
-        self.breadcrumb("poweroff: signalled init, waiting for it to take the machine down");
-        // The card is already flushed, so the worst case is a frontend BaseOS respawns
-        // rather than a device that hangs on a button that did nothing.
-        std::thread::sleep(Duration::from_secs(10));
-        std::process::exit(0)
+
+        std::process::exit(1)
     }
 
     fn root(&self) -> &Path {
@@ -788,23 +744,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn axp_i2c_devnode_reads_the_bus_out_of_the_sysfs_leaf() {
+    fn a_relative_rtc_alarm_is_armed_without_needing_a_valid_wall_clock() {
+        let d = tempfile::tempdir().unwrap();
+        fs::write(d.path().join("wakealarm"), "").unwrap();
+        fs::create_dir_all(d.path().join("device/power")).unwrap();
+        fs::write(d.path().join("device/power/wakeup"), "disabled").unwrap();
+        arm_wakealarm(Some(d.path()), Duration::from_secs(300)).unwrap();
         assert_eq!(
-            axp_i2c_devnode(Some(Path::new("/sys/bus/i2c/devices/5-0034"))),
-            PathBuf::from("/dev/i2c-5")
+            fs::read_to_string(d.path().join("wakealarm")).unwrap(),
+            "+300"
         );
         assert_eq!(
-            axp_i2c_devnode(None),
-            PathBuf::from("/dev/i2c-5"),
-            "the H700 fallback is bus 5"
+            fs::read_to_string(d.path().join("device/power/wakeup")).unwrap(),
+            "enabled"
         );
     }
 
     #[test]
-    fn a_relative_rtc_alarm_is_armed_without_needing_a_valid_wall_clock() {
+    fn a_fractional_alarm_rounds_up_past_the_deadline() {
         let d = tempfile::tempdir().unwrap();
         fs::write(d.path().join("wakealarm"), "").unwrap();
-        arm_wakealarm(Some(d.path()), Duration::from_secs(300)).unwrap();
+        arm_wakealarm(Some(d.path()), Duration::from_millis(299_001)).unwrap();
         assert_eq!(
             fs::read_to_string(d.path().join("wakealarm")).unwrap(),
             "+300"

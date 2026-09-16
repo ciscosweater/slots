@@ -17,9 +17,11 @@
 /.idea/
 /target-device
 /target-device-cross
+/target-device-cross-release
 /target-device-release
 /target-verify
 /dist-device
+/slots-v*/
 /slot-v*/
 /*.zip
 /*.sha256

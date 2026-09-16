@@ -74,6 +74,7 @@ fi
 
 required_directories=(
 	BIOS
+	Cartridges
 	Games
 	Labels
 	Saves

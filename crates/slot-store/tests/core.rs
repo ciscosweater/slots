@@ -39,6 +39,7 @@ fn gb_and_gbc_always_resolve_to_gambatte() {
         let cart = Cart {
             stem: "Tetris".into(),
             rom: "Games/Tetris.gb".into(),
+            artwork: None,
             label: None,
             title: "TETRIS".into(),
             code: String::new(),

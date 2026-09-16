@@ -1,6 +1,6 @@
 use slot_power::{Battery, Charge};
 use slot_store::{Cart, Platform};
-use slot_ui::{draw_footer, label_colour, Draw, Printed, Shelf, TexId, CART_W, OUT_W};
+use slot_ui::{draw_footer, label_colour, Draw, Printed, Shelf, TexId, CART_H, CART_W, OUT_W};
 
 fn shelf_with(n: usize) -> Shelf {
     Shelf::new(
@@ -8,6 +8,7 @@ fn shelf_with(n: usize) -> Shelf {
             .map(|i| Cart {
                 stem: format!("Game {i}"),
                 rom: format!("Games/Game {i}.gba").into(),
+                artwork: None,
                 label: None,
                 code: String::new(),
                 title: format!("GAME {i}"),
@@ -45,6 +46,23 @@ fn a_missing_face_can_use_a_shape_placeholder_instead_of_a_square() {
 }
 
 #[test]
+fn a_complete_artwork_face_keeps_its_width_and_natural_height() {
+    let mut shelf = shelf_with(1);
+    shelf.set_face_with_size("Game 0", TexId::from_raw(88), (CART_W, 142));
+    let mut out = Vec::new();
+    shelf.draw_row(None, 0.0, 0.0, 1.0, &mut out);
+    assert!(
+        out.iter().any(|draw| matches!(draw,
+            slot_ui::Draw::Tex { tex, w, h, .. }
+                if *tex == TexId::from_raw(88)
+                    && (*w - CART_W as f32).abs() < 0.01
+                    && (*h - 142.0).abs() < 0.01
+        )),
+        "the uploaded artwork was stretched to the generated shell size: {out:?}"
+    );
+}
+
+#[test]
 fn uploading_a_face_does_not_restart_shelf_motion_or_repeat() {
     let mut shelf = shelf_with(5);
     shelf.hold_right(0);
@@ -72,6 +90,7 @@ fn categories_cycle_and_filter_by_platform() {
         .map(|(i, platform)| Cart {
             stem: format!("Game {i}"),
             rom: format!("Games/Game {i}").into(),
+            artwork: None,
             label: None,
             code: String::new(),
             title: format!("GAME {i}"),
@@ -228,6 +247,7 @@ fn shoulders_jump_between_initial_letters_and_wrap() {
         .map(|stem| Cart {
             stem: stem.into(),
             rom: format!("Games/{stem}.gba").into(),
+            artwork: None,
             label: None,
             code: String::new(),
             title: stem.to_uppercase(),
@@ -369,6 +389,7 @@ fn the_selected_gb_cart_is_vertically_centred() {
     let gb_cart = Cart {
         stem: "Red".into(),
         rom: "Games/Red.gb".into(),
+        artwork: None,
         label: None,
         code: String::new(),
         title: "POKEMON RED".into(),
@@ -703,6 +724,39 @@ fn dim_darkens_a_side_carts_face_and_not_the_black_under_it() {
 }
 
 #[test]
+fn complete_artwork_does_not_draw_the_shell_shadow() {
+    let carts = (0..3)
+        .map(|i| Cart {
+            stem: format!("Game {i}"),
+            rom: format!("Games/Game {i}.gba").into(),
+            artwork: Some(format!("Cartridges/Game {i}.png").into()),
+            label: None,
+            code: String::new(),
+            title: format!("GAME {i}"),
+            platform: slot_store::Platform::Gba,
+        })
+        .collect();
+    let mut s = Shelf::new(carts);
+    let shadow = TexId::from_raw(99);
+    s.set_shadow(shadow);
+    for (i, raw) in (0..3).zip(10..13) {
+        s.set_face_with_size_and_artwork(
+            &format!("Game {i}"),
+            TexId::from_raw(raw),
+            (CART_W, CART_H),
+            true,
+        );
+    }
+    let mut out = Vec::new();
+    s.draw_row(Some("Game 0"), 0.0, 0.3, 1.0, &mut out);
+    assert!(
+        !out.iter()
+            .any(|d| matches!(d, Draw::Tex { tex, .. } if *tex == shadow)),
+        "complete artwork drew the shell shadow: {out:?}"
+    );
+}
+
+#[test]
 fn a_favorite_cart_wears_the_mark_on_its_label() {
     use std::collections::BTreeSet;
     let mut s = shelf_with(1);
@@ -759,4 +813,3 @@ fn recents_is_capped_at_ten_items() {
     assert_eq!(s.category(), 1);
     assert_eq!(s.carts.len(), 10, "recents shelf should contain at most 10 items");
 }
-

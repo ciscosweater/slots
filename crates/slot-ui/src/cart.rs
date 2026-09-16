@@ -69,8 +69,23 @@ pub fn cart_shadow() -> CartFace {
 }
 
 pub fn cart_face(cart: &Cart) -> CartFace {
+    cart_face_with_artwork(cart).0
+}
+
+/// Builds a shelf face and reports whether it came from a decodable complete-artwork image.
+/// Keeping this result beside the face lets the shelf use the generated shadow and label badge
+/// when a file exists but is malformed, rather than treating the path's mere presence as proof
+/// that the fallback was not needed.
+pub fn cart_face_with_artwork(cart: &Cart) -> (CartFace, bool) {
+    let w = match cart.platform {
+        slot_store::Platform::Gba => CART_W,
+        slot_store::Platform::Gb | slot_store::Platform::Gbc => GB_CART_W,
+    };
+    if let Some((rgba, w, h)) = cart.artwork.as_deref().and_then(|p| art::fit_width(p, w)) {
+        return (CartFace { rgba, w, h }, true);
+    }
     if cart.platform != slot_store::Platform::Gba {
-        return gb_cart_face(cart);
+        return (gb_cart_face(cart), false);
     }
     let shell = shell_for(&cart.code);
     let mut face = shell_face(&shell);
@@ -86,7 +101,7 @@ pub fn cart_face(cart: &Cart) -> CartFace {
     recess_label(&mut face, &shell);
     paste_label(&mut face, &label);
     clip_to_silhouette(&mut face);
-    face
+    (face, false)
 }
 
 pub fn cart_shadow_for(platform: slot_store::Platform) -> CartFace {

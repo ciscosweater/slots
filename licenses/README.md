@@ -1,7 +1,9 @@
 # Third-party licenses
 
-`slot` itself is MIT (see the repo's top-level `LICENSE`). The release also distributes three
-compiled libretro cores it did not write:
+The `slots` frontend is MIT (see the repo's top-level `LICENSE`); its device executable remains
+named `slot` for compatibility. This repository is a fork of the original
+[`slot`](https://github.com/BrandonKowalski/slot) by Brandon T. Kowalski. The release also
+distributes three compiled libretro cores it did not write:
 
 | Core            | Source                                   | License  | Text here                |
 |-----------------|------------------------------------------|----------|---------------------------|
@@ -9,8 +11,8 @@ compiled libretro cores it did not write:
 | `mgba_libretro`  | https://github.com/libretro/mgba        | MPL-2.0  | `mgba-MPL-2.0.txt`        |
 | `gambatte_libretro` | https://github.com/libretro/gambatte-libretro | GPL-2.0 | `gambatte-GPL-2.0.txt` |
 
-gpSP was originally written by Gilead "Exophase" Kutnick; the libretro core above is the
-actively maintained fork slot's fetch script pulls from. mGBA is by Jeffrey "endrift" Pfau.
+gpSP was originally written by Gilead "Exophase" Kutnick; this repository fetches the core above
+from the actively maintained libretro fork. mGBA is by Jeffrey "endrift" Pfau.
 libretro/mgba is libretro's fork of https://github.com/mgba-emu/mgba.
 Gambatte is built from the pinned libretro fork by `cores/gambatte/build.sh`; its exact source
 archive and revision metadata ship beside the binary as `gambatte-<commit>.tar.gz` and
@@ -19,9 +21,13 @@ archive and revision metadata ship beside the binary as `gambatte-<commit>.tar.g
 gpSP is conveyed unmodified, in the executable form the libretro buildbot publishes, fetched by
 `taskfile.yml`'s `core:gpsp`. mGBA is built by this repo instead: `cores/mgba/build.sh`, run by
 `core:device` and `core:mgba:host`, builds libretro/mgba at a pinned commit with the patches in
-`cores/mgba/` applied. `slot` never links against either. `taskfile.yml`'s `dist:device` task
+`cores/mgba/` applied. The frontend never links against either. `taskfile.yml`'s `dist:device` task
 copies this directory into the shipped tree alongside the cores it licenses, so a card built
 from this repo carries the same notice the release zip does.
+
+The GB and GBC screen overlay artwork included in `jeltron/GB_DMG.png` and
+`jeltron/GB_Color.png` comes from [Jeltr0n's Retro-Overlays](https://github.com/Jeltr0n/Retro-Overlays).
+Please consult that repository for the original artwork's terms.
 
 - **MPL-2.0 (mGBA): this build is modified, and the modifications ship in this directory.**
   The core is libretro/mgba at the commit recorded in `mgba-<commit>.meta`, with every patch

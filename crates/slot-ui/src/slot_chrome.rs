@@ -105,6 +105,9 @@ const CREEP: f32 = 0.03;
 pub struct SlotChrome<'a> {
     pub cart: &'a Cart,
     pub face: Option<TexId>,
+    /// Actual uploaded face dimensions. Complete artwork keeps its fitted aspect ratio, while
+    /// `None` preserves the platform geometry used by the generated fallback.
+    pub face_size: Option<(u32, u32)>,
     /// 0.0 standing where the shelf left it, 1.0 swallowed by the mouth.
     pub seat: f32,
     /// The refusal symbol and how far into its fade it is. A cart that will not seat says so
@@ -144,14 +147,21 @@ impl SlotChrome<'_> {
         // on the way through rather than sliding behind a painted bar.
         draw_slot_back(chrome, out);
 
-        let (cart_w, cart_h) = match self.cart.platform {
+        let (base_w, base_h) = match self.cart.platform {
             slot_store::Platform::Gba => (CART_W as f32, CART_H as f32),
             slot_store::Platform::Gb | slot_store::Platform::Gbc => {
                 (GB_CART_W as f32, GB_CART_H as f32)
             }
         };
+        let (cart_w, cart_h) = self
+            .face_size
+            .map(|(w, h)| (w as f32, h as f32))
+            .unwrap_or((base_w, base_h));
         let rest_x = (OUT_W as f32 - cart_w) / 2.0;
-        let rest_y = (OUT_H as f32 - cart_h) / 2.0;
+        // The shelf anchors every cart by the platform shell's foot. Complete artwork may have
+        // a different height, so centring it on the panel here would make it jump on insert.
+        let foot_y = (OUT_H as f32 + base_h) / 2.0;
+        let rest_y = foot_y - cart_h;
         let catch_at = (LIP_Y - cart_h - rest_y) / (SEATED_Y - rest_y);
 
         let x = rest_x;

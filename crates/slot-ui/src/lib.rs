@@ -33,9 +33,10 @@ pub use board::{
     SOCKET_U, SOCKET_V, SOCKET_W, TURN_PAD,
 };
 pub use cart::{
-    cart_face, cart_placeholder_for, cart_shadow, cart_shadow_for, clean_label, label_colour,
-    label_panel, label_tags, label_text, CartFace, CART_H, CART_W, GB_CART_H, GB_CART_W,
-    GB_LABEL_H, GB_LABEL_W, GB_LABEL_X, GB_LABEL_Y, LABEL_H, LABEL_W, LABEL_X, LABEL_Y,
+    cart_face, cart_face_with_artwork, cart_placeholder_for, cart_shadow, cart_shadow_for,
+    clean_label, label_colour, label_panel, label_tags, label_text, CartFace, CART_H, CART_W,
+    GB_CART_H, GB_CART_W, GB_LABEL_H, GB_LABEL_W, GB_LABEL_X, GB_LABEL_Y, LABEL_H, LABEL_W,
+    LABEL_X, LABEL_Y,
 };
 pub use clock::{clock_label, hhmm, set_clock_hint_face, ClockPicker, Field};
 pub use draw::{Draw, TexId, OUT_H, OUT_W};

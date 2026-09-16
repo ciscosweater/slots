@@ -84,13 +84,21 @@ fn the_core_is_told_the_saves_folder_too() {
     assert_eq!(core.reported_save_dir(), saves.to_string_lossy());
 }
 
-/// A card that has never held slot. has none of the six folders, and every write path
+/// A card that has never held slot. has none of the content folders, and every write path
 /// below assumes its own is already there.
 #[test]
-fn boot_creates_the_six_content_folders() {
+fn boot_creates_the_content_folders() {
     let d = tempdir().unwrap();
     let _ = slot::app::App::boot(d.path());
-    for sub in ["BIOS", "Games", "Labels", "Saves", "States", "System"] {
+    for sub in [
+        "BIOS",
+        "Cartridges",
+        "Games",
+        "Labels",
+        "Saves",
+        "States",
+        "System",
+    ] {
         assert!(d.path().join(sub).is_dir(), "{sub} was not created");
     }
 }

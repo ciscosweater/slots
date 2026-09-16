@@ -39,6 +39,7 @@ fn app_with_carts(stems: &[&str]) -> App {
             .map(|stem| Cart {
                 stem: (*stem).to_string(),
                 rom: format!("Games/{stem}.gba").into(),
+                artwork: None,
                 label: None,
                 code: String::new(),
                 title: stem.to_uppercase(),
@@ -740,6 +741,7 @@ fn gb_and_gbc_lock_the_lcd_effect_off_without_changing_the_gba_preference() {
                 } else {
                     "Games/Tetris.gbc".into()
                 },
+                artwork: None,
                 label: None,
                 code: String::new(),
                 title: "TETRIS".into(),
@@ -748,6 +750,7 @@ fn gb_and_gbc_lock_the_lcd_effect_off_without_changing_the_gba_preference() {
             Cart {
                 stem: "Zzz".into(),
                 rom: "Games/Zzz.gba".into(),
+                artwork: None,
                 label: None,
                 code: String::new(),
                 title: "ZZZ".into(),
@@ -1724,6 +1727,32 @@ fn the_open_starts_with_the_shelf_face_while_its_faces_are_built() {
     );
 }
 
+#[test]
+fn the_open_preserves_complete_artwork_aspect_ratio() {
+    let (_d, mut app) = on_shelf(&["Emerald", "Zzz"]);
+    app.set_face_with_size_and_artwork("Emerald", TexId::from_raw(950), (CART_W, 142), true);
+    let f = fake_boot_faces(&mut app);
+    app.apply(Action::GbaDown(Btn::Start));
+    app.set_core_board_faces_with_size(f.board, f.lid, (CART_W, 142));
+    let_it_open(&mut app);
+
+    let (rest, turn) = lid_at(1.0);
+    let pad = TURN_PAD as f32 * rest.w / CART_W as f32;
+    let h = rest.w * 142.0 / CART_W as f32;
+    let want = [
+        rest.x - pad,
+        rest.y + rest.h - h - pad,
+        rest.w + 2.0 * pad,
+        h + 2.0 * pad,
+    ];
+    let (_, lid, lid_turn) = turned_at(&frame(&app), f.lid).expect("no artwork lid");
+    assert!(
+        near(lid, want),
+        "artwork lid was resized incorrectly: {lid:?}"
+    );
+    assert_eq!(lid_turn, turn);
+}
+
 /// A face that never comes cannot freeze the picker. The only detailed faces on the GPU are the
 /// other cart's, and the fallback open never borrows them.
 #[test]
@@ -1948,5 +1977,3 @@ fn r2_rapid_taps_on_shelf_advance_category_without_swallowing() {
     s.feed([RawEvent::Down(Btn::R2), RawEvent::Up(Btn::R2)], 400);
     assert_eq!(s.app().shelf_category(), 1);
 }
-
-

@@ -254,9 +254,9 @@ pub struct StubPlatform {
     /// How many times `set_led` was called. `led` alone cannot catch a write that repeats the
     /// same state every tick forever: the value does not move, only the count would.
     led_writes: Arc<AtomicUsize>,
-    /// `true` stands in for a board that woke from Super Standby with the lid open. The
-    /// default is `false`: no suspend, so a doze timeout cuts the rails, which is the host
-    /// and the fallback the device uses when `echo mem` fails.
+    /// Whether the optional kernel-suspend hook would report success. The frontend's lid
+    /// timeout deliberately does not use it; the field remains for testing that the reliable
+    /// userspace standby path is independent of platform suspend support.
     suspend: bool,
 }
 
@@ -286,8 +286,8 @@ pub fn panel(root: &Path, timeout: Duration) -> (Power, Arc<AtomicU8>) {
     (power, backlight)
 }
 
-/// Same as `panel`, but Super Standby returns: the lid opened (or POWER with the lid open).
-/// `on_doze_timeout` must wake rather than cut the rails.
+/// Same as `panel`, but the optional kernel-suspend hook reports success. The app should still
+/// enter userspace standby rather than depending on that hook.
 pub fn panel_that_wakes(root: &Path, timeout: Duration) -> Power {
     let (power, _, _, _, _, _, _) = rig_with_suspend(root, timeout, CLOCK_IS_SET, 0, 50, true);
     power
@@ -305,6 +305,13 @@ pub fn panel_with_battery(
 ) -> (Power, Arc<AtomicU8>) {
     let (power, backlight, _, _, _) = rig_with_charge(root, timeout, CLOCK_IS_SET, charge, percent);
     (power, backlight)
+}
+
+/// The same panel rig, with its charge cell returned so a test can plug or unplug it while a
+/// doze is running. In the stub, the `Charging` code also represents physical charger presence.
+pub fn panel_with_charge(root: &Path, timeout: Duration, charge: u8) -> (Power, Arc<AtomicU8>) {
+    let (power, _, _, charge, _) = rig_with_charge(root, timeout, CLOCK_IS_SET, charge, 50);
+    (power, charge)
 }
 
 fn rig(root: &Path, timeout: Duration, secs: i64) -> (Power, Arc<AtomicU8>, Clock) {
@@ -434,6 +441,10 @@ impl Platform for StubPlatform {
             3 => Charge::Full,
             _ => Charge::Unknown,
         }
+    }
+
+    fn charger_present(&self) -> bool {
+        self.charge.load(Ordering::Relaxed) == 2
     }
 
     fn battery(&self) -> Option<Battery> {

@@ -6,7 +6,7 @@ use tempfile::tempdir;
 /// `--init-root`, so `root::ensure` is the only implementation of it. This is what keeps a
 /// card the app cannot read from being assembled in the first place.
 #[test]
-fn ensure_creates_the_six_folders_and_nothing_else() {
+fn ensure_creates_the_content_folders_and_nothing_else() {
     let d = tempdir().unwrap();
     let out = d.path().join("dist");
     slot::root::ensure(&out);
@@ -35,7 +35,7 @@ fn ensure_leaves_existing_content_alone() {
 }
 
 #[test]
-fn a_booted_app_root_has_the_same_six_folders() {
+fn a_booted_app_root_has_the_same_content_folders() {
     let d = common::tmp_root_with_carts(&["Emerald"]);
     for name in slot::root::DIRS {
         assert!(d.path().join(name).is_dir(), "app root is missing {name}");

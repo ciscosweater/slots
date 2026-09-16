@@ -80,9 +80,9 @@ pub trait Platform: Send {
     /// already taken the louder.
     fn set_rumble(&mut self, strength: u16);
 
-    /// Suspend-to-RAM and return after wake. `false` means unsupported, failed, or the Super
-    /// Standby window ran out with the lid still shut, so the caller can cut the rails.
-    /// resume.state is already on the card from the doze that led here.
+    /// Optional platform suspend-to-RAM hook for callers that explicitly use kernel suspend.
+    /// The frontend's lid timeout uses userspace standby instead, because that keeps POWER and
+    /// the second shutdown deadline observable on H700 BaseOS installations.
     fn suspend(&mut self) -> bool {
         false
     }
@@ -97,10 +97,10 @@ pub trait Platform: Send {
 
 /// Lid close and lid wake are one code path, parameterised.
 ///
-/// The lid's dark wait becomes H700 Super Standby after five minutes: this board suspends
-/// well, under 45 mA. Five more minutes in that state with the lid still shut cuts the
-/// rails; resume.state was written when the panel went dark. Open the lid or press POWER
-/// inside that window and you're back in the game. Holding POWER is still off.
+/// The lid's dark wait becomes userspace standby after five minutes. Five more minutes in that
+/// state with the lid still shut cuts the rails; resume.state was written when the panel went
+/// dark. Open the lid or press POWER inside that window and you're back in the game. Holding
+/// POWER is still off.
 pub trait LidPolicy {
     fn on_close(&mut self);
     fn on_open(&mut self);

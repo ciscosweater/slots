@@ -363,6 +363,9 @@ pub struct App {
     /// so it can be turned. Rebuilt by the frontend when the highlighted cart changes.
     core_board_face: Option<TexId>,
     core_lid_face: Option<TexId>,
+    /// Unpadded artwork dimensions for the open lid. Complete artwork is fitted by width and can
+    /// be taller than the generated GBA shell, so the turned quad must keep that aspect ratio.
+    core_lid_size: Option<(u32, u32)>,
     /// The cart the uploaded board and lid were built for.
     core_faces_stem: Option<String>,
     /// In `Core::ALL` order: each socket empty, and the chip seated and named in each. Uploaded
@@ -499,6 +502,10 @@ pub struct App {
     /// `None` in unit tests, where there is no panel to darken and no battery to run out.
     power: Option<Power>,
     dozed_at: Millis,
+    /// Second half of a dark session. The kernel stays awake so POWER and the shutdown
+    /// deadline remain reliable, but the device loop stops rendering and drops to a 5 Hz
+    /// input/timer poll, matching NextUI's userspace light-sleep strategy.
+    standby: bool,
     /// When the state next has to be on the card. Moved by every resume write, not only by
     /// the autosave itself.
     autosave_at: Millis,
@@ -536,6 +543,7 @@ impl App {
             core_picker: None,
             core_board_face: None,
             core_lid_face: None,
+            core_lid_size: None,
             core_faces_stem: None,
             core_socket_faces: Vec::new(),
             core_chip_faces: Vec::new(),
@@ -596,6 +604,7 @@ impl App {
             clock: 0.0,
             power: None,
             dozed_at: 0,
+            standby: false,
             autosave_at: AUTOSAVE_MS,
             battery_at: BATTERY_POLL_MS,
             charge_at: CHARGE_POLL_MS,
@@ -799,6 +808,21 @@ impl App {
 
     pub fn set_face(&mut self, stem: &str, face: TexId) {
         self.shelf.set_face(stem, face);
+    }
+
+    pub fn set_face_with_size(&mut self, stem: &str, face: TexId, size: (u32, u32)) {
+        self.shelf.set_face_with_size(stem, face, size);
+    }
+
+    pub fn set_face_with_size_and_artwork(
+        &mut self,
+        stem: &str,
+        face: TexId,
+        size: (u32, u32),
+        complete_artwork: bool,
+    ) {
+        self.shelf
+            .set_face_with_size_and_artwork(stem, face, size, complete_artwork);
     }
 
     pub fn set_shelf_caption(&mut self, stem: String, caption: (Printed, Printed)) {
@@ -1712,8 +1736,15 @@ impl App {
     /// Jumps the clock without advancing an animation. The autosave and the doze timeout
     /// are minutes apart, which is further than a test wants to walk a frame at a time.
     pub fn tick_ms(&mut self, now: Millis) {
-        self.clock = self.clock.max(now as f64);
+        self.set_clock_ms(now);
         self.timers();
+    }
+
+    /// Moves the app clock to an absolute wall-clock reading without running the timer pass.
+    /// Standby uses this before `Session::update`, whose normal timer pass must remain the only
+    /// one per loop iteration.
+    pub(crate) fn set_clock_ms(&mut self, now: Millis) {
+        self.clock = self.clock.max(now as f64);
     }
 
     /// Everything the clock alone drives. The play hold is the one thing here the user did
@@ -1726,7 +1757,12 @@ impl App {
         if let Some(p) = &mut self.polaroids {
             p.set_undo(offer);
         }
-        if self.doze_expired() {
+        // Charger and USB-host state can change while the second stage is running. Poll it on
+        // every timer pass so inserting a cable leaves standby promptly instead of waiting for
+        // the five-minute deadline that entered it.
+        if self.standby && self.doze_kept_awake() {
+            self.leave_standby();
+        } else if self.doze_expired() {
             self.on_doze_timeout();
         }
         if self.now() >= self.autosave_at {
@@ -1785,6 +1821,11 @@ impl App {
     /// this is the only branch pair — `Low` and `Running` — a write ever leaves this function
     /// with; a state repeated from the previous second returns before touching the platform.
     fn set_led(&mut self, state: LedState) {
+        // Standby is still a live process, so the charge tick continues to run. Keep its
+        // indicator dark until a wake or a cable transition explicitly leaves standby.
+        if self.standby && state != LedState::Off {
+            return;
+        }
         // A shutdown darkens the case and nothing lights it again. The fast tick recomputes
         // `led_state` from the gauge every second and knows nothing about a shutdown in
         // progress, so a charge tick landing inside the window between the choice and
@@ -2082,13 +2123,14 @@ impl App {
     }
 
     fn chrome(&self, stem: &str, dim: f32, out: &mut Vec<Draw>) {
-        let Some((cart, face)) = self.shelf.find(stem) else {
+        let Some((cart, face, face_size)) = self.shelf.find_with_size(stem) else {
             return;
         };
         let alpha = self.alert_alpha();
         SlotChrome {
             cart,
             face,
+            face_size: Some(face_size),
             seat: self.seat(),
             alert: self.alert_face.filter(|_| alpha > 0.0).map(|t| (t, alpha)),
             dim,
@@ -2133,6 +2175,19 @@ impl App {
     pub fn set_core_board_faces(&mut self, board: TexId, lid: TexId) {
         self.core_board_face = Some(board);
         self.core_lid_face = Some(lid);
+        self.core_lid_size = None;
+        self.core_faces_stem = self.selected_stem().map(str::to_string);
+    }
+
+    pub fn set_core_board_faces_with_size(
+        &mut self,
+        board: TexId,
+        lid: TexId,
+        artwork_size: (u32, u32),
+    ) {
+        self.core_board_face = Some(board);
+        self.core_lid_face = Some(lid);
+        self.core_lid_size = Some(artwork_size);
         self.core_faces_stem = self.selected_stem().map(str::to_string);
     }
 
@@ -2346,7 +2401,18 @@ impl App {
             // the shelf, and a cart there does not fade.
             if let Some(tex) = self.core_lid_face {
                 let (lid, turn) = lid_at(progress);
-                let at = grown(lid, TURN_PAD as f32 * lid.w / CART_W as f32);
+                let at = if let Some((art_w, art_h)) = self.core_lid_size {
+                    let pad = TURN_PAD as f32 * lid.w / CART_W as f32;
+                    let h = lid.w * art_h as f32 / art_w as f32;
+                    Placed {
+                        x: lid.x - pad,
+                        y: lid.y + lid.h - h - pad,
+                        w: lid.w + 2.0 * pad,
+                        h: h + 2.0 * pad,
+                    }
+                } else {
+                    grown(lid, TURN_PAD as f32 * lid.w / CART_W as f32)
+                };
                 out.push(Draw::Turned {
                     x: at.x,
                     y: at.y,
@@ -2357,19 +2423,21 @@ impl App {
                     turn,
                 });
             }
-        } else if let Some((_, Some(tex))) =
-            self.selected_stem().and_then(|stem| self.shelf.find(stem))
+        } else if let Some((_, Some(tex), (fw, fh))) = self
+            .selected_stem()
+            .and_then(|stem| self.shelf.find_with_size(stem))
         {
             // The cap ran out before this cart's own lid arrived. The shelf's own face for the
             // cart is the only thing left to lift — not `core_lid_face`, which would still be
             // whatever cart the worker built last — and it is drawn unpadded: unlike a face
             // built for the picker, the shelf's face carries no transparent border to grow into.
             let (lid, turn) = lid_at(progress);
+            let h = lid.w * fh as f32 / fw as f32;
             out.push(Draw::Turned {
                 x: lid.x,
-                y: lid.y,
+                y: lid.y + lid.h - h,
                 w: lid.w,
-                h: lid.h,
+                h,
                 tex,
                 alpha: 1.0,
                 turn,
@@ -2657,6 +2725,7 @@ impl App {
         self.polaroids = None;
         self.phase = Phase::Doze { cart };
         self.dozed_at = self.now();
+        self.standby = false;
         if let Some(power) = &mut self.power {
             power.on_close();
         }
@@ -2670,42 +2739,57 @@ impl App {
             Some(cart) => Phase::Playing { cart },
             None => Phase::Shelf,
         };
+        self.standby = false;
         if let Some(power) = &mut self.power {
             power.on_open();
         }
     }
 
-    /// Escalate the dark-panel grace period into H700 Super Standby. External power keeps
-    /// the unit in screen-off instead: charging and an enumerated debug cable are deliberate
-    /// uses, not abandonment. A successful suspend that returns (lid opened, or POWER with
-    /// the lid open) wakes back into the game. Five minutes in Super Standby with the lid
-    /// still shut, a failed suspend, or a platform without one, cuts the rails; resume.state
-    /// is already on the card from `doze`.
+    /// Enter low-frequency userspace standby after five minutes, then cut the rails after
+    /// another five. H700's suspend-to-RAM has no working timed wake source, so only this
+    /// NextUI-style light sleep can retain both POWER wake and an automatic deadline.
     pub fn on_doze_timeout(&mut self) {
-        if !matches!(self.phase, Phase::Doze { .. }) {
+        if self.powering_off || !matches!(self.phase, Phase::Doze { .. }) {
             return;
         }
-        if let Some(power) = &mut self.power {
-            if power.externally_powered() || power.usb_host() {
-                self.dozed_at = self.now();
-                return;
-            }
-            if power.suspend() {
-                self.wake();
-                return;
-            }
+        if self.doze_kept_awake() {
+            self.leave_standby();
+            return;
+        }
+        if self.power.is_some() && !self.standby {
+            self.standby = true;
+            self.dozed_at = self.now();
+            self.set_led(LedState::Off);
+            return;
         }
         self.begin_power_off();
     }
 
-    /// True on the frame that may cross the kernel suspend boundary. `Session` uses this
-    /// before `update` so ALSA is closed while it is still healthy, then reopened after wake.
+    pub fn standby(&self) -> bool {
+        self.standby && matches!(self.phase, Phase::Doze { .. })
+    }
+
+    fn doze_kept_awake(&self) -> bool {
+        self.power
+            .as_ref()
+            .is_some_and(|power| power.externally_powered() || power.usb_host())
+    }
+
+    fn leave_standby(&mut self) {
+        // A cable can arrive after the low-frequency stage already started. Return to the
+        // ordinary doze loop so unplugging it gets a fresh grace period rather than cutting the
+        // rails on the very next poll.
+        let was_standby = self.standby;
+        self.standby = false;
+        self.dozed_at = self.now();
+        if was_standby {
+            self.set_led(self.led_state());
+        }
+    }
+
+    /// There is no kernel suspend boundary: the device loop throttles userspace instead.
     pub fn suspending_now(&self) -> bool {
-        self.doze_expired()
-            && self
-                .power
-                .as_ref()
-                .is_some_and(|p| !p.externally_powered() && !p.usb_host())
+        false
     }
 
     /// The lid's twin, and the only one of the two the device is certain to see. A tap
@@ -3003,6 +3087,10 @@ impl App {
             self.end_link();
         }
         self.close_game_menu();
+        // Leave the low-frequency loop before showing the shutdown screen. Otherwise the device
+        // loop would keep skipping render for the whole three-second presentation window and go
+        // straight from standby to poweroff without ever displaying the screen.
+        self.standby = false;
         // PowerPress normally flushed at the first edge, but every other route into this
         // chokepoint (critical battery and doze timeout included) gets the same durability.
         // Repeating a flush is harmless and keeps PowerHold correct when exercised directly.

@@ -12,8 +12,8 @@ Usage: scripts/package-release.sh VERSION [options]
 Build, verify, and package a H700 release. VERSION may be written as 1.0.1
 or v1.0.1. The resulting files are written to dist/releases by default:
 
-  slot-vVERSION-h700.zip
-  slot-vVERSION-h700.zip.sha256
+  slots-vVERSION-h700.zip
+  slots-vVERSION-h700.zip.sha256
 
 Options:
   --tree DIR          Package an existing device tree instead of building it.
@@ -109,7 +109,7 @@ fi
 
 "$script_dir/verify-release.sh" "$tree"
 
-package_name="slot-$tag"
+package_name="slots-$tag"
 archive_name="$package_name-h700.zip"
 checksum_name="$archive_name.sha256"
 package_root="$tmp/$package_name"

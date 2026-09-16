@@ -14,6 +14,7 @@ fn render_board() {
     let face = board_face(&Cart {
         stem: "Pokemon - Emerald Version (USA, Europe)".into(),
         rom: "Games/Emerald.gba".into(),
+        artwork: None,
         label: None,
         code: "BPEE".into(),
         title: "POKEMON EMER".into(),

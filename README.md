@@ -1,81 +1,144 @@
-# slot.
+# slots
 
-A bespoke GBA, Game Boy and Game Boy Color frontend for the Anbernic RG SP.
+`slots` is a community-maintained fork of [`slot`](https://github.com/BrandonKowalski/slot),
+the original focused frontend for the Anbernic RG SP. The original project supports only Game
+Boy Advance; this fork keeps that foundation and adds Game Boy and Game Boy Color support.
 
-## Controls
+This is not an official upstream release. The original author and project are credited below,
+and the original `slot` name is intentionally kept for the executable and device paths so an
+existing installation can be updated without changing its launcher contract.
 
-### Anywhere
+> [!IMPORTANT]
+> This fork has only been tested on the Anbernic RG SP. I do not know how it behaves on other
+> devices or on other operating-system versions. Please treat other hardware as untested.
 
-| Input                       | Action                      |
-|-----------------------------|-----------------------------|
-| `SELECT` + `Up` / `Down`    | Adjust brightness           |
-| `SELECT` + `Left` / `Right` | Adjust blue light           |
-| `VOL+` / `VOL-`             | Change the volume           |
-| `VOL+` + `VOL-`             | Mute, remembering the level |
-| Hold `POWER`                | Save and power off          |
+## Features
 
-### On the carousel
+- GBA, GB and GBC ROMs in one carousel.
+- mGBA as the default GBA core, with optional per-game gpSP selection.
+- Gambatte for GB and GBC, with a PixelShift BGB palette for GB and accurate GBC colour correction.
+- Platform filters: `ALL`, `REC`, `GBA`, `GB` and `GBC`.
+- Favorites, recent games, save-state rings, rewind, fast-forward and lid-aware standby.
+- Optional custom cartridge artwork, labels, wallpapers, BIOS files and colour themes.
+- GBA link support through gpSP between two RG SP devices.
 
-| Input     | Action                              |
-|-----------|-------------------------------------|
-| `L` / `R` | Browse the carousel                 |
-| `L1` / `R1` | Jump to the previous / next letter |
-| `L2` / `R2` | Previous / next platform category (`ALL`, `REC`, `GBA`, `GB`, `GBC`) |
-| `SELECT`  | Toggle between Pixelify and the original font |
-| `Y`       | Add or remove the game from favorites |
-| `X`       | Toggle the LCD effect on or off        |
-| Tap `A`   | Resume the last save state          |
-| Hold `A`  | Start the game fresh                |
-| `MENU`    | Open the about screen. `L` / `R` turns it over for the control map; hold `A` sets the clock |
-| `START`   | Choose which emulator runs the cart |
+## Download
 
-### In game
+Download the latest device bundle from this repository's [GitHub Releases](../../releases/latest).
+The release contains the frontend, all three libretro cores, the BaseOS launcher and the
+required third-party license/source material. It does **not** contain ROMs or BIOS files.
 
-| Input                     | Action                                                                                           |
-|---------------------------|--------------------------------------------------------------------------------------------------|
-| Hold `MENU`               | Save state, eject the cart, back to the carousel                                                 |
-| Double tap `MENU`         | Save state switcher: pick one to load or delete, or undo the last save or load within 30 seconds |
-| `SELECT` + `MENU`         | Link with another RG SP. gpSP carts only                                                         |
-| `SELECT` + `R1`           | Save state                                                                                       |
-| `SELECT` + `L1`           | Load the most recent save state                                                                  |
-| Hold `L2`                 | Rewind                                                                                           |
-| Hold `R2`                 | Fast-forward                                                                                     |
-| Double tap `R2`           | Lock fast-forward on. Press again to unlock                                                      |
-| `X`                       | Toggle the LCD effect on or off                                                                  |
+## Installing with BaseOS
 
-A `/` means either one. A `+` means both together.
+The release tree currently targets **BaseOS** on the RG SP. You will need:
 
-Closing the lid writes a save state and turns off the display. Open it again during the
-five-minute grace period and you're back in the game. After that the RG SP enters H700
-Super Standby. Open the lid or press POWER within five minutes of that and you're back
-in the game. A wake while the lid is still shut suspends again, until those five minutes
-run out; then slot powers off. The next boot resumes from the same save state.
-On a platform where suspend is unavailable or fails, slot powers off as soon as the
-dark-panel grace ends.
+- an RG SP;
+- one or two microSD cards and a card reader;
+- the matching [BaseOS image](https://github.com/pvaibhav/BaseOS/releases/latest);
+- the latest release ZIP from this repository; and
+- ROMs and optional BIOS files that you legally obtained or dumped yourself.
 
-External power keeps a dark unit out of deep sleep, and an enumerated USB debugging session
-does the same. Holding POWER still requests a real shutdown, including while charging.
+Flashing an image normally erases the target card. Back up anything important before starting.
 
-## SD Card Layout
+### One-card setup: BaseOS on TF1
+
+1. Flash the BaseOS image to the card used in **TF1**.
+2. Boot the RG SP once with that card so BaseOS can expand its data partition, then shut down.
+3. Put the card in your computer and open the `BASEOS` data volume.
+4. Extract the release ZIP and copy the **contents** of its release directory to the root of the `BASEOS` volume.
+5. Copy your ROMs and optional content into the folders described below.
+6. Put the card back in TF1 and boot with TF2 empty.
+
+In this setup BaseOS exposes the TF1 data volume to the frontend as `/mnt/sdcard`.
+
+### Two-card setup: BaseOS on TF1, frontend on TF2
+
+1. Prepare and boot the BaseOS card in TF1 once, exactly as in the one-card setup, so its data partition is expanded.
+2. Put the second card in your computer and copy the contents of the release directory to its root.
+3. Add your ROMs, saves, labels, cartridge artwork, wallpapers and optional BIOS files to this second card.
+4. Put the BaseOS card in TF1 and the content/frontend card in TF2, then boot.
+
+When TF2 is present, BaseOS uses it as the frontend volume. The same release tree therefore works
+on TF2 without changing the `System/slot` path.
+
+### AGS-102 compatibility
+
+The release tree also retains the upstream two-card AGS-102 layout: boot AGS-102 from TF1 and
+put the release/content tree on TF2. AGS-102 launches `System/slot` directly. BaseOS users should
+follow one of the two procedures above instead.
+
+## SD-card layout
+
+The frontend content root should look like this:
 
 ```
-BIOS/         gba_bios.bin, gb_bios.bin, gbc_bios.bin, optional. Present files play that system's boot logo; absent means the core's own high-level BIOS.
-Games/        .gba, .gb and .gbc roms.
-Labels/       <rom stem>.png, drawn on the cartridge face. Absent means a text only label.
-Saves/        .sav and .srm battery saves.
-States/       <core>/<rom stem>/, save state rings ten deep per cart.
-System/       the binary, three cores, theme.txt, and selected_core.ini.
-Wallpapers/   .png, one picked at random each boot and drawn behind the shelf.
+BIOS/         Optional gba_bios.bin, gb_bios.bin and gbc_bios.bin.
+Games/        .gba, .gb and .gbc ROMs.
+Cartridges/   Optional complete cartridge artwork: <ROM stem>.png.
+Labels/       Optional label artwork: <ROM stem>.png.
+Saves/        Battery saves, normally .sav and .srm files.
+States/       Save-state rings under <core>/<ROM stem>/.
+System/       slot, the three cores, configuration and third-party licenses.
+Wallpapers/   Optional .png images, one selected randomly at boot.
 ```
 
-GBA label art is drawn at 176x90, close to the real label's 43:22. Anything else is scaled to cover that box
-and centre cropped, so a square or portrait image loses its top and bottom. Bigger art is
-fine and comes down to size; smaller gets stretched up and shows it.
+### ROMs and filenames
 
-GB and GBC labels share the real cartridge label's 42:37 aspect ratio. The companion
-`artwork-gb-labels.xml` Skyscraper definition outputs them at 192x169.
+Only `.gba`, `.gb` and `.gbc` files are scanned. Extensions are case-insensitive; unrelated files
+are ignored. Artwork, saves and states are matched by the filename stem, not by a content hash:
 
-`System/theme.txt` is entirely optional and controls the appearance of the slot:
+```
+Games/Pokemon Emerald.gba
+Labels/Pokemon Emerald.png
+Cartridges/Pokemon Emerald.png
+```
+
+Keep ROM stems unique across the library. Two different ROMs with the same stem can share or
+overwrite their artwork, saves or states.
+
+### Labels
+
+Labels are PNG files in `Labels/`, without the cartridge shell around them. They are rendered at
+these target sizes:
+
+- **GBA:** `176×90` pixels, approximately the real label's `43:22` ratio.
+- **GB and GBC:** `192×169` pixels, matching the real label's `42:37` ratio.
+
+Images with another size are scaled to cover the target box and centre-cropped. A square or
+portrait image can therefore lose its top and bottom; small images are enlarged. The included
+Skyscraper definitions produce correctly sized artwork for both label formats:
+
+- [`artwork-gba-labels.xml`](artwork-gba-labels.xml) outputs `176×90` GBA labels from a screenshot
+  and wheel logo.
+- [`artwork-gb-labels.xml`](artwork-gb-labels.xml) outputs `192×169` GB/GBC labels.
+
+Point Skyscraper at the matching definition for the platform you are scraping.
+
+If a label is missing or unreadable, the frontend generates a text label from the ROM filename.
+
+### Complete cartridge artwork
+
+Complete artwork goes in `Cartridges/` and takes priority over the generated shell and label. It
+is resized to the cartridge's `240`-pixel display width while preserving its aspect ratio. Its
+height follows the source image: no padding or letterboxing is added, and PNG transparency is
+preserved. An invalid image falls back to the normal shell/label path.
+
+### BIOS files
+
+BIOS files are optional and are not included in this repository or its releases:
+
+| System | Filename |
+|---|---|
+| GBA | `BIOS/gba_bios.bin` |
+| GB | `BIOS/gb_bios.bin` |
+| GBC | `BIOS/gbc_bios.bin` |
+
+When present, the corresponding core can show the system's original boot logo. When absent, the
+core's own high-level BIOS behaviour is used. Only use BIOS files you are permitted to use.
+
+### Themes and core selection
+
+`System/theme.txt` is optional. It controls the shell colours:
 
 ```
 housing #24242a
@@ -84,68 +147,97 @@ opening #050508
 edge    #4d4d57
 ```
 
-`System/selected_core.ini` is entirely optional and names which core a cart's save states
-belong to, one `<rom stem> = <core>` per line. Every GBA cart defaults to mGBA, and states are
-kept apart per core under `States/<core>/<rom stem>/` so switching cores later never mixes
-one core's save with another's. All three cores ship in `System/`, so naming `gpsp` actually
-switches emulators for that cart — gpSP exists for the serial link hardware mGBA's libretro
-build does not carry:
+`System/selected_core.ini` is also optional. It selects the GBA core per ROM, one entry per line:
 
 ```
-Emerald = gpsp
+Pokemon Emerald = gpsp
 ```
 
-GB and GBC games always use Gambatte. GB is presented with PixelShift Pack 1's
-`PixelShift 03 - BGB 0.3 Emulator` palette; GBC uses Gambatte's GBC colour correction.
+GBA games default to **mGBA**. Use **gpSP** when you need its link/serial support; press `START`
+on the carousel to choose a core interactively. Save states are kept separately under
+`States/mgba/` and `States/gpsp/`, so states made by one core are not accidentally loaded by the
+other. Battery saves are shared by the ROM.
 
-## Installing on your RG SP
+GB and GBC games always use **Gambatte**. GB uses PixelShift Pack 1's `PixelShift 03 - BGB 0.3
+Emulator` palette, while GBC uses Gambatte's GBC colour correction.
 
-### AGS-102
+## Controls
 
-1. Flash the latest [AGS-102](https://github.com/BrandonKowalski/AGS-102) `.img` to the card for Slot 1 (TF1).
-2. Unzip the latest slot release and copy its contents to a second card.
-3. Add games, saves, labels, wallpapers and optional BIOS files to their folders.
-4. Put the content card in Slot 2 (TF2) and boot.
+`/` means either button. `+` means both buttons together.
 
-AGS-102 continues to launch `System/slot` directly; the additional BaseOS launcher does not
-change this path.
+### Anywhere
 
-### BaseOS v1.1.0
+| Input | Action |
+|---|---|
+| `SELECT` + `Up` / `Down` | Adjust brightness |
+| `SELECT` + `Left` / `Right` | Adjust blue light |
+| `VOL+` / `VOL-` | Change the volume |
+| `VOL+` + `VOL-` | Mute while remembering the previous level |
+| Hold `POWER` | Save and power off |
 
-1. Flash the matching [BaseOS v1.1.0](https://github.com/pvaibhav/BaseOS/releases/tag/v1.1.0) `.img` to the card for Slot 1 (TF1).
-2. Boot it once so BaseOS expands its data partition, then power off.
-3. Connect the card to your computer and copy the contents of the latest slot release onto
-   the `BASEOS` data volume. Keep the hidden `.system` directory: BaseOS launches slot through it.
-4. Add games, saves, labels, wallpapers and optional BIOS files to their folders.
-5. Put the card back in Slot 1 and boot with Slot 2 empty.
+### On the carousel
 
-BaseOS also supports two cards: when TF2 is present it becomes the frontend volume, so the
-same release tree can live there instead.
+| Input | Action |
+|---|---|
+| `L` / `R` | Browse the carousel |
+| `L1` / `R1` | Jump to the previous/next letter |
+| `L2` / `R2` | Previous/next category: `ALL`, `REC`, `GBA`, `GB`, `GBC` |
+| `SELECT` | Toggle Pixelify and the original label font |
+| `Y` | Add or remove the game from favorites |
+| `X` | Toggle the LCD effect |
+| Tap `A` | Resume the last save state |
+| Hold `A` | Start the game fresh |
+| `MENU` | Open the about screen; `L` / `R` turns it over, and hold `A` sets the clock |
+| `START` | Choose which GBA core runs the cart |
 
-## Updating
-I doubt I am gonna work on this more and add to it but in case I do here is how you update.
+### In game
 
-1. Power off your RG SP.
-2. Eject the card that holds the slot frontend (TF1 in a one-card setup, TF2 in a two-card setup).
-3. Connect to your computer.
-4. Replace the `System` folder with the one from the update. On BaseOS, also copy the hidden
-   `.system` directory so launcher updates are included.
-5. Done.
+| Input | Action |
+|---|---|
+| Hold `MENU` | Save state, eject the cart and return to the carousel |
+| Double-tap `MENU` | Open the save-state switcher; load, delete or undo a recent action |
+| `SELECT` + `MENU` | Link with another RG SP; gpSP carts only |
+| `SELECT` + `R1` | Save state |
+| `SELECT` + `L1` | Load the most recent save state |
+| Hold `L2` | Rewind |
+| Hold `R2` | Fast-forward |
+| Double-tap `R2` | Lock fast-forward; press again to unlock |
+| `X` | Toggle the LCD effect |
 
-## Building a release
+Closing the lid writes a save state and turns off the display, audio and emulation. After five
+minutes the device enters a lower-frequency standby that stops rendering but continues watching
+`POWER` and the shutdown clock. Open the lid or press `POWER` during either five-minute stage to
+resume. If the second stage expires, the device powers off and the next boot resumes from that
+save state.
 
-The release scripts build the aarch64 device tree, verify that all binaries and corresponding
-license sources are present, and create the ZIP plus a SHA-256 checksum. They require
-[Task](https://taskfile.dev/) and the native/container tools already used by `task dist:device`.
+External power keeps a dark unit out of deep sleep, and an enumerated USB debugging session does
+the same. Holding `POWER` still requests a real shutdown, including while charging.
 
-To build and package a release in one command:
+## Updating an installation
+
+1. Power off the RG SP.
+2. Eject the card containing the active frontend volume: TF1 for one-card BaseOS, or TF2 for
+   two-card BaseOS/AGS-102.
+3. Back up `Games`, `Cartridges`, `Labels`, `Saves`, `States` and `Wallpapers`.
+4. Replace the `System/` and hidden `.system/` directories with the ones from the new release.
+5. Restore or keep your personal content directories and put the card back in the device.
+
+Do not replace the BaseOS boot card with a new image merely to update the frontend unless the
+release notes specifically require it.
+
+## Building and checking
+
+Development uses Rust `1.96` and [Task](https://taskfile.dev/). Host core builds may also need
+the native desktop/audio libraries listed by the CI workflow. Device releases are aarch64 builds
+for the H700 and use Docker or an equivalent arm64 build environment when necessary.
+
+Run the same checks used by CI:
 
 ```sh
-./scripts/package-release.sh v1.0.1
+task check
 ```
 
-The files are written to `dist/releases/`. To build the tree without packaging it, or to package
-an existing tree:
+Build, verify and package a device tree:
 
 ```sh
 ./scripts/build-release.sh --out dist-device
@@ -153,45 +245,62 @@ an existing tree:
 ./scripts/package-release.sh v1.0.1 --tree dist-device
 ```
 
+Or build and package in one command:
 
-## Credits
+```sh
+./scripts/package-release.sh v1.0.1
+```
 
-Emulation is [mGBA](https://mgba.io) by endrift, [gpSP](https://github.com/libretro/gpsp)
-by Gilead "Exophase" Kutnick, and [Gambatte](https://github.com/libretro/gambatte-libretro)
-— a GBA cart's `System/selected_core.ini` picks between mGBA and gpSP, gpSP for the serial
-link hardware mGBA's libretro build does not carry; GB and GBC always use Gambatte — all
-through [libretro](https://www.libretro.com). The release ships all three cores' compiled
-libretro binaries: mGBA under MPL-2.0 (patched; see [`licenses/`](licenses/)), gpSP and
-Gambatte under GPL-2.0. Their license texts, and the GPL cores' corresponding source
-(fetched or pinned at build time and shipped alongside the binary, per GPL-2.0 section
-3(a)), are in [`licenses/`](licenses/), which `dist:device` copies into the shipped tree
-alongside the cores they cover.
+The resulting ZIP and SHA-256 checksum are written to `dist/releases/`. The release scripts also
+verify the aarch64 binaries, BaseOS launcher, license notices and corresponding source archives
+before packaging.
 
-The device boots either [AGS-102](https://github.com/BrandonKowalski/AGS-102) by Brandon T.
-Kowalski or [BaseOS](https://github.com/pvaibhav/BaseOS) by @pvaibhav.
+## Known limitations and contributions
 
-Type is [Pixelify Sans](https://github.com/googlefonts/pixelify) (the default) and the original
-label font, under the SIL Open Font License, and [Nerd Fonts](https://www.nerdfonts.com)
-symbols by Ryan L. McIntyre, under MIT. SELECT on the carousel toggles between them.
+This fork has only been tested on the **Anbernic RG SP**. I have no reliable information about
+how it runs on other handhelds, displays, SoCs or operating-system images. If you test it
+elsewhere, please open an issue or send a PR with the exact device, OS version, release,
+observed behaviour and, when possible, `System/slot.log`.
 
-The panel mask is derived from LCD3x, a public-domain shader by Gigaherz in the libretro
-shader collection. At exactly 3x it reduces to a 3 by 3 table, which is what ships here
-rather than the shader.
+PRs are welcome. Useful contributions include compatibility testing, documentation fixes, artwork
+support and bug fixes. Please do not commit commercial ROMs, BIOS files or other copyrighted
+game data; attach logs and reproduction steps instead.
 
-The cart sounds are a recording of me shoving a cartridge into my childhood GBA.
+## Credits and licensing
 
-## AI Disclosure
+### Upstream project
 
-The Rust frontend was put together by Claude Opus. I reviewed everything that was
-produced. This documentation is 100% free-range, meatbag prose.
+This repository is a fork of [`slot`](https://github.com/BrandonKowalski/slot) by **Brandon T.
+Kowalski**. The original project, its GBA-focused frontend, design direction and upstream
+implementation are the foundation of this fork. The original author must continue to receive
+credit, and this fork is not affiliated with or endorsed by upstream.
 
-The project is extremely low stakes. I wanted a bespoke frontend for my RG SP and thought
-that something this focused on GBA, GB and GBC would be kind of neat.
+The device environment [AGS-102](https://github.com/BrandonKowalski/AGS-102) is also by Brandon T.
+Kowalski. [BaseOS](https://github.com/pvaibhav/BaseOS) is by @pvaibhav.
 
-This is just a glorified wrapper around mGBA, gpSP and Gambatte, which are the real stars
-of the show.
+### Third-party software and assets
 
-Provided without support. I will selectively address filed issues and PRs.
+- [mGBA](https://mgba.io), by Jeffrey “endrift” Pfau, through [libretro](https://www.libretro.com).
+- [gpSP](https://github.com/libretro/gpsp), originally by Gilead “Exophase” Kutnick, through
+  libretro.
+- [Gambatte](https://github.com/libretro/gambatte-libretro), through libretro.
+- [Pixelify Sans](https://github.com/googlefonts/pixelify) and the original label font, under the
+  SIL Open Font License.
+- [Nerd Fonts](https://www.nerdfonts.com) symbols by Ryan L. McIntyre, under the MIT license.
+- The GB and GBC screen overlays are from [Jeltr0n's Retro-Overlays](https://github.com/Jeltr0n/Retro-Overlays);
+  the included files are `jeltron/GB_DMG.png` and `jeltron/GB_Color.png`.
+- The panel mask is derived from LCD3x, a public-domain shader by Gigaherz in the libretro shader
+  collection.
+- The cartridge insertion/ejection sounds come from the upstream project.
 
-Use it, don't use it, I don't care. Figured I should share the end result of all the
-wasted water.
+The frontend is MIT-licensed under [`LICENSE`](LICENSE), including the original copyright notice.
+The compiled mGBA, gpSP and Gambatte cores have their own MPL-2.0 or GPL-2.0 terms. Their license
+texts and the source material required for the distributed GPL cores are kept in
+[`licenses/`](licenses/) and copied into device releases.
+
+### AI disclosure
+
+The changes in this fork—including GB/GBC support, cartridge artwork handling, tests and this
+documentation—were developed with assistance from AI tools. A human maintainer reviewed the
+resulting changes. AI assistance does not change the authorship, license or attribution of the
+original `slot` project or any third-party component.

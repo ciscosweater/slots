@@ -24,6 +24,7 @@ fn cart(platform: slot_store::Platform, rom: &str, stem: &str, title: &str, code
         stem: stem.into(),
         title: title.into(),
         code: code.into(),
+        artwork: None,
         label: None,
     }
 }

@@ -10,6 +10,7 @@ fn app_playing(stem: &str) -> App {
     let mut a = App::new(vec![Cart {
         stem: stem.to_string(),
         rom: format!("Games/{stem}.gba").into(),
+        artwork: None,
         label: None,
         code: String::new(),
         title: stem.to_uppercase(),

@@ -9,7 +9,8 @@ use std::thread;
 
 use slot_store::Cart;
 use slot_ui::{
-    board_face, cart_face, clean_label, padded, title_face, word_face, CartFace, UndoFace, TURN_PAD,
+    board_face, cart_face, cart_face_with_artwork, clean_label, padded, title_face, word_face,
+    CartFace, UndoFace, TURN_PAD,
 };
 
 pub struct BuiltFaces {
@@ -28,6 +29,7 @@ pub struct FaceBuilder {
 pub struct BuiltShelfFace {
     pub stem: String,
     pub face: CartFace,
+    pub complete_artwork: bool,
     pub group: UndoFace,
     pub title: UndoFace,
 }
@@ -53,9 +55,11 @@ impl ShelfFaceBuilder {
                         .next()
                         .map(|c| c.to_ascii_uppercase().to_string())
                         .unwrap_or_else(|| "#".to_string());
+                    let (face, complete_artwork) = cart_face_with_artwork(&cart);
                     let faces = BuiltShelfFace {
                         stem: cart.stem.clone(),
-                        face: cart_face(&cart),
+                        face,
+                        complete_artwork,
                         group: word_face(&group),
                         title: title_face(&clean),
                     };

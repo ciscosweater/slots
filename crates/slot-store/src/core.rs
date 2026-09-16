@@ -56,7 +56,7 @@ impl Core {
 }
 
 /// `<rom stem> = <core>`, one per line. Keyed on the stem because that is already the key
-/// for `Labels/`, `Saves/` and `States/`; a card stays consistent with itself.
+/// for `Cartridges/`, `Labels/`, `Saves/` and `States/`; a card stays consistent with itself.
 ///
 /// Every malformed line is skipped rather than raised. This file is edited by hand on a
 /// card, and the cost of a typo must be that one cart opens with the default core, never

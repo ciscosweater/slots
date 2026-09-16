@@ -380,6 +380,18 @@ fn a_tree_with_no_led_is_a_silent_no_op() {
     assert!(!d.path().join("class/leds").exists());
 }
 
+#[test]
+fn a_configured_usb_gadget_is_reported_as_an_enumerated_host_session() {
+    let d = tempfile::tempdir().unwrap();
+    let udc = d.path().join("class/udc/5100000.udc-controller");
+    fs::create_dir_all(&udc).unwrap();
+    fs::write(udc.join("state"), "configured\n").unwrap();
+    assert!(platform(&d).usb_host());
+
+    fs::write(udc.join("state"), "not attached\n").unwrap();
+    assert!(!platform(&d).usb_host());
+}
+
 /// The sunxi role manager clears the gadget's UDC binding when the cable goes, and BaseOS
 /// deliberately runs no reconnect watcher: its documented recovery is a reboot. Rewriting
 /// `g1/UDC` is the one mechanism it calls safe and proven, so that is all this does. The

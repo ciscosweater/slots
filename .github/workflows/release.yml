@@ -50,18 +50,18 @@ jobs:
       # Named for the tag, so what comes out of the archive says which version it is rather
       # than landing seven unlabelled folders wherever it was opened.
       - name: Build the tree
-        run: ./scripts/build-release.sh --out "slot-${GITHUB_REF_NAME}"
+        run: ./scripts/build-release.sh --out "slots-${GITHUB_REF_NAME}"
 
       # Before anything is published, not after. A tree built by the wrong toolchain is a
       # download that bootloops a device, and it costs one exec to know.
       - name: Check what is about to ship
-        run: ./scripts/verify-release.sh "slot-${GITHUB_REF_NAME}"
+        run: ./scripts/verify-release.sh "slots-${GITHUB_REF_NAME}"
 
       - name: Package
         id: package
         run: |
           set -eu
-          out="slot-${GITHUB_REF_NAME}"
+          out="slots-${GITHUB_REF_NAME}"
           ./scripts/package-release.sh "$GITHUB_REF_NAME" \
             --tree "$out" \
             --output-dir .
@@ -135,7 +135,7 @@ jobs:
         run: |
           set -eu
           cat > notes.md <<NOTES
-          Unzip \`slot-${GITHUB_REF_NAME}/\` and copy its contents to:
+          Unzip \`slots-${GITHUB_REF_NAME}/\` and copy its contents to:
 
           - SD2/TF2 when booting with AGS-102; or
           - the BASEOS data volume on SD1/TF1 for a one-card BaseOS v1.1.0 setup. Keep the

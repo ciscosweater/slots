@@ -27,9 +27,13 @@ impl Platform {
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Cart {
-    /// Filename stem, which is the key for labels, saves and states. Not a content hash.
+    /// Filename stem, which is the key for cartridge art, labels, saves and states. Not a
+    /// content hash.
     pub stem: String,
     pub rom: PathBuf,
+    /// Optional complete cartridge artwork. When present and decodable it replaces the
+    /// generated shell/label face; `label` remains available as the fallback.
+    pub artwork: Option<PathBuf>,
     pub label: Option<PathBuf>,
     pub title: String,
     /// The four character header game code, empty when the rom has none.
@@ -76,6 +80,7 @@ pub fn scan(root: &Path) -> Result<Vec<Cart>, StoreError> {
             continue;
         };
         let label = root.join("Labels").join(format!("{stem}.png"));
+        let artwork = root.join("Cartridges").join(format!("{stem}.png"));
         carts.push(Cart {
             stem: stem.to_string(),
             title: match platform {
@@ -87,6 +92,7 @@ pub fn scan(root: &Path) -> Result<Vec<Cart>, StoreError> {
                 Platform::Gb | Platform::Gbc => String::new(),
             },
             platform,
+            artwork: artwork.is_file().then_some(artwork),
             label: label.is_file().then_some(label),
             rom,
         });
@@ -157,9 +163,11 @@ pub fn scan_cached(root: &Path) -> Result<Vec<Cart>, StoreError> {
             },
         );
         let label = root.join("Labels").join(format!("{stem}.png"));
+        let artwork = root.join("Cartridges").join(format!("{stem}.png"));
         carts.push(Cart {
             stem: stem.to_string(),
             rom,
+            artwork: artwork.is_file().then_some(artwork),
             label: label.is_file().then_some(label),
             title,
             code,

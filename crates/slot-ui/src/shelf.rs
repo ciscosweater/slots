@@ -36,6 +36,13 @@ const REPEAT_DELAY_MS: Millis = 400;
 const REPEAT_MS: Millis = 110;
 const CATEGORY_COUNT: usize = 5;
 
+fn cart_size(cart: &Cart) -> (u32, u32) {
+    match cart.platform {
+        slot_store::Platform::Gba => (CART_W, CART_H),
+        slot_store::Platform::Gb | slot_store::Platform::Gbc => (GB_CART_W, GB_CART_H),
+    }
+}
+
 /// Printed on the case when `Games/` is empty. Same type as a cart title, not a dialog.
 pub const EMPTY_SHELF: &str = "no carts in Games/";
 
@@ -46,6 +53,14 @@ pub struct Shelf {
     pub scroll: f32,
     faces: Vec<Option<TexId>>,
     all_faces: Vec<Option<TexId>>,
+    /// Pixel dimensions of the uploaded face textures. Generated faces use the platform's
+    /// normal geometry; complete artwork keeps its source aspect ratio after fitting width.
+    face_sizes: Vec<(u32, u32)>,
+    all_face_sizes: Vec<(u32, u32)>,
+    /// Whether each uploaded face came from decodable complete artwork rather than the generated
+    /// fallback. This remains separate from `Cart::artwork`, whose path may be malformed.
+    complete_artwork: Vec<bool>,
+    all_complete_artwork: Vec<bool>,
     category: usize,
     /// The cart silhouette in black, drawn under a dimmed cart. One texture for the whole
     /// row: every cart is the same shape.
@@ -65,6 +80,8 @@ pub struct Shelf {
 
 impl Shelf {
     pub fn new(carts: Vec<Cart>) -> Self {
+        let sizes: Vec<(u32, u32)> = carts.iter().map(cart_size).collect();
+        let cart_count = carts.len();
         Shelf {
             all_carts: carts.clone(),
             carts,
@@ -72,6 +89,10 @@ impl Shelf {
             scroll: 0.0,
             faces: Vec::new(),
             all_faces: Vec::new(),
+            face_sizes: sizes.clone(),
+            all_face_sizes: sizes,
+            complete_artwork: Vec::new(),
+            all_complete_artwork: vec![false; cart_count],
             category: 0,
             shadow: None,
             gb_shadow: None,
@@ -110,7 +131,11 @@ impl Shelf {
     pub fn set_faces(&mut self, faces: Vec<TexId>) {
         let faces = faces.into_iter().map(Some).collect::<Vec<_>>();
         self.all_faces = faces.clone();
+        self.all_face_sizes = self.all_carts.iter().map(cart_size).collect();
+        self.all_complete_artwork = vec![false; self.all_carts.len()];
         self.faces = faces;
+        self.face_sizes = self.all_face_sizes.clone();
+        self.complete_artwork = vec![false; self.carts.len()];
         self.set_category(self.category);
     }
 
@@ -118,13 +143,42 @@ impl Shelf {
     /// placeholders. Resolve by stem so a favorite/category reorder during hydration cannot
     /// pair a texture with the wrong cart.
     pub fn set_face(&mut self, stem: &str, face: TexId) {
+        let Some(cart) = self.all_carts.iter().find(|cart| cart.stem == stem) else {
+            return;
+        };
+        self.set_face_with_size_and_artwork(stem, face, cart_size(cart), false);
+    }
+
+    /// Publish a face with its actual texture dimensions. The width remains the platform slot
+    /// width, while complete artwork may be taller or shorter than the generated shell.
+    pub fn set_face_with_size(&mut self, stem: &str, face: TexId, size: (u32, u32)) {
+        self.set_face_with_size_and_artwork(stem, face, size, false);
+    }
+
+    /// Publish a face with its dimensions and whether it is a decodable complete-artwork image.
+    /// The latter controls shell shadows and favorite-mark placement on the shelf.
+    pub fn set_face_with_size_and_artwork(
+        &mut self,
+        stem: &str,
+        face: TexId,
+        size: (u32, u32),
+        complete_artwork: bool,
+    ) {
         let Some(all_index) = self.all_carts.iter().position(|cart| cart.stem == stem) else {
             return;
         };
         if self.all_faces.len() < self.all_carts.len() {
             self.all_faces.resize(self.all_carts.len(), None);
         }
+        if self.all_face_sizes.len() < self.all_carts.len() {
+            self.all_face_sizes = self.all_carts.iter().map(cart_size).collect();
+        }
+        if self.all_complete_artwork.len() < self.all_carts.len() {
+            self.all_complete_artwork = vec![false; self.all_carts.len()];
+        }
         self.all_faces[all_index] = Some(face);
+        self.all_face_sizes[all_index] = size;
+        self.all_complete_artwork[all_index] = complete_artwork;
 
         // Face building happens asynchronously while the user can already browse. Do not
         // rebuild the category here: set_category also snaps the spring, clears its velocity,
@@ -133,8 +187,16 @@ impl Shelf {
         if self.faces.len() < self.carts.len() {
             self.faces.resize(self.carts.len(), None);
         }
+        if self.face_sizes.len() < self.carts.len() {
+            self.face_sizes = self.carts.iter().map(cart_size).collect();
+        }
+        if self.complete_artwork.len() < self.carts.len() {
+            self.complete_artwork = vec![false; self.carts.len()];
+        }
         if let Some(current_index) = self.carts.iter().position(|cart| cart.stem == stem) {
             self.faces[current_index] = Some(face);
+            self.face_sizes[current_index] = size;
+            self.complete_artwork[current_index] = complete_artwork;
         }
     }
 
@@ -219,9 +281,28 @@ impl Shelf {
         self.faces = self
             .all_carts
             .iter()
-            .zip(self.all_faces.iter().copied())
-            .filter(|(cart, _)| wanted(cart))
-            .map(|(_, face)| face)
+            .enumerate()
+            .filter(|(_, cart)| wanted(cart))
+            .map(|(i, _)| self.all_faces.get(i).copied().flatten())
+            .collect();
+        self.face_sizes = self
+            .all_carts
+            .iter()
+            .enumerate()
+            .filter(|(_, cart)| wanted(cart))
+            .map(|(i, cart)| {
+                self.all_face_sizes
+                    .get(i)
+                    .copied()
+                    .unwrap_or_else(|| cart_size(cart))
+            })
+            .collect();
+        self.complete_artwork = self
+            .all_carts
+            .iter()
+            .enumerate()
+            .filter(|(_, cart)| wanted(cart))
+            .map(|(i, _)| self.all_complete_artwork.get(i).copied().unwrap_or(false))
             .collect();
         self.sort_by_favorites(&self.favorites.clone());
         self.index = selected
@@ -234,15 +315,31 @@ impl Shelf {
 
     /// In `hints` order.
     pub fn find(&self, stem: &str) -> Option<(&Cart, Option<TexId>)> {
+        self.find_with_size(stem)
+            .map(|(cart, face, _)| (cart, face))
+    }
+
+    /// Finds a cart and reports the dimensions of the texture that will be drawn for it. A
+    /// complete artwork face can have a different height after being fitted to slot width.
+    pub fn find_with_size(&self, stem: &str) -> Option<(&Cart, Option<TexId>, (u32, u32))> {
         let i = self.carts.iter().position(|c| c.stem == stem)?;
         let cart = &self.carts[i];
-        let face = self.faces.get(i).copied().flatten().or_else(|| {
+        let uploaded = self.faces.get(i).copied().flatten();
+        let face = uploaded.or_else(|| {
             Some(match cart.platform {
                 slot_store::Platform::Gba => self.placeholder?,
                 slot_store::Platform::Gb | slot_store::Platform::Gbc => self.gb_placeholder?,
             })
         });
-        Some((cart, face))
+        let size = if uploaded.is_some() {
+            self.face_sizes
+                .get(i)
+                .copied()
+                .unwrap_or_else(|| cart_size(cart))
+        } else {
+            cart_size(cart)
+        };
+        Some((cart, face, size))
     }
 
     /// Carts nearest the current selection first, then the rest of the library. The shelf is a
@@ -340,20 +437,26 @@ impl Shelf {
         let selected = self.carts.get(self.index).map(|cart| cart.stem.clone());
         let have_faces = self.faces.len() == self.carts.len();
         let faces = have_faces.then(|| std::mem::take(&mut self.faces));
+        let sizes = std::mem::take(&mut self.face_sizes);
+        let complete_artwork = std::mem::take(&mut self.complete_artwork);
         let mut paired: Vec<_> = std::mem::take(&mut self.carts)
             .into_iter()
             .enumerate()
             .map(|(i, cart)| {
+                let size = sizes.get(i).copied().unwrap_or_else(|| cart_size(&cart));
+                let complete_artwork = complete_artwork.get(i).copied().unwrap_or(false);
                 (
                     cart,
                     faces
                         .as_ref()
                         .and_then(|faces| faces.get(i).copied())
                         .flatten(),
+                    size,
+                    complete_artwork,
                 )
             })
             .collect();
-        paired.sort_by(|(a, _), (b, _)| {
+        paired.sort_by(|(a, _, _, _), (b, _, _, _)| {
             if self.category == 1 {
                 let rank = |stem: &str| {
                     self.recents
@@ -372,10 +475,15 @@ impl Shelf {
         if self.category == 1 {
             paired.truncate(slot_store::RECENTS_MAX);
         }
-        self.carts = paired.iter().map(|(cart, _)| cart.clone()).collect();
+        self.carts = paired.iter().map(|(cart, _, _, _)| cart.clone()).collect();
         if have_faces {
-            self.faces = paired.iter().map(|(_, face)| *face).collect();
+            self.faces = paired.iter().map(|(_, face, _, _)| *face).collect();
         }
+        self.face_sizes = paired.iter().map(|(_, _, size, _)| *size).collect();
+        self.complete_artwork = paired
+            .iter()
+            .map(|(_, _, _, complete_artwork)| *complete_artwork)
+            .collect();
         self.index = selected
             .and_then(|stem| self.carts.iter().position(|cart| cart.stem == stem))
             .unwrap_or(0);
@@ -601,11 +709,16 @@ impl Shelf {
             let t = offset.abs().min(1.0);
             let scale = 1.0 + (SIDE_SCALE - 1.0) * t;
             let alpha = (1.0 + (SIDE_ALPHA - 1.0) * t) * (1.0 - recede);
-            let (base_w, base_h) = match cart.platform {
-                slot_store::Platform::Gba => (CART_W, CART_H),
-                slot_store::Platform::Gb | slot_store::Platform::Gbc => (GB_CART_W, GB_CART_H),
+            let (base_w, base_h) = cart_size(cart);
+            let uploaded = self.faces.get(i).copied().flatten().is_some();
+            let complete_artwork =
+                uploaded && self.complete_artwork.get(i).copied().unwrap_or(false);
+            let face_h = if uploaded {
+                self.face_sizes.get(i).map_or(base_h, |(_, h)| *h)
+            } else {
+                base_h
             };
-            let (w, h) = (base_w as f32 * scale, base_h as f32 * scale);
+            let (w, h) = (base_w as f32 * scale, face_h as f32 * scale);
             // Away from the middle, and further the further out it already was, so the row
             // opens rather than sliding sideways.
             let away = offset.signum() * (1.0 + offset.abs());
@@ -623,7 +736,9 @@ impl Shelf {
             let y = foot_y - h + dip;
             // Black in the cart's own shape, under the dimmed face. Without it the dimming is
             // transparency, and over a wallpaper the row reads as ghosts of carts.
-            if alpha < 1.0 {
+            // Complete artwork carts have their own arbitrary outline, so the standard shell
+            // silhouette does not match and would bleed out around the image.
+            if !complete_artwork && alpha < 1.0 {
                 if let Some(tex) = if cart.platform == slot_store::Platform::Gba {
                     self.shadow
                 } else {
@@ -643,12 +758,17 @@ impl Shelf {
                 slot_store::Platform::Gba => self.placeholder,
                 slot_store::Platform::Gb | slot_store::Platform::Gbc => self.gb_placeholder,
             };
+            let (draw_w, draw_h) = if uploaded {
+                (w, h)
+            } else {
+                (base_w as f32 * scale, base_h as f32 * scale)
+            };
             out.push(match self.faces.get(i).copied().flatten().or(placeholder) {
                 Some(tex) => Draw::Tex {
                     x,
                     y,
-                    w,
-                    h,
+                    w: draw_w,
+                    h: draw_h,
                     tex,
                     alpha: alpha * dim,
                 },
@@ -659,8 +779,8 @@ impl Shelf {
                     Draw::Rect {
                         x,
                         y,
-                        w,
-                        h,
+                        w: draw_w,
+                        h: draw_h,
                         colour: [
                             c[0] as f32 / 255.0,
                             c[1] as f32 / 255.0,
@@ -674,15 +794,25 @@ impl Shelf {
                 if let Some((tex, mw, mh)) = self.favorite_mark {
                     let (mw, mh) = (mw as f32 * scale, mh as f32 * scale);
                     let inset = 6.0 * scale;
-                    let (label_x, label_y, label_w) = match cart.platform {
-                        slot_store::Platform::Gba => (LABEL_X, LABEL_Y, LABEL_W),
-                        slot_store::Platform::Gb | slot_store::Platform::Gbc => {
-                            (GB_LABEL_X, GB_LABEL_Y, GB_LABEL_W)
-                        }
+                    let (mark_x, mark_y) = if complete_artwork {
+                        // A complete cartridge image has no generated label panel to anchor
+                        // this badge to; keep the favorite mark in its own top-right corner.
+                        (x + w - mw - inset, y + inset)
+                    } else {
+                        let (label_x, label_y, label_w) = match cart.platform {
+                            slot_store::Platform::Gba => (LABEL_X, LABEL_Y, LABEL_W),
+                            slot_store::Platform::Gb | slot_store::Platform::Gbc => {
+                                (GB_LABEL_X, GB_LABEL_Y, GB_LABEL_W)
+                            }
+                        };
+                        (
+                            x + (label_x + label_w) as f32 * scale - mw - inset,
+                            y + label_y as f32 * scale + inset,
+                        )
                     };
                     out.push(Draw::Tex {
-                        x: x + (label_x + label_w) as f32 * scale - mw - inset,
-                        y: y + label_y as f32 * scale + inset,
+                        x: mark_x,
+                        y: mark_y,
                         w: mw,
                         h: mh,
                         tex,

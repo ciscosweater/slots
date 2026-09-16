@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Skyscraper artwork definition for RG SP / slots GBA cartridge labels.
+
+  The cart SVG is rasterised at 240 x 135 and slot pastes the label into
+  x=32, y=27, width=176, height=90. The label-sized outputs and every
+  full-bleed layer below therefore map one-to-one onto the label window,
+  avoiding a second resize in the cartridge compositor.
+
+  The label is always composed from a darkened/blurred screenshot behind the
+  wheel logo. No ScreenScraper Support: Texture lookup is performed.
+-->
+<artwork>
+  <output type="texture" width="176" height="90">
+    <!-- Background: GBA screenshot, blurred so the wheel remains legible. -->
+    <layer resource="screenshot"
+           width="176" height="90"
+           aspect="keepexpand"
+           transform="fast"
+           align="center" valign="middle">
+      <blur softness="2"/>
+      <brightness value="-38"/>
+      <contrast value="12"/>
+      <rounded radius="4"/>
+      <stroke width="1" color="#e7e4d8"/>
+    </layer>
+
+    <!-- Foreground: transparent game logo supplied as wheel/wheel-hd. -->
+    <layer resource="wheel"
+           width="172" height="86"
+           aspect="keep"
+           transform="smooth"
+           align="center" valign="middle">
+      <brightness value="18"/>
+      <contrast value="20"/>
+      <stroke width="1" color="#f2efe5"/>
+      <shadow distance="1" softness="1" opacity="55"/>
+    </layer>
+  </output>
+</artwork>
