@@ -180,8 +180,17 @@ impl Session {
     /// Called every frame whether or not anything was pressed: the gesture windows expire on
     /// the tick, not on an event.
     pub fn feed(&mut self, events: impl IntoIterator<Item = RawEvent>, now: Millis) {
-        let on_shelf = matches!(self.app.phase(), Phase::Shelf);
-        self.gestures.set_ff_latch(!on_shelf);
+        // R2 is a category key on the shelf and is ignored by every other non-game screen. The
+        // lock belongs only to active gameplay; allowing it to arm in the quick menu or the
+        // about/clock screens can swallow the first category tap after returning home.
+        let in_game = self.playing();
+        if !in_game {
+            // A latched hold belongs to the game screen that accepted it. Do not carry it through
+            // a menu, insertion or ejection and revive it when another game becomes visible.
+            self.fast = false;
+            self.rewinding = false;
+        }
+        self.gestures.set_ff_latch(in_game);
         let mut actions = Vec::new();
         for ev in events {
             actions.extend(self.gestures.feed(ev, now));
@@ -228,11 +237,11 @@ impl Session {
         if trace() {
             eprintln!("slot: {action:?} in {:?}", self.app.phase());
         }
-        let on_shelf = matches!(self.app.phase(), Phase::Shelf);
+        let in_game = self.playing();
         match action {
-            Action::RewindStart if !on_shelf => self.rewinding = true,
+            Action::RewindStart if in_game => self.rewinding = true,
             Action::RewindStop => self.rewinding = false,
-            Action::FfStart if !on_shelf => self.fast = true,
+            Action::FfStart if in_game => self.fast = true,
             Action::FfStop => self.fast = false,
             _ => {}
         }
@@ -302,10 +311,12 @@ impl Session {
 
     /// The core writes its motor from the emulator thread and this is the one place that
     /// reaches the hardware with it. The phase has the last word: a cart on its way out, a
-    /// paused switcher and a doze all stop the motor whatever the core last asked for.
+    /// paused switcher and a doze all stop the motor whatever the core last asked for. So does
+    /// rumble being off in the quick menu: the game rumbles on as far as the emulator knows, and
+    /// the motor is only ever told 0.
     fn sync_rumble(&mut self) {
         let want = match &self.emu {
-            Some(emu) if self.playing() => emu.rumble().strength(),
+            Some(emu) if self.playing() && self.app.rumble_enabled() => emu.rumble().strength(),
             _ => 0,
         };
         self.rumble(want);
@@ -456,6 +467,11 @@ impl Session {
     /// frames, so the compositor keeps showing the last one behind the cards.
     fn sync_speed(&self) {
         if let Some(emu) = &self.emu {
+            // Ahead of the speed, so the first fast present already runs at the chosen one. The
+            // quick menu lives on the shelf and these cannot change under a seated cart, but the
+            // next cart seated after they did picks them up here.
+            emu.set_fast_steps(u32::from(self.app.ff_speed()));
+            emu.set_ff_sound(self.app.ff_sound());
             // Loading a core and running one are separate things. The insert animation
             // hides the load, but a core left running behind the cart burns through the
             // GBA bios intro, so the reveal catches only its tail. Paused until the cart is

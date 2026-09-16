@@ -9,6 +9,7 @@ The original GBA-focused frontend remains the foundation; this fork adds:
 - Platform filters for `GBA`, `GB` and `GBC`, with platform-specific cartridge shells.
 - Optional complete cartridge artwork in `Cartridges/` and labels for all three platforms.
 - BaseOS v1.1.0 installation support for both one-card and two-card setups.
+- A quick menu for fast-forward speed and sound, rumble, Date & Time and About.
 
 ## 1.0.0
 

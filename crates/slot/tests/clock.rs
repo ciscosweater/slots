@@ -1,10 +1,10 @@
 mod common;
 
-use common::{app_booting_at, app_booting_with_clock, tmp_root_with_carts};
+use common::{app_booting_at, app_booting_with_clock, tmp_root_with_carts, Clock};
 use slot::app::{App, Phase};
 use slot_input::{Action, Btn};
 use slot_store::{read_slot_state, write_slot_state, SlotState};
-use slot_ui::{ClockPicker, Field};
+use slot_ui::{ClockPicker, Field, QuickRow};
 
 #[test]
 fn the_clock_is_asked_for_once_and_only_once() {
@@ -58,7 +58,11 @@ fn the_picker_starts_from_the_clock_the_platform_already_has() {
     let d = tmp_root_with_carts(&["Emerald"]);
     let (mut a, clock) = app_booting_at(d.path(), 1_700_000_000);
     a.confirm_clock();
-    assert_eq!(clock.get(), 1_700_000_000 - 1_700_000_000 % 60);
+    assert_eq!(
+        clock.get(),
+        1_700_000_000,
+        "confirming the clock as it stands moved it"
+    );
 }
 
 #[test]
@@ -164,7 +168,6 @@ fn the_offset_is_part_of_the_line_of_type() {
 fn confirming_persists_the_offset_and_sets_the_platform_to_utc() {
     let d = tmp_root_with_carts(&["Emerald"]);
     let (mut a, clock) = app_booting_at(d.path(), 1_700_000_000);
-    let typed = a.picker().expect("not on the clock screen").secs();
     for _ in 0..8 {
         a.apply(Action::GbaDown(Btn::Right));
     }
@@ -175,7 +178,7 @@ fn confirming_persists_the_offset_and_sets_the_platform_to_utc() {
     assert_eq!(read_slot_state(d.path()).utc_offset_min, -120);
     assert_eq!(
         clock.get(),
-        typed + 120 * 60,
+        1_700_000_000 + 120 * 60,
         "the platform was set to local rather than to utc"
     );
 }
@@ -199,11 +202,10 @@ fn the_wall_clock_is_local_rather_than_the_utc_the_card_keeps() {
     assert_eq!(a.wall_secs(), 1_700_000_000 - 300 * 60);
 }
 
-/// An RTC that lost power comes up at the epoch after `clock_set` is already true. Reopening
-/// the picker on every boot would make a one-shot screen into a settings prompt, so the way
-/// back is About: tap A on the label when the clock reads as never set.
+/// An RTC that lost power comes up at the epoch after `clock_set` is already true. The platform
+/// reading wins over the persisted marker, so the picker is offered again before the shelf.
 #[test]
-fn a_dead_rtc_is_reopened_from_about() {
+fn a_dead_rtc_is_asked_for_again() {
     let d = tmp_root_with_carts(&["Emerald", "Fusion"]);
     write_slot_state(
         d.path(),
@@ -213,18 +215,10 @@ fn a_dead_rtc_is_reopened_from_about() {
         },
     )
     .unwrap();
-    let (mut a, _clock) = app_booting_at(d.path(), 0);
-    assert!(
-        matches!(a.phase(), Phase::Shelf),
-        "a confirmed clock reopened at boot: {:?}",
-        a.phase()
-    );
-    a.apply(Action::OpenAbout);
-    a.apply(Action::GbaDown(Btn::A));
-    a.apply(Action::GbaUp(Btn::A));
+    let (a, _clock) = app_booting_at(d.path(), 0);
     assert!(
         matches!(a.phase(), Phase::SetClock { .. }),
-        "tap A on the label did not reopen a dead clock: {:?}",
+        "a dead clock was taken at face value: {:?}",
         a.phase()
     );
 }
@@ -247,4 +241,82 @@ fn a_clock_that_looks_like_a_real_date_is_not_asked_for_again() {
         !matches!(a.phase(), Phase::SetClock { .. }),
         "asked again for a clock that was already right"
     );
+}
+
+const AT: i64 = 1_786_568_022;
+const OPEN_FOR: i64 = 100;
+
+#[derive(Copy, Clone, Debug)]
+enum ClockWay {
+    FirstBoot,
+    QuickMenu,
+}
+
+fn clock_screen(way: ClockWay) -> (tempfile::TempDir, App, Clock) {
+    let d = tmp_root_with_carts(&["Emerald", "Fusion"]);
+    if matches!(way, ClockWay::QuickMenu) {
+        write_slot_state(
+            d.path(),
+            &SlotState {
+                clock_set: true,
+                utc_offset_min: -300,
+                ..SlotState::default()
+            },
+        )
+        .unwrap();
+    }
+    let (mut a, clock) = app_booting_at(d.path(), AT);
+    if matches!(way, ClockWay::QuickMenu) {
+        a.apply(Action::QuickMenu);
+        for _ in 0..QuickRow::DateTime.index() {
+            a.apply(Action::GbaDown(Btn::Down));
+        }
+        a.apply(Action::GbaDown(Btn::A));
+    }
+    assert!(matches!(a.phase(), Phase::SetClock { .. }));
+    (d, a, clock)
+}
+
+#[test]
+fn confirming_the_clock_untouched_leaves_it_where_it_is() {
+    for way in [ClockWay::FirstBoot, ClockWay::QuickMenu] {
+        let (_d, mut a, clock) = clock_screen(way);
+        clock.advance(OPEN_FOR);
+        a.apply(Action::GbaDown(Btn::A));
+        assert_eq!(clock.get(), AT + OPEN_FOR, "{way:?}");
+    }
+}
+
+#[test]
+fn changing_the_minute_moves_the_clock_by_exactly_that_minute() {
+    for way in [ClockWay::FirstBoot, ClockWay::QuickMenu] {
+        let (_d, mut a, clock) = clock_screen(way);
+        for _ in 0..4 {
+            a.apply(Action::GbaDown(Btn::Right));
+        }
+        assert_eq!(a.picker().unwrap().cursor(), Field::Minute);
+        a.apply(Action::GbaDown(Btn::Up));
+        clock.advance(OPEN_FOR);
+        a.apply(Action::GbaDown(Btn::A));
+        assert_eq!(clock.get(), AT + OPEN_FOR + 60, "{way:?}");
+    }
+}
+
+#[test]
+fn changing_only_the_offset_moves_utc_by_exactly_that_change() {
+    for way in [ClockWay::FirstBoot, ClockWay::QuickMenu] {
+        let (d, mut a, clock) = clock_screen(way);
+        let before = a.picker().unwrap().offset_min();
+        for _ in 0..5 {
+            a.apply(Action::GbaDown(Btn::Right));
+        }
+        a.apply(Action::GbaDown(Btn::Down));
+        clock.advance(OPEN_FOR);
+        a.apply(Action::GbaDown(Btn::A));
+        assert_eq!(clock.get(), AT + OPEN_FOR + 30 * 60, "{way:?}");
+        assert_eq!(
+            i64::from(read_slot_state(d.path()).utc_offset_min),
+            before - 30
+        );
+    }
 }

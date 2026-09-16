@@ -192,6 +192,9 @@ fn eject_preserves_the_levels() {
             muted: true,
             clock_set: true,
             utc_offset_min: 0,
+            rumble: true,
+            ff_speed: 4,
+            ff_sound: false,
         },
     )
     .unwrap();

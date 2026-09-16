@@ -492,10 +492,11 @@ fn eject_is_the_insert_backwards() {
     assert!(a.screen_power() < first, "the screen is not closing");
 }
 
-/// The about screen is a shelf affordance. MENU means eject and polaroids once a cart is in,
-/// and a label over a running game is a pause screen nobody asked for.
+/// The quick menu, and the about screen inside it, are shelf affordances. MENU means eject and
+/// polaroids once a cart is in, and a menu over a running game is a pause screen nobody asked
+/// for.
 #[test]
-fn about_opens_from_the_shelf_and_nowhere_else() {
+fn the_quick_menu_opens_from_the_shelf_and_nowhere_else() {
     // Two carts, or `single_cart` makes this a dedicated device: one cart is seated at boot
     // whatever the state says, and the shelf is never on screen to press MENU from.
     let d = common::tmp_root_with_carts(&["Emerald", "Fusion"]);
@@ -506,36 +507,46 @@ fn about_opens_from_the_shelf_and_nowhere_else() {
         "not on the shelf: {:?}",
         s.app().phase()
     );
-    s.app_mut().apply(slot_input::Action::OpenAbout);
-    assert!(matches!(s.app().phase(), slot::app::Phase::About));
+    s.app_mut().apply(slot_input::Action::QuickMenu);
+    assert!(matches!(
+        s.app().phase(),
+        slot::app::Phase::QuickMenu { .. }
+    ));
 
-    // And a seated cart has no about screen at all.
+    // And a seated cart has no quick menu at all.
     s.app_mut()
         .apply(slot_input::Action::GbaDown(slot_input::Btn::B));
     s.app_mut().apply(slot_input::Action::Insert);
-    s.app_mut().apply(slot_input::Action::OpenAbout);
+    s.app_mut().apply(slot_input::Action::QuickMenu);
     assert!(
-        !matches!(s.app().phase(), slot::app::Phase::About),
-        "a label opened over a seated cart"
+        !matches!(s.app().phase(), slot::app::Phase::QuickMenu { .. }),
+        "a menu opened over a seated cart"
     );
 }
 
-/// Both ways out land on the shelf. MENU is the one that matters: the button that opened it
-/// should close it without the user having to know that B works too.
+/// Both ways out of the label land back on the quick menu, on its About row. MENU works as well
+/// as B, so the button that brought the user here gets them back.
 #[test]
-fn both_b_and_menu_close_the_about_screen() {
+fn both_b_and_menu_take_the_about_screen_back_to_the_quick_menu() {
     let d = common::tmp_root_with_carts(&["Emerald", "Fusion"]);
     for out in [
         slot_input::Action::GbaDown(slot_input::Btn::B),
-        slot_input::Action::OpenAbout,
+        slot_input::Action::QuickMenu,
     ] {
         let (mut s, _motor) = common::session_with_platform(d.path());
-        s.app_mut().apply(slot_input::Action::OpenAbout);
+        s.app_mut().apply(slot_input::Action::QuickMenu);
+        for _ in 0..slot_ui::QuickRow::About.index() {
+            s.app_mut()
+                .apply(slot_input::Action::GbaDown(slot_input::Btn::Down));
+        }
+        s.app_mut()
+            .apply(slot_input::Action::GbaDown(slot_input::Btn::A));
         assert!(matches!(s.app().phase(), slot::app::Phase::About));
         s.app_mut().apply(out);
-        assert!(
-            matches!(s.app().phase(), slot::app::Phase::Shelf),
-            "{out:?} did not close the label"
+        assert_eq!(
+            s.app().quick_menu(),
+            Some(slot_ui::QuickRow::About),
+            "{out:?} did not take the label back to the menu"
         );
     }
 }
@@ -543,7 +554,11 @@ fn both_b_and_menu_close_the_about_screen() {
 #[test]
 fn left_and_right_turn_the_about_plate_over() {
     let (_d, mut app) = on_shelf(&["Emerald", "Fusion"]);
-    app.apply(Action::OpenAbout);
+    app.apply(Action::QuickMenu);
+    for _ in 0..slot_ui::QuickRow::About.index() {
+        app.apply(Action::GbaDown(Btn::Down));
+    }
+    app.apply(Action::GbaDown(Btn::A));
     assert_eq!(app.about_page(), slot_ui::StickerPage::Credits);
     app.apply(Action::GbaDown(Btn::Right));
     assert_eq!(app.about_page(), slot_ui::StickerPage::Controls);
@@ -554,7 +569,11 @@ fn left_and_right_turn_the_about_plate_over() {
 #[test]
 fn holding_a_on_about_opens_the_clock() {
     let (_d, mut app) = on_shelf(&["Emerald", "Fusion"]);
-    app.apply(Action::OpenAbout);
+    app.apply(Action::QuickMenu);
+    for _ in 0..slot_ui::QuickRow::About.index() {
+        app.apply(Action::GbaDown(Btn::Down));
+    }
+    app.apply(Action::GbaDown(Btn::A));
     app.apply(Action::GbaDown(Btn::A));
     for _ in 0..40 {
         app.update(1.0 / 60.0);
@@ -569,7 +588,11 @@ fn holding_a_on_about_opens_the_clock() {
 #[test]
 fn tapping_a_on_about_leaves_a_live_clock_alone() {
     let (_d, mut app) = on_shelf(&["Emerald", "Fusion"]);
-    app.apply(Action::OpenAbout);
+    app.apply(Action::QuickMenu);
+    for _ in 0..slot_ui::QuickRow::About.index() {
+        app.apply(Action::GbaDown(Btn::Down));
+    }
+    app.apply(Action::GbaDown(Btn::A));
     app.apply(Action::GbaDown(Btn::A));
     app.apply(Action::GbaUp(Btn::A));
     assert!(
@@ -597,35 +620,6 @@ fn idle_hints_do_not_appear_on_shelf() {
         !out.iter()
             .any(|d| matches!(d, Draw::Tex { tex, .. } if *tex == TexId::from_raw(7))),
         "idle hints should not appear on the minimalist shelf"
-    );
-}
-
-#[test]
-fn about_shows_the_clock_hint_when_the_rtc_is_dead() {
-    let d = common::tmp_root_with_carts(&["Emerald", "Fusion"]);
-    write_slot_state(
-        d.path(),
-        &SlotState {
-            clock_set: true,
-            ..Default::default()
-        },
-    )
-    .unwrap();
-    let (mut app, _clock) = common::app_booting_at(d.path(), 0);
-    app.set_about_flip_face(TexId::from_raw(12), 90);
-    app.set_about_clock_hint(TexId::from_raw(11), 80);
-    app.apply(Action::OpenAbout);
-    let mut out = Vec::new();
-    app.draw(&mut out);
-    assert!(
-        out.iter()
-            .any(|d| matches!(d, Draw::Tex { tex, .. } if *tex == TexId::from_raw(11))),
-        "a dead clock did not offer A on the label: {out:?}"
-    );
-    assert!(
-        !out.iter()
-            .any(|d| matches!(d, Draw::Tex { tex, .. } if *tex == TexId::from_raw(12))),
-        "Flip stayed on while the clock needed setting"
     );
 }
 
@@ -1877,14 +1871,22 @@ fn holding_a_progresses_to_clean_start_without_charging_bar() {
 
     app.apply(Action::GbaDown(Btn::A));
     app.update(0.04);
-    assert_eq!(app.play_held_progress(), 0.0, "short press should not progress yet");
+    assert_eq!(
+        app.play_held_progress(),
+        0.0,
+        "short press should not progress yet"
+    );
 
     app.update(0.20);
-    assert!(app.play_held_progress() > 0.0, "held A should show progress");
+    assert!(
+        app.play_held_progress() > 0.0,
+        "held A should show progress"
+    );
     out.clear();
     app.draw(&mut out);
     assert!(
-        !out.iter().any(|d| matches!(d, Draw::Rect { y, h, .. } if (*y - 310.0).abs() < 0.1 && *h == 3.0)),
+        !out.iter()
+            .any(|d| matches!(d, Draw::Rect { y, h, .. } if (*y - 310.0).abs() < 0.1 && *h == 3.0)),
         "charging bar should NOT be drawn while holding A"
     );
 
@@ -1904,7 +1906,9 @@ fn shelf_count_face_is_not_drawn_when_set() {
     let mut out = Vec::new();
     app.draw(&mut out);
     assert!(
-        !out.iter().any(|d| matches!(d, Draw::Tex { tex: t, y, .. } if *t == tex && (*y - 8.0).abs() < 0.1)),
+        !out.iter().any(
+            |d| matches!(d, Draw::Tex { tex: t, y, .. } if *t == tex && (*y - 8.0).abs() < 0.1)
+        ),
         "shelf count face should not be drawn for a minimalist shelf"
     );
 }
@@ -1920,11 +1924,13 @@ fn power_menu_draws_action_legend() {
     let mut out = Vec::new();
     app.draw(&mut out);
     assert!(
-        out.iter().any(|d| matches!(d, Draw::Tex { tex, .. } if *tex == cancel.0)),
+        out.iter()
+            .any(|d| matches!(d, Draw::Tex { tex, .. } if *tex == cancel.0)),
         "power menu should draw cancel legend"
     );
     assert!(
-        out.iter().any(|d| matches!(d, Draw::Tex { tex, .. } if *tex == select.0)),
+        out.iter()
+            .any(|d| matches!(d, Draw::Tex { tex, .. } if *tex == select.0)),
         "power menu should draw select legend"
     );
 }
@@ -1933,13 +1939,19 @@ fn power_menu_draws_action_legend() {
 fn set_clock_can_be_cancelled_with_b_when_clock_valid() {
     let (_d, mut app) = on_shelf(&["Emerald", "Fusion"]);
     fake_boot_faces(&mut app);
-    app.apply(Action::OpenAbout);
-    assert!(matches!(app.phase(), Phase::About));
+    app.apply(Action::QuickMenu);
+    for _ in 0..slot_ui::QuickRow::DateTime.index() {
+        app.apply(Action::GbaDown(Btn::Down));
+    }
     app.apply(Action::GbaDown(Btn::A));
     app.update(0.6);
     assert!(matches!(app.phase(), Phase::SetClock { .. }));
     app.apply(Action::GbaDown(Btn::B));
-    assert!(matches!(app.phase(), Phase::About), "B should return to About");
+    assert_eq!(
+        app.quick_menu(),
+        Some(slot_ui::QuickRow::DateTime),
+        "B should return to Date & Time"
+    );
 }
 
 #[test]

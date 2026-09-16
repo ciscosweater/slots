@@ -231,6 +231,12 @@ impl Clock {
     pub fn get(&self) -> i64 {
         self.0.load(Ordering::Relaxed)
     }
+
+    /// Moves the clock on by hand, standing in for time passing while a screen is open. It does
+    /// not run by itself, so clock assertions remain deterministic.
+    pub fn advance(&self, secs: i64) {
+        self.0.fetch_add(secs, Ordering::Relaxed);
+    }
 }
 
 /// Stands in for the device the power path acts on.

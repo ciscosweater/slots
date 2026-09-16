@@ -19,6 +19,7 @@ existing installation can be updated without changing its launcher contract.
 - Gambatte for GB and GBC, with a PixelShift BGB palette for GB and accurate GBC colour correction.
 - Platform filters: `ALL`, `REC`, `GBA`, `GB` and `GBC`.
 - Favorites, recent games, save-state rings, rewind, fast-forward and lid-aware standby.
+- Quick menu entries for Fast Forward, Fast Forward Sound, Rumble, Date & Time and About.
 - Optional custom cartridge artwork, labels, wallpapers, BIOS files and colour themes.
 - GBA link support through gpSP between two RG SP devices.
 
@@ -187,7 +188,8 @@ Emulator` palette, while GBC uses Gambatte's GBC colour correction.
 | `X` | Toggle the LCD effect |
 | Tap `A` | Resume the last save state |
 | Hold `A` | Start the game fresh |
-| `MENU` | Open the about screen; `L` / `R` turns it over, and hold `A` sets the clock |
+| `MENU` | Open the quick menu |
+| Quick menu | `Up` / `Down` select; `Left` / `Right` change values; `B` / `MENU` close; `A` opens `Date & Time` or `About` |
 | `START` | Choose which GBA core runs the cart |
 
 ### In game

@@ -47,15 +47,15 @@ pub enum Action {
     BlueLightDown,
     VolumeUp,
     VolumeDown,
-    /// The about screen, off a tap of MENU. The button's other two gestures both need a
+    /// The quick menu, off a tap of MENU. The button's other two gestures both need a
     /// game under them, so on the shelf a tap of it meant nothing at all.
-    OpenAbout,
-    /// The in-game menu, off SELECT+MENU. Emitted on every screen, exactly as `OpenAbout`
+    QuickMenu,
+    /// The in-game menu, off SELECT+MENU. Emitted on every screen, exactly as `QuickMenu`
     /// and `Polaroids` are: this file is blind to which screen is up, and the app is what
     /// decides where a gesture lands.
     ///
     /// Not START, which in a game is the GBA's own and the game needs it; not a bare MENU
-    /// tap, which the about screen already has.
+    /// tap, which the quick menu already has.
     GameMenu,
     MuteToggle,
     /// The press itself. Nothing visible hangs off it — it exists so the save state is
@@ -166,6 +166,7 @@ impl Gestures {
         if !enabled {
             self.ff_latched = false;
             self.ff_latching_press = false;
+            self.ff_on = false;
             self.r2_last_release = None;
         }
     }
@@ -336,7 +337,7 @@ impl Gestures {
         // nothing on the shelf anyway. A second tap inside the window still opens the
         // polaroids, and whoever gets both is on a screen where only one of them lands.
         match tapped {
-            true => vec![Action::OpenAbout],
+            true => vec![Action::QuickMenu],
             false => Vec::new(),
         }
     }

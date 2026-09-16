@@ -8,15 +8,16 @@ use slot_retro::LinkChannel;
 use slot_store::{
     format_stamp, read_favorites, read_lcd, read_pixelify, read_recents, read_slot_state,
     touch_recent, write_favorites, write_lcd, write_pixelify, write_recents, write_slot_state,
-    Cart, Core, SlotState, StateEntry, StateRing, Theme, BLUE_LIGHT_MAX, BRIGHTNESS_MAX, RING_MAX,
-    VOLUME_MAX,
+    Cart, Core, SlotState, StateEntry, StateRing, Theme, BLUE_LIGHT_MAX, BRIGHTNESS_MAX,
+    FF_SPEED_MAX, FF_SPEED_MIN, RING_MAX, VOLUME_MAX,
 };
 use slot_ui::{
     board_at, board_zoom, draw_backdrop, draw_empty_slot, draw_footer, draw_printed, draw_sticker,
     ease, grown, lid_at, lift_of, on_board, ClockPicker, Draw, FfState, Hud, HudKind, Icon,
-    LinkBadge, Millis, Placed, Polaroids, PowerChoice, Printed, Refusal, Shelf, SlotChrome,
-    StickerPage, TexId, Toast, BOARD_W, BOARD_X, CART_W, CHIP_H, CHIP_U, CHIP_V, CHIP_W, HINT_EDGE,
-    HINT_H, HOP_LIFT, SHADOW_H, SHADOW_W, SOCKET_H, SOCKET_U, SOCKET_V, SOCKET_W, TURN_PAD,
+    LinkBadge, Millis, Placed, Polaroids, PowerChoice, Printed, QuickMenu, QuickMenuFaces,
+    QuickRow, QuickValue, Refusal, Shelf, SlotChrome, StickerPage, TexId, Toast, BOARD_W, BOARD_X,
+    CART_W, CHIP_H, CHIP_U, CHIP_V, CHIP_W, HINT_EDGE, HINT_H, HOP_LIFT, SHADOW_H, SHADOW_W,
+    SOCKET_H, SOCKET_U, SOCKET_V, SOCKET_W, TURN_PAD,
 };
 
 use crate::audio::Sfx;
@@ -296,11 +297,25 @@ pub const LINKED_HOLD_MS: Millis = 1000;
 #[derive(Debug)]
 pub enum Phase {
     /// Slot's own first launch, ahead of the shelf and ahead of a seated cart. Three things
-    /// run off the wall clock and a cartridge RTC is the one that breaks silently.
+    /// run off the wall clock and a cartridge RTC is the one that breaks silently. Also the
+    /// quick menu's Date & Time, which is the same screen opened again.
     SetClock {
         picker: ClockPicker,
+        /// The UTC the picker opened on, to the minute it shows. The clock keeps running under
+        /// the screen, so confirming sets it to now plus however far the picker was moved from
+        /// here, never to the picker's own reading.
+        seed: i64,
+        /// Opened from the quick menu, so B goes back to it and confirming returns to it. At
+        /// first boot there is nothing behind the screen, and confirming goes on to the shelf.
+        from_menu: bool,
     },
     Shelf,
+    /// The settings, off a tap of MENU on the carousel. A screen of its own, as the label is,
+    /// holding the row in hand. The shelf keeps its place underneath, so MENU or B puts the
+    /// carousel back exactly where it was.
+    QuickMenu {
+        row: QuickRow,
+    },
     Inserting {
         cart: String,
         t: f32,
@@ -324,7 +339,8 @@ pub enum Phase {
         cart: String,
     },
     /// The label. A screen of its own rather than a panel, because it is one object being
-    /// looked at and there is nothing else on it.
+    /// looked at and there is nothing else on it. Opened from the quick menu, and left back
+    /// to it.
     About,
     Doze {
         cart: Option<String>,
@@ -475,9 +491,14 @@ pub struct App {
     /// rasterised on the way into the switcher. All of them outlive any one opening.
     legend_faces: Vec<TexId>,
     undo_face: Option<TexId>,
-    /// The clock screen's line of type and its one instruction. Rasterised by the binary,
-    /// and gone for the rest of the session once the clock is confirmed.
+    /// The clock screen's line of type and its one instruction. Rasterised by the binary
+    /// whenever the line changes.
     clock_faces: Option<(TexId, TexId)>,
+    /// The quick menu's rows, values, arrows and legend, uploaded once at boot.
+    quick_menu_faces: Option<QuickMenuFaces>,
+    /// Date & Time's value, grey then lit. Rebuilt by the binary when the minute turns, and only
+    /// while the menu is up.
+    quick_clock_faces: Option<[(TexId, u32, u32); 2]>,
     /// The label, rasterised whole. Re-uploaded when the gauge moves.
     sticker_face: Option<TexId>,
     /// One picture from `Wallpapers`, behind everything the shelf draws. `None` on a card
@@ -593,6 +614,8 @@ impl App {
             legend_faces: Vec::new(),
             undo_face: None,
             clock_faces: None,
+            quick_menu_faces: None,
+            quick_clock_faces: None,
             sticker_face: None,
             wallpaper: None,
             battery_percent: slot_ui::Printed::default(),
@@ -638,9 +661,7 @@ impl App {
         } else {
             // Seeded from the system clock and re-seeded by `set_power`, which is the first
             // moment there is a platform whose clock is the device's rather than the host's.
-            app.phase = Phase::SetClock {
-                picker: ClockPicker::from_secs(system_secs()),
-            };
+            app.phase = clock_screen(system_secs(), 0, false);
         }
         app
     }
@@ -680,23 +701,39 @@ impl App {
         }
     }
 
-    /// Confirms whatever is on the clock screen. First boot and a dead RTC both land here;
-    /// About can open it again so a clock that lost power is not stuck for good.
+    /// Confirms whatever is on the clock screen, setting the clock and the offset the same way
+    /// however the screen was reached. At first boot this is the only way off it and it goes on
+    /// to the shelf; opened from the quick menu, it goes back to the menu.
     pub fn confirm_clock(&mut self) {
-        let Phase::SetClock { picker } = &self.phase else {
+        let Phase::SetClock {
+            picker,
+            seed,
+            from_menu,
+        } = &self.phase
+        else {
             return;
         };
-        // Both read off before the borrow ends. The platform is given utc, because that is
+        // All read off before the borrow ends. The platform is given utc, because that is
         // what the base system's clock and its ntp both assume the card holds; the offset is
         // kept beside it as the only thing that turns it back into the time on the wall.
-        let (secs, offset) = (picker.secs(), picker.offset_min());
+        let (moved, offset, from_menu) = (picker.secs() - *seed, picker.offset_min(), *from_menu);
+        // Only what was changed, on top of the clock as it stands. The picker shows the minute
+        // and stands still while it is up, so setting the clock to what it says would turn it
+        // back by the seconds past that minute and by however long the screen was open.
+        let secs = self.utc_secs() + moved;
         if let Some(power) = &mut self.power {
             power.set_clock(secs);
         }
         self.state.utc_offset_min = offset as i16;
         self.state.clock_set = true;
         self.persist();
-        self.start();
+        if from_menu {
+            self.phase = Phase::QuickMenu {
+                row: QuickRow::DateTime,
+            };
+        } else {
+            self.start();
+        }
     }
 
     /// Seconds since the epoch, from the platform once there is one. The shelf clock and the
@@ -710,17 +747,49 @@ impl App {
     /// named by all come through here, so the offset is applied once rather than at each of
     /// them, and none of them can disagree with the others about what time it is.
     pub fn wall_secs(&self) -> i64 {
-        let utc = self.power.as_ref().map_or_else(system_secs, |p| p.now());
-        utc + i64::from(self.state.utc_offset_min) * 60
+        self.utc_secs() + i64::from(self.state.utc_offset_min) * 60
+    }
+
+    /// The clock the card keeps, in UTC: the platform's once there is one, the host's before.
+    fn utc_secs(&self) -> i64 {
+        self.power.as_ref().map_or_else(system_secs, |p| p.now())
     }
 
     /// What the clock screen is showing, or `None` off it. The binary rasterises from it and
     /// watches its text to know when to do so again.
     pub fn picker(&self) -> Option<&ClockPicker> {
         match &self.phase {
-            Phase::SetClock { picker } => Some(picker),
+            Phase::SetClock { picker, .. } => Some(picker),
             _ => None,
         }
+    }
+
+    /// The row in hand while the quick menu is up, and `None` everywhere else.
+    pub fn quick_menu(&self) -> Option<QuickRow> {
+        match self.phase {
+            Phase::QuickMenu { row } => Some(row),
+            _ => None,
+        }
+    }
+
+    /// What a row of the quick menu shows. `None` for the two rows that open something: Date &
+    /// Time's value is the clock, which the binary rasterises, and About has none.
+    pub fn quick_value(&self, row: QuickRow) -> Option<QuickValue> {
+        match row {
+            QuickRow::FastForward => QuickValue::speed(self.state.ff_speed),
+            QuickRow::FastForwardSound => Some(QuickValue::flag(self.state.ff_sound)),
+            QuickRow::Rumble => Some(QuickValue::flag(self.state.rumble)),
+            QuickRow::DateTime | QuickRow::About => None,
+        }
+    }
+
+    pub fn set_quick_menu_faces(&mut self, faces: QuickMenuFaces) {
+        self.quick_menu_faces = Some(faces);
+    }
+
+    /// Date & Time's value, grey and lit, each with the size it was rastered at.
+    pub fn set_quick_clock_faces(&mut self, dim: (TexId, u32, u32), lit: (TexId, u32, u32)) {
+        self.quick_clock_faces = Some([dim, lit]);
     }
 
     pub fn set_sticker_face(&mut self, face: TexId) {
@@ -1094,12 +1163,12 @@ impl App {
         // The device's own clock, which the host's stands in for. Boot has nothing better to
         // seed the picker from, so a device with a live RTC only gets its confirmation here.
         // The first moment the device's own clock can be asked, and so the first moment a
-        // clock that was never set can be told apart from one that was. A clock that dies
-        // after that is About's to reopen — interrupting a seated cart, or a test that
-        // attached a stub platform sitting at epoch 0, is not a first-boot.
+        // clock that was never set can be told apart from one that was. Boot has already
+        // taken `clock_set` at its word by here, which is exactly the case that leaves a
+        // dead RTC with no way back to the one screen that could fix it.
         let secs = power.now();
-        if let Phase::SetClock { picker } = &mut self.phase {
-            *picker = ClockPicker::from_secs(secs);
+        if matches!(self.phase, Phase::SetClock { .. }) || secs < CLOCK_FLOOR {
+            self.phase = clock_screen(secs, 0, false);
         }
         self.power = Some(power);
         // There is nothing to read before this call — no gauge for `battery_at`, no charge
@@ -1113,6 +1182,22 @@ impl App {
         self.battery_at = self.now();
         self.charge_at = self.now();
         self.last_led = None;
+    }
+
+    /// Whether the quick menu lets the motor move at all. `Session::sync_rumble` is what holds
+    /// it still when it does not.
+    pub fn rumble_enabled(&self) -> bool {
+        self.state.rumble
+    }
+
+    /// Core frames per present while fast-forwarding, as the quick menu chose.
+    pub fn ff_speed(&self) -> u8 {
+        self.state.ff_speed
+    }
+
+    /// Whether fast-forward is heard, sped up, rather than dropped.
+    pub fn ff_sound(&self) -> bool {
+        self.state.ff_sound
     }
 
     /// The motor. Never persisted and never a level: it belongs to the cart that asked for
@@ -1334,15 +1419,21 @@ impl App {
         }
         // Ahead of the levels too. A screen with no way back is not one to be adjusting the
         // backlight from, and the clock owns all four directions.
-        if let Phase::SetClock { picker } = &mut self.phase {
+        if let Phase::SetClock {
+            picker, from_menu, ..
+        } = &mut self.phase
+        {
             match action {
                 Action::GbaDown(Btn::Left) | Action::ShelfLeft => picker.left(),
                 Action::GbaDown(Btn::Right) | Action::ShelfRight => picker.right(),
                 Action::GbaDown(Btn::Up) => picker.up(),
                 Action::GbaDown(Btn::Down) => picker.down(),
                 Action::GbaDown(Btn::A) | Action::Insert => self.confirm_clock(),
-                Action::GbaDown(Btn::B) if !self.clock_needs_setting() => {
-                    self.phase = Phase::About;
+                // Only the way in from the quick menu has a way back, and it changes nothing.
+                Action::GbaDown(Btn::B) if *from_menu => {
+                    self.phase = Phase::QuickMenu {
+                        row: QuickRow::DateTime,
+                    }
                 }
                 _ => {}
             }
@@ -1400,7 +1491,7 @@ impl App {
                     Action::FfStart => self.shelf.next_category(),
                     Action::GbaDown(Btn::Select) => self.toggle_font(),
                     Action::GbaDown(Btn::Y) => self.toggle_favorite(),
-                    Action::OpenAbout => self.phase = Phase::About,
+                    Action::QuickMenu => self.open_quick_menu(),
                     // A is two actions and the press cannot tell them apart yet, so the cart
                     // goes in on the release. The hold has already taken it if it got there
                     // first, and then the release is not a second press.
@@ -1448,7 +1539,13 @@ impl App {
             // back without having to know that B also works. L/R turns the plate over; A
             // (or a hold of A) opens the clock when the RTC is dead, and a hold always does.
             Phase::About => match action {
-                Action::GbaDown(Btn::B) | Action::OpenAbout => self.phase = Phase::Shelf,
+                // Back to the menu it was opened from, on the row that opened it. MENU as well as
+                // B, so the button that brought the user here gets them back.
+                Action::GbaDown(Btn::B) | Action::QuickMenu => {
+                    self.phase = Phase::QuickMenu {
+                        row: QuickRow::About,
+                    }
+                }
                 Action::GbaDown(Btn::Left)
                 | Action::GbaDown(Btn::Right)
                 | Action::ShelfLeft
@@ -1464,8 +1561,72 @@ impl App {
                 }
                 _ => {}
             },
+            Phase::QuickMenu { row } => self.quick_menu_input(row, action),
             _ => {}
         }
+    }
+
+    /// MENU on the carousel. On the top row every time, however the menu was last left.
+    fn open_quick_menu(&mut self) {
+        self.phase = Phase::QuickMenu {
+            row: QuickRow::ALL[0],
+        };
+    }
+
+    /// Up and Down move the bar and stop at the ends, Left and Right change the row in hand, A
+    /// opens the two rows that open, and MENU or B puts the carousel back.
+    fn quick_menu_input(&mut self, row: QuickRow, action: Action) {
+        let row = match action {
+            Action::GbaDown(Btn::Up) => row.up(),
+            Action::GbaDown(Btn::Down) => row.down(),
+            Action::GbaDown(Btn::Left) => return self.change_setting(row, false),
+            Action::GbaDown(Btn::Right) => return self.change_setting(row, true),
+            Action::GbaDown(Btn::A) => return self.open_quick_row(row),
+            Action::GbaDown(Btn::B) | Action::QuickMenu => {
+                self.phase = Phase::Shelf;
+                return;
+            }
+            _ => return,
+        };
+        self.phase = Phase::QuickMenu { row };
+    }
+
+    /// A on a row. Only Date & Time and About open anything.
+    fn open_quick_row(&mut self, row: QuickRow) {
+        match row {
+            QuickRow::DateTime => {
+                // Started from the clock as it stands, offset and all: this is a clock being
+                // corrected, not one being asked for the first time.
+                self.phase = clock_screen(self.utc_secs(), self.state.utc_offset_min, true);
+            }
+            QuickRow::About => self.phase = Phase::About,
+            QuickRow::FastForward | QuickRow::FastForwardSound | QuickRow::Rumble => {}
+        }
+    }
+
+    /// Left or Right on the row in hand. It takes effect at once and goes straight to the card,
+    /// the way brightness does, with no save step to forget. A press against an end changes
+    /// nothing and writes nothing.
+    fn change_setting(&mut self, row: QuickRow, right: bool) {
+        let s = &mut self.state;
+        match row {
+            QuickRow::FastForward => {
+                let to = if right {
+                    up(s.ff_speed, 1, FF_SPEED_MAX)
+                } else {
+                    s.ff_speed.saturating_sub(1).max(FF_SPEED_MIN)
+                };
+                if to == s.ff_speed {
+                    return;
+                }
+                s.ff_speed = to;
+            }
+            // Two values each, so either arrow is the other one.
+            QuickRow::FastForwardSound => s.ff_sound = !s.ff_sound,
+            QuickRow::Rumble => s.rumble = !s.rumble,
+            QuickRow::DateTime | QuickRow::About => return,
+        }
+        self.persist();
     }
 
     /// Applied at a stated moment rather than at whatever the accumulated clock has reached.
@@ -1957,14 +2118,31 @@ impl App {
         match &self.phase {
             // Nothing else is on screen and nothing goes over it, the HUD included: the
             // levels are unreachable here and there is no game to say anything about.
-            Phase::SetClock { picker } => {
+            Phase::SetClock {
+                picker, from_menu, ..
+            } => {
                 let (line, hint) = match self.clock_faces {
                     Some((line, hint)) => (Some(line), Some(hint)),
                     None => (None, None),
                 };
-                picker.draw(line, hint, out);
+                // The quick menu's own B BACK, when there is a menu to go back to.
+                let back = self
+                    .quick_menu_faces
+                    .as_ref()
+                    .filter(|_| *from_menu)
+                    .map(|f| f.legend[0]);
+                picker.draw(line, hint, back, out);
                 return;
             }
+            // Not returned from: brightness and volume are still answered here, and the bar they
+            // raise goes over the menu the way it goes over the shelf.
+            Phase::QuickMenu { row } => QuickMenu {
+                row: *row,
+                values: QuickRow::ALL.map(|r| self.quick_value(r)),
+                clock: self.quick_clock_faces,
+                faces: self.quick_menu_faces.as_ref(),
+            }
+            .draw(out),
             Phase::Shelf => {
                 draw_backdrop(self.wallpaper, out);
                 match (self.core_picker_shown(), self.selected_stem()) {
@@ -2601,11 +2779,9 @@ impl App {
     }
 
     fn open_clock(&mut self) {
-        let secs = self.power.as_ref().map_or_else(system_secs, |p| p.now());
+        let secs = self.utc_secs();
         self.play_held = None;
-        self.phase = Phase::SetClock {
-            picker: ClockPicker::from_secs(secs),
-        };
+        self.phase = clock_screen(secs, 0, false);
     }
 
     fn eject(&mut self) {
@@ -3528,6 +3704,17 @@ fn trusted_write(
 
 fn up(level: u8, step: u8, max: u8) -> u8 {
     level.saturating_add(step).min(max)
+}
+
+/// The clock screen, opened on `utc` with `offset_min` already chosen. The picker shows only the
+/// minute, so the minute it opened on is kept beside it as the seed `confirm_clock` measures the
+/// user's change from.
+fn clock_screen(utc: i64, offset_min: i16, from_menu: bool) -> Phase {
+    Phase::SetClock {
+        picker: ClockPicker::local(utc, offset_min),
+        seed: utc - utc.rem_euclid(60),
+        from_menu,
+    }
 }
 
 /// The host's own clock, which is all there is before `set_power` hands over the device's.
