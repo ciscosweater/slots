@@ -370,8 +370,8 @@ fn menu_under_a_select_the_game_already_has_is_not_the_menu() {
 ///
 /// It has to begin with a real tap, or the half of that which matters is invisible: the tap
 /// leaves a double tap window open, the chord lands inside it, and a chord that does not
-/// close that window leaves the very next MENU tap opening the switcher instead of the about
-/// screen — a press whose meaning depends on a chord two presses ago.
+/// close that window leaves the very next MENU tap opening the switcher instead of the quick
+/// menu — a press whose meaning depends on a chord two presses ago.
 #[test]
 fn the_menu_button_still_works_after_a_chord() {
     let mut g = Gestures::new();
