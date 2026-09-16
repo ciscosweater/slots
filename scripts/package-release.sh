@@ -9,8 +9,8 @@ usage() {
 	cat <<'USAGE'
 Usage: scripts/package-release.sh VERSION [options]
 
-Build, verify, and package a H700 release. VERSION may be written as 1.0.1
-or v1.0.1. The resulting files are written to dist/releases by default:
+Build, verify, and package a H700 release. VERSION may be written as 1.0.0
+or v1.0.0. The resulting files are written to dist/releases by default:
 
   slots-vVERSION-h700.zip
   slots-vVERSION-h700.zip.sha256
