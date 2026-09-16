@@ -4,7 +4,7 @@ use std::thread::JoinHandle;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
-use super::ring::Ring;
+use super::ring::{ring_capacity, Ring};
 use super::sink::{AudioError, AudioSink};
 
 pub struct HostAudio {
@@ -28,7 +28,10 @@ struct Opening {
 impl HostAudio {
     pub fn new() -> Self {
         HostAudio {
-            ring: Arc::new(Ring::new(0)),
+            // Keep a usable silent buffer when a desktop runner has no output device. The
+            // hardware path reopens this ring at the device's actual rate once it succeeds;
+            // until then, UI sounds remain observable and the application can still run.
+            ring: Arc::new(Ring::new(ring_capacity(super::GBA_HZ))),
             device: None,
         }
     }
