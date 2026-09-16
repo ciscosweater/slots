@@ -8,7 +8,8 @@ use slot::audio::Sfx;
 use slot::session::Session;
 use slot_input::{Action, Btn, RawEvent};
 use slot_store::{
-    read_favorites, read_lcd, read_pixelify, read_recents, write_slot_state, Cart, Core, SlotState,
+    read_favorites, read_last_shelf, read_lcd, read_pixelify, read_recents, write_slot_state, Cart,
+    Core, SlotState,
 };
 use slot_ui::{
     board_at, grown, lid_at, on_board, opening, shelf_cart, Draw, Placed, Printed, TexId, Toast,
@@ -658,6 +659,35 @@ fn y_toggles_a_persistent_favorite_and_moves_it_to_the_front() {
     rebooted.apply(Action::GbaDown(Btn::Y));
     assert_eq!(rebooted.toast(), Some(Toast::Unfavorited));
     assert!(read_favorites(d.path()).is_empty());
+}
+
+#[test]
+fn the_shelf_selection_survives_a_reboot_and_a_render() {
+    let (d, mut app) = on_shelf(&["Advance", "Boktai", "Crash"]);
+    app.apply(Action::GbaDown(Btn::Right));
+    app.apply(Action::GbaDown(Btn::Right));
+    assert_eq!(app.selected_stem(), Some("Crash"));
+    assert_eq!(read_last_shelf(d.path()).as_deref(), Some("Crash"));
+
+    let rebooted = App::boot(d.path());
+    assert_eq!(rebooted.selected_stem(), Some("Crash"));
+    let mut out = Vec::new();
+    rebooted.draw(&mut out);
+    assert_eq!(rebooted.selected_stem(), Some("Crash"));
+}
+
+#[test]
+fn a_held_shelf_direction_persists_the_cart_reached_by_repeat() {
+    let (d, mut app) = on_shelf(&["Advance", "Boktai", "Crash", "Emerald"]);
+    app.apply(Action::GbaDown(Btn::Right));
+    assert_eq!(app.selected_stem(), Some("Boktai"));
+
+    // The first repeat is due after 400 ms. `update` also performs the persistence check used by
+    // the frame loop, rather than relying only on the initial button press.
+    app.update(0.4);
+    assert_eq!(app.selected_stem(), Some("Crash"));
+    assert_eq!(read_last_shelf(d.path()).as_deref(), Some("Crash"));
+    app.apply(Action::GbaUp(Btn::Right));
 }
 
 #[test]

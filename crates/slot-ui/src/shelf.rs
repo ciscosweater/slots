@@ -418,6 +418,19 @@ impl Shelf {
         self.step(1);
     }
 
+    /// Select a cart by its stable filename stem. Indices can change when a category or the
+    /// favourite order is rebuilt, so callers restoring the shelf must use the stem instead.
+    pub fn select_stem(&mut self, stem: &str) -> bool {
+        let Some(index) = self.carts.iter().position(|cart| cart.stem == stem) else {
+            return false;
+        };
+        self.index = index;
+        self.scroll = index as f32;
+        self.vel = 0.0;
+        self.held = None;
+        true
+    }
+
     /// Move to the first cart whose initial differs from the selected cart's. Carts are
     /// sorted by stem, so this skips the rest of the current letter in one press. The row is
     /// circular just like ordinary browsing: right from the last letter reaches the first,

@@ -1,7 +1,9 @@
 mod common;
 
 use common::tmp_root;
-use slot_store::{atomic_write, read_slot_state, write_slot_state, SlotState};
+use slot_store::{
+    atomic_write, read_last_shelf, read_slot_state, write_last_shelf, write_slot_state, SlotState,
+};
 use tempfile::tempdir;
 
 #[test]
@@ -17,6 +19,16 @@ fn atomic_write_leaves_no_partial_file_and_no_temp_behind() {
         .filter(|e| e.file_name() != "x.bin")
         .collect();
     assert!(strays.is_empty(), "temp files left behind: {strays:?}");
+}
+
+#[test]
+fn the_last_shelf_selection_round_trips_separately_from_slot_state() {
+    let d = tmp_root();
+    write_last_shelf(d.path(), "Pokemon = Emerald").unwrap();
+    assert_eq!(
+        read_last_shelf(d.path()).as_deref(),
+        Some("Pokemon = Emerald")
+    );
 }
 
 #[test]

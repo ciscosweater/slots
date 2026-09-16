@@ -6,10 +6,10 @@ use slot_input::{Action, Btn, MUTE_CHORD_MS};
 use slot_power::{Battery, Charge, LedState, LidPolicy, Power};
 use slot_retro::LinkChannel;
 use slot_store::{
-    format_stamp, read_favorites, read_lcd, read_pixelify, read_recents, read_slot_state,
-    touch_recent, write_favorites, write_lcd, write_pixelify, write_recents, write_slot_state,
-    Cart, Core, SlotState, StateEntry, StateRing, Theme, BLUE_LIGHT_MAX, BRIGHTNESS_MAX,
-    FF_SPEED_MAX, FF_SPEED_MIN, RING_MAX, VOLUME_MAX,
+    format_stamp, read_favorites, read_last_shelf, read_lcd, read_pixelify, read_recents,
+    read_slot_state, touch_recent, write_favorites, write_last_shelf, write_lcd, write_pixelify,
+    write_recents, write_slot_state, Cart, Core, SlotState, StateEntry, StateRing, Theme,
+    BLUE_LIGHT_MAX, BRIGHTNESS_MAX, FF_SPEED_MAX, FF_SPEED_MIN, RING_MAX, VOLUME_MAX,
 };
 use slot_ui::{
     board_at, board_zoom, draw_backdrop, draw_empty_slot, draw_footer, draw_printed, draw_sticker,
@@ -439,6 +439,9 @@ pub struct App {
     root: Option<PathBuf>,
     favorites: BTreeSet<String>,
     recents: Vec<String>,
+    /// The last highlighted cart on the shelf. Kept separately from `state.cart`, which is the
+    /// cart physically seated in the slot and is cleared as soon as it is ejected.
+    last_shelf_stem: Option<String>,
     shelf_captions: BTreeMap<String, (Printed, Printed)>,
     favorite_caption: Printed,
     empty_caption: Printed,
@@ -587,6 +590,7 @@ impl App {
             root: None,
             favorites: BTreeSet::new(),
             recents: Vec::new(),
+            last_shelf_stem: None,
             shelf_captions: BTreeMap::new(),
             favorite_caption: Printed::default(),
             empty_caption: Printed::default(),
@@ -652,6 +656,7 @@ impl App {
         app.shelf.sort_by_favorites(&app.favorites);
         app.recents = read_recents(root);
         app.shelf.set_recents(app.recents.clone());
+        app.last_shelf_stem = read_last_shelf(root);
         app.lcd = read_lcd(root);
         app.pixelify = read_pixelify(root);
         slot_ui::text::set_pixelify(app.pixelify);
@@ -684,8 +689,8 @@ impl App {
         match seated {
             Some(i) => {
                 // The shelf sits on the resumed cart so ejecting it lands where it left.
-                self.shelf.index = i;
-                self.shelf.scroll = i as f32;
+                let stem = self.shelf.carts[i].stem.clone();
+                self.shelf.select_stem(&stem);
                 // Never clean: a resume is the whole point of the cart still being in there.
                 self.insert(false);
                 if let Phase::Inserting { resumed, t, .. } = &mut self.phase {
@@ -697,8 +702,14 @@ impl App {
             }
             // A cart the library no longer has is an empty slot. Left uncorrected on disk:
             // the next seat rewrites it, and a boot is the worst moment to need a write.
-            None => self.state.cart = None,
+            None => {
+                self.state.cart = None;
+                if let Some(stem) = self.last_shelf_stem.clone() {
+                    self.shelf.select_stem(&stem);
+                }
+            }
         }
+        self.remember_shelf_selection();
     }
 
     /// Confirms whatever is on the clock screen, setting the clock and the offset the same way
@@ -1564,6 +1575,9 @@ impl App {
             Phase::QuickMenu { row } => self.quick_menu_input(row, action),
             _ => {}
         }
+        if matches!(self.phase, Phase::Shelf) {
+            self.remember_shelf_selection();
+        }
     }
 
     /// MENU on the carousel. On the top row every time, however the menu was last left.
@@ -1838,6 +1852,9 @@ impl App {
             }
             _ => None,
         };
+        if matches!(self.phase, Phase::Shelf) {
+            self.remember_shelf_selection();
+        }
         // One clip for the whole movement, and the only thing done to it is when it starts.
         if touched {
             self.sfx = Some(match self.phase {
@@ -2021,6 +2038,24 @@ impl App {
         };
         if let Err(e) = write_recents(root, &self.recents) {
             eprintln!("slot: recents: {e}");
+        }
+    }
+
+    /// Keep the shelf position durable without doing any card I/O from `draw`, which runs every
+    /// frame. Empty filtered categories do not replace the last real selection.
+    fn remember_shelf_selection(&mut self) {
+        let Some(stem) = self.selected_stem().map(str::to_owned) else {
+            return;
+        };
+        if self.last_shelf_stem.as_deref() == Some(stem.as_str()) {
+            return;
+        }
+        self.last_shelf_stem = Some(stem.clone());
+        let Some(root) = &self.root else {
+            return;
+        };
+        if let Err(e) = write_last_shelf(root, &stem) {
+            eprintln!("slot: last shelf: {e}");
         }
     }
 

@@ -3,6 +3,7 @@ mod core;
 mod favorites;
 mod font;
 mod gba;
+mod last_shelf;
 mod lcd;
 mod migrate;
 mod recents;
@@ -19,6 +20,7 @@ pub use core::{
 pub use favorites::{read_favorites, write_favorites, FAVORITES_FILE};
 pub use font::{read_pixelify, write_pixelify, FONT_FILE};
 pub use gba::{header_clean, header_code, header_title};
+pub use last_shelf::{read_last_shelf, write_last_shelf, LAST_SHELF_FILE};
 pub use lcd::{read_lcd, write_lcd, LCD_FILE};
 pub use migrate::{migrate_states, MigrationReport};
 pub use recents::{read_recents, touch_recent, write_recents, RECENTS_FILE, RECENTS_MAX};
