@@ -784,22 +784,39 @@ fn recents_navigation_does_not_wrap_and_clamps_at_edges() {
 
     // Left at the beginning should NOT wrap to index 4
     s.left();
-    assert_eq!(s.index, 0, "left at the first cart should not wrap in recents");
+    assert_eq!(
+        s.index, 0,
+        "left at the first cart should not wrap in recents"
+    );
 
     // Right to the end
     for _ in 0..10 {
         s.right();
     }
-    assert_eq!(s.index, 4, "right at the end should clamp to the last cart in recents");
+    assert_eq!(
+        s.index, 4,
+        "right at the end should clamp to the last cart in recents"
+    );
 
     // Off edge slots should be None
-    assert_eq!(s.cart_at_offset(1), None, "no cart should wrap to the right of the last cart");
+    assert_eq!(
+        s.cart_at_offset(1),
+        None,
+        "no cart should wrap to the right of the last cart"
+    );
     assert_eq!(s.cart_at_offset(-1), Some(3));
 
     // Jump letter in recents goes to extremes without wrapping
     s.previous_letter();
-    assert_eq!(s.index, 0, "previous letter should jump to the start of recents");
-    assert_eq!(s.cart_at_offset(-1), None, "no cart should wrap to the left of the first cart");
+    assert_eq!(
+        s.index, 0,
+        "previous letter should jump to the start of recents"
+    );
+    assert_eq!(
+        s.cart_at_offset(-1),
+        None,
+        "no cart should wrap to the left of the first cart"
+    );
     s.next_letter();
     assert_eq!(s.index, 4, "next letter should jump to the end of recents");
 }
@@ -811,5 +828,9 @@ fn recents_is_capped_at_ten_items() {
     s.set_recents(many_recents);
     s.next_category(); // Switch to category 1 (Recents)
     assert_eq!(s.category(), 1);
-    assert_eq!(s.carts.len(), 10, "recents shelf should contain at most 10 items");
+    assert_eq!(
+        s.carts.len(),
+        10,
+        "recents shelf should contain at most 10 items"
+    );
 }
