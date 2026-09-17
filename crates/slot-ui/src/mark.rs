@@ -203,7 +203,18 @@ fn tab_png(bytes: &[u8]) -> CartFace {
         }
     }
     let (rgba, w, h) = scale_nearest(&rgba, TAB_SRC_W, TAB_SRC_H, TAB_SCALE);
-    CartFace { rgba, w, h }
+    if w != TAB_MARK_W || h != TAB_MARK_H {
+        return CartFace {
+            rgba: Vec::new(),
+            w: 0,
+            h: 0,
+        };
+    }
+    CartFace {
+        rgba,
+        w: TAB_MARK_W,
+        h: TAB_MARK_H,
+    }
 }
 
 /// Integer nearest-neighbour scale. Pixel chips stay sharp; bilinear would smear them.
