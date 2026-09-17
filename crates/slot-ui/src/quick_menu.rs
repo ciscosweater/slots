@@ -301,16 +301,26 @@ pub struct QuickMenu<'a> {
     pub values: [Option<QuickValue>; QuickRow::LABELS.len()],
     pub clock: Option<[(TexId, u32, u32); 2]>,
     pub faces: Option<&'a QuickMenuFaces>,
+    /// Over a paused cart the ground is a scrim, so the last frame stays readable underneath.
+    pub over_game: bool,
 }
+
+/// How much of the opening colour sits over a paused game. Opaque enough for the type to
+/// read, open enough that the picture behind it is still the thing being adjusted.
+const PLAY_SCRIM: f32 = 0.78;
 
 impl QuickMenu<'_> {
     pub fn draw(&self, out: &mut Vec<Draw>) {
+        let mut ground = opening();
+        if self.over_game {
+            ground[3] = PLAY_SCRIM;
+        }
         out.push(Draw::Rect {
             x: 0.0,
             y: 0.0,
             w: OUT_W as f32,
             h: OUT_H as f32,
-            colour: opening(),
+            colour: ground,
         });
         let top = quick_top(self.rows.len());
         let Some(faces) = self.faces else {

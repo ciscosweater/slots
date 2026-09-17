@@ -2546,8 +2546,12 @@ impl App {
             // Not returned from: brightness and volume are still answered here, and the bar they
             // raise goes over the menu the way it goes over the shelf.
             Phase::QuickMenu { row, resume } => {
+                let over_game = resume.is_some();
+                if over_game {
+                    self.push_game(out);
+                }
                 let playing_rows;
-                let rows: &[QuickRow] = if resume.is_some() {
+                let rows: &[QuickRow] = if over_game {
                     playing_rows = self.quick_menu_rows();
                     &playing_rows
                 } else {
@@ -2563,6 +2567,7 @@ impl App {
                     values,
                     clock: self.quick_clock_faces,
                     faces: self.quick_menu_faces.as_ref(),
+                    over_game,
                 }
                 .draw(out)
             }

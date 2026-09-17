@@ -8,8 +8,8 @@ use slot::app::{App, Phase};
 use slot_input::{Action, Btn};
 use slot_store::{read_slot_state, write_slot_state, SlotState};
 use slot_ui::{
-    edge, Draw, Icon, QuickMenuFaces, QuickRow, QuickValue, TexId, MENU_PAD, OUT_W, QUICK_EDGE,
-    QUICK_PITCH, QUICK_TOP,
+    edge, Draw, Icon, QuickMenuFaces, QuickRow, QuickValue, TexId, MENU_PAD, OUT_H, OUT_W,
+    QUICK_EDGE, QUICK_PITCH, QUICK_TOP,
 };
 use tempfile::TempDir;
 
@@ -98,6 +98,57 @@ fn menu_over_a_game_opens_display_settings_and_b_resumes_playing() {
     a.apply(Action::GbaDown(Btn::B));
     assert!(matches!(a.phase(), Phase::Playing { .. }));
     assert_eq!(a.seated_cart().map(|c| c.stem.as_str()), Some("Emerald"));
+}
+
+#[test]
+fn menu_over_a_game_draws_the_paused_frame_under_a_scrim() {
+    let d = tmp_root_with_carts(&["Emerald", "Fusion"]);
+    let mut a = app_playing_in(d.path(), "Emerald");
+    a.set_game_ready(true);
+    a.apply(Action::QuickMenu);
+    let out = frame(&a);
+    let game = out
+        .iter()
+        .position(|d| matches!(d, Draw::Game))
+        .expect("the paused game was not under the menu");
+    let scrim = out
+        .iter()
+        .position(|d| {
+            matches!(
+                *d,
+                Draw::Rect {
+                    w,
+                    h,
+                    colour,
+                    ..
+                } if w == OUT_W as f32 && h == OUT_H as f32 && colour[3] < 1.0 && colour[3] > 0.0
+            )
+        })
+        .expect("the menu drew no translucent ground");
+    assert!(scrim > game, "the scrim was not over the game");
+}
+
+#[test]
+fn menu_on_the_shelf_keeps_an_opaque_ground() {
+    let (_d, mut a, _) = on_carousel();
+    a.apply(Action::QuickMenu);
+    let out = frame(&a);
+    assert!(
+        out.iter().any(|d| matches!(
+            *d,
+            Draw::Rect {
+                w,
+                h,
+                colour,
+                ..
+            } if w == OUT_W as f32 && h == OUT_H as f32 && (colour[3] - 1.0).abs() < 1e-4
+        )),
+        "the shelf menu lost its opaque ground"
+    );
+    assert!(
+        !out.iter().any(|d| matches!(d, Draw::Game)),
+        "the shelf menu drew a game layer"
+    );
 }
 
 #[test]
