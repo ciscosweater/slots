@@ -2753,9 +2753,8 @@ impl App {
                 );
             }
             Phase::About => {
-                // The same ground the shelf stands on, scrim and all. The label is a dark
-                // object and the scrim is what a dark object needs to read over a
-                // photograph — it is there for the carts for exactly the same reason.
+                // The same ground the shelf stands on. The label is a dark object over the
+                // wallpaper (or the clear colour when there is none).
                 draw_backdrop(self.wallpaper, out);
                 draw_sticker(self.sticker_face, out);
                 let legend = if self.clock_needs_setting() {
