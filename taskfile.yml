@@ -204,7 +204,7 @@ tasks:
   core:device:
     desc: Build the aarch64 linux mgba core for the device bundle, in the box the device build uses
     # Same script, pin, patches and .meta check as core:mgba:host, run where `build:device`
-    # runs, so the core links against the same glibc 2.31 as slot. Its own work directory,
+    # runs, so the core links against the same sysroot as slot. Its own work directory,
     # since a cmake build tree cannot be shared between two toolchains.
     status:
       - test -f vendor/mgba_libretro.so
@@ -331,37 +331,44 @@ tasks:
       - task: core:gpsp
 
   device:sh:
-    desc: Run CMD on the box the device build wants, fetching one if this is not it
+    desc: Run CMD on the H700 build box — native aarch64, otherwise the LoveRetro toolchain
     internal: true
     requires:
       vars: [CMD]
     cmds:
       - |
         set -eu
-        # Already standing on the target means the container would only be in the way, and in
-        # CI there is no docker to reach for anyway: the job is already running in this image.
+        # Already standing on aarch64 (CI's rust:1-bullseye arm runner) means a container
+        # would only be in the way: the job is already linked against glibc 2.31.
         #
-        # Bullseye is glibc 2.31 on purpose: older is forward compatible, and BaseOS is 2.35.
-        # Building against 2.35 and running on anything older would not be. Off target,
-        # OrbStack runs arm64 natively, so that is still a native build in a container rather
-        # than a cross compile.
+        # Off target, the previous rust:1-bullseye docker run pulled the *host* arch image
+        # (amd64 on a desk Linux box) and produced x86_64 binaries that then failed the
+        # aarch64 check — or, worse, shipped if the check was skipped. The H700 toolchain
+        # image is a real cross sysroot (aarch64-nextui-linux-gnu, glibc 2.33): older than
+        # BaseOS's 2.35, so the binary stays forward-compatible the same way bullseye does.
         if [ "$(uname -s)-$(uname -m)" = "Linux-aarch64" ]; then
           sh -c '{{.CMD}}'
         else
-          docker run --rm -v "$PWD":/src -w /src rust:1-bullseye sh -c '{{.CMD}}'
+          ./scripts/with-h700-toolchain.sh -c '{{.CMD}}'
         fi
 
   build:device:
-    desc: Build for the H700, in an arm64 container unless this is already one
+    desc: Build for the H700, via the H700 toolchain unless this machine is already aarch64
     cmds:
       # Relative paths only: they have to mean the same thing from the repo root and from /src.
+      # The `device` profile is release plus fat LTO (see Cargo.toml); custom profiles land in
+      # target-device/<profile>/, or target-device/<triple>/<profile>/ when cross-compiling.
       - task: device:sh
         vars:
           CMD: >-
-            cargo build --release --target-dir target-device
+            cargo build --profile device --target-dir target-device
             -p slot --no-default-features --features device
-      - file target-device/release/slot | grep -q aarch64
-      - 'echo "built target-device/release/slot"'
+      - |
+        set -euo pipefail
+        bin="$(./scripts/device-slot-bin.sh)"
+        file "$bin" | grep -q aarch64
+        echo "built $bin"
+      - 'echo "built device slot binary"'
 
   dist:device:
     desc: Build the AGS-102/BaseOS frontend tree for an H700 device, OUT defaults to ./dist-device
@@ -373,14 +380,14 @@ tasks:
       OUT: '{{.OUT | default "dist-device"}}'
     cmds:
       - rm -rf {{.OUT}}
-      # Scaffolded by the device binary rather than a host build: `--init-root` returns before
-      # anything hardware shaped is opened, so the aarch64 binary can make its own folders.
-      # That leaves the tree needing no host toolchain at all — no X11, no ALSA, no udev —
-      # which is what lets a CI runner build this without a desktop's worth of headers.
-      - task: device:sh
-        vars:
-          CMD: ./target-device/release/slot --init-root {{.OUT}}
-      - cp target-device/release/slot {{.OUT}}/System/slot
+      # Scaffold on the host binary: `--init-root` is only mkdir of root::DIRS, and after a
+      # cross build the aarch64 slot cannot run on an x86_64 desk. The host build shares the
+      # same DIRS list, so the tree cannot drift from what the device binary would have made.
+      - cargo run --release -p slot --quiet -- --init-root {{.OUT}}
+      - |
+        set -euo pipefail
+        bin="$(./scripts/device-slot-bin.sh)"
+        cp "$bin" {{.OUT}}/System/slot
       # `core:device` and `core:gpsp`'s own arch check only runs on a fresh fetch: their
       # `status` skips the whole task, check included, whenever a file of that name already
       # exists — so a hand-placed x86 `.so` sails through unchecked from here on. Re-checked
@@ -441,7 +448,10 @@ tasks:
       # Onto the card the device is already running from, rather than a tree to copy by hand.
       # The binary is replaced under the running process, which is why the reboot below is
       # part of the task and not left to be remembered.
-      - adb push target-device/release/slot '{{.SD}}/System/slot'
+      - |
+        set -euo pipefail
+        bin="$(./scripts/device-slot-bin.sh)"
+        adb push "$bin" '{{.SD}}/System/slot'
       - adb push vendor/mgba_libretro.so '{{.SD}}/System/mgba_libretro.so'
       - adb push vendor/gpsp_libretro.so '{{.SD}}/System/gpsp_libretro.so'
       - adb push vendor/gambatte_libretro.so '{{.SD}}/System/gambatte_libretro.so'

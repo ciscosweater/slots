@@ -1,10 +1,10 @@
 #!/bin/sh
 # Builds mGBA's libretro core from libretro/mgba at a pinned commit, with every patch beside
 # this script applied, for whatever machine runs it. taskfile.yml's core:mgba:host runs it on
-# the Mac; core:device runs it inside the arm64 bullseye box, so the .so links against the same
-# glibc as slot. Both use the flags libretro's own CI builds the buildbot core with, the SP's
-# with link-time optimisation on top (device_cflags below), and the source is a checkout of the
-# commit rather than a tarball, so git vouches for what was built.
+# the Mac; core:device runs it inside the H700 toolchain (or natively on aarch64 CI), so the
+# .so links against the same sysroot as slot. Both use the flags libretro's own CI builds the
+# buildbot core with, the SP's with link-time optimisation on top (device_cflags below), and the
+# source is a checkout of the commit rather than a tarball, so git vouches for what was built.
 #
 #   build.sh stamp COMMIT               print what a build of COMMIT would record
 #   build.sh build COMMIT WORKDIR OUT   build into WORKDIR, then write OUT and OUT.meta
@@ -20,13 +20,14 @@ set -eu
 
 here="$(cd "$(dirname "$0")" && pwd)"
 
-# Link-time optimisation, for the SP's core only: Linux on aarch64, the bullseye box core:device
-# runs in. The Mac's core keeps exactly the flags above. Measured on the SP it takes 3 to 5% off
-# every frame, on both games and at both step counts. -mcpu=cortex-a53 beside it gave most of
-# that back and is deliberately absent. Nothing that can change a computed value goes here (no
-# -ffast-math): link mode needs two SPs' machines to stay bit identical, and this changes how
-# the core is compiled rather than what it computes — the frame hashes are unmoved. `stamp`
-# prints it on every host, because the taskfile checks the SP's .meta from the Mac.
+# Link-time optimisation, for the SP's core only: Linux aarch64, whether native or via the
+# H700 cross toolchain (CROSS_COMPILE / CMAKE_TOOLCHAIN_FILE). The Mac's core keeps exactly the
+# flags above. Measured on the SP it takes 3 to 5% off every frame, on both games and at both
+# step counts. -mcpu=cortex-a53 beside it gave most of that back and is deliberately absent.
+# Nothing that can change a computed value goes here (no -ffast-math): link mode needs two SPs'
+# machines to stay bit identical, and this changes how the core is compiled rather than what it
+# computes — the frame hashes are unmoved. `stamp` prints it on every host, because the
+# taskfile checks the SP's .meta from the Mac.
 device_cflags="-flto=auto"
 
 usage() {
@@ -84,12 +85,20 @@ build() {
 
 	# Passed even when empty, so a build tree reused from another run can't keep its flags. They
 	# land ahead of the Release -O3 and the libretro target's own -O3, and name no -O level.
+	# Device LTO applies for a native aarch64 build *or* a cross build aimed at the H700.
 	cflags=""
-	if [ "$(uname -s)-$(uname -m)" = "Linux-aarch64" ]; then
+	cmake_args=""
+	if [ "$(uname -s)-$(uname -m)" = "Linux-aarch64" ] ||
+		[ -n "${CROSS_COMPILE:-}" ] ||
+		[ -n "${CMAKE_TOOLCHAIN_FILE:-}" ]; then
 		cflags="$device_cflags"
 	fi
+	if [ -n "${CMAKE_TOOLCHAIN_FILE:-}" ]; then
+		cmake_args="-DCMAKE_TOOLCHAIN_FILE=$CMAKE_TOOLCHAIN_FILE"
+	fi
+	# shellcheck disable=SC2086
 	cmake -S "$src" -B "$obj" -DLIBMGBA_ONLY=ON -DBUILD_LIBRETRO=ON -DCMAKE_BUILD_TYPE=Release \
-		-DCMAKE_C_FLAGS="$cflags" >/dev/null
+		-DCMAKE_C_FLAGS="$cflags" $cmake_args >/dev/null
 	cmake --build "$obj" --target mgba_libretro --parallel "$(getconf _NPROCESSORS_ONLN)" >/dev/null
 
 	for ext in dylib so; do

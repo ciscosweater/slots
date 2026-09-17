@@ -91,9 +91,9 @@ mkdir -p -- "$output_dir"
 output_dir="$(cd -- "$output_dir" && pwd)"
 
 mkdir -p -- "$repo_root/dist"
-# Keep the temporary build tree under the repository: taskfile.yml mounts the
-# repository as /src when it enters Docker, so an external absolute path would
-# be invisible inside that container. /dist is already gitignored.
+# Keep the temporary build tree under the repository: with-h700-toolchain.sh mounts the
+# repository as /src, so an external absolute path would be invisible inside that container.
+# /dist is already gitignored.
 tmp="$(mktemp -d "$repo_root/dist/.slot-release.XXXXXX")"
 cleanup() {
 	rm -rf -- "$tmp"

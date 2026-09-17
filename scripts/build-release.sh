@@ -14,8 +14,10 @@ Build the aarch64 device tree used by AGS-102 and BaseOS.
 DIR is relative to the repository root unless it is absolute inside the
 repository. The default is dist-device. The build is delegated to the
 dist:device task, which also builds the device binary and all three libretro
-cores. Keeping DIR inside the repository is required when Task uses Docker,
-because only the repository is mounted into the build container.
+cores. On aarch64 Linux the task builds natively; everywhere else it enters
+the LoveRetro H700 toolchain container (see scripts/with-h700-toolchain.sh).
+Keeping DIR inside the repository is required when Task uses Docker, because
+only the repository is mounted into the build container.
 USAGE
 }
 
@@ -66,12 +68,20 @@ esac
 [[ "$task_out" != *[[:space:]]* ]] ||
 	die "output directory cannot contain whitespace because Task interpolates it"
 
-command -v task >/dev/null 2>&1 || die "Task is required; install it from https://taskfile.dev/"
+task_bin=""
+for candidate in task go-task; do
+	if command -v "$candidate" >/dev/null 2>&1; then
+		task_bin="$candidate"
+		break
+	fi
+done
+[[ -n "$task_bin" ]] ||
+	die "Task is required; on CachyOS/Arch: pacman -S go-task (binary may be go-task)"
 
 echo "Building device tree: $out"
 (
 	cd -- "$repo_root"
-	task dist:device "OUT=$task_out"
+	"$task_bin" dist:device "OUT=$task_out"
 )
 [[ -f "$out/System/slot" ]] ||
 	die "Task completed without producing $out/System/slot"

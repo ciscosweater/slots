@@ -25,6 +25,8 @@ case "$(uname -s)" in
     *) echo "unsupported host $(uname -s)" >&2; exit 1 ;;
 esac
 
+# The H700 toolchain exports CC/CXX/CROSS_COMPILE; Makefile.libretro honours CC, so a cross
+# build produces an aarch64 .so without a separate platform stanza.
 make -C "$work/src" -f Makefile.libretro platform="$platform" -j"$(getconf _NPROCESSORS_ONLN)"
 cp "$work/src/$built" "$out"
 cp "$cached_archive" "$archive"

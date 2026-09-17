@@ -33,8 +33,8 @@ pub const MARK_H: u32 = 48;
 
 /// Category tab chips in the top-right. Console tabs are the hand-pixel 21×16 icons; ALL / REC
 /// stay as Nerd Font glyphs sized to that same height.
-pub const TAB_MARK_H: u32 = 16;
-pub const TAB_MARK_W: u32 = 21;
+const TAB_MARK_H: u32 = 16;
+const TAB_MARK_W: u32 = 21;
 const TAB_GLYPH_PX: f32 = 16.0;
 
 const TAB_GBA_PNG: &[u8] = include_bytes!("../assets/tab_gba.png");
@@ -173,8 +173,15 @@ fn tab_png(bytes: &[u8]) -> CartFace {
             h: 0,
         };
     };
+    if info.width != TAB_MARK_W || info.height != TAB_MARK_H {
+        return CartFace {
+            rgba: Vec::new(),
+            w: 0,
+            h: 0,
+        };
+    }
     let src = &buf[..info.buffer_size()];
-    let n = (info.width * info.height) as usize;
+    let n = (TAB_MARK_W * TAB_MARK_H) as usize;
     let mut rgba = vec![0u8; n * 4];
     match info.color_type {
         png::ColorType::Rgba => rgba.copy_from_slice(src),
@@ -194,8 +201,8 @@ fn tab_png(bytes: &[u8]) -> CartFace {
     }
     CartFace {
         rgba,
-        w: info.width,
-        h: info.height,
+        w: TAB_MARK_W,
+        h: TAB_MARK_H,
     }
 }
 
