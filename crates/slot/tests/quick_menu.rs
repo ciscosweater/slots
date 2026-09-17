@@ -74,12 +74,47 @@ fn menu_or_b_closes_it_back_onto_the_carousel_where_you_were() {
 }
 
 #[test]
-fn the_quick_menu_is_only_on_the_carousel() {
+fn menu_over_a_game_opens_display_settings_and_b_resumes_playing() {
     let d = tmp_root_with_carts(&["Emerald", "Fusion"]);
     let mut a = app_playing_in(d.path(), "Emerald");
     a.apply(Action::QuickMenu);
+    assert!(matches!(
+        a.phase(),
+        Phase::QuickMenu {
+            resume: Some(_),
+            ..
+        }
+    ));
+    assert_eq!(a.quick_menu(), Some(QuickRow::LcdEffect));
+    assert!(a.play_settings_open());
+    for want in [
+        QuickRow::ColourCorrection,
+        QuickRow::Overlay,
+        QuickRow::Overlay,
+    ] {
+        press(&mut a, Btn::Down);
+        assert_eq!(a.quick_menu(), Some(want));
+    }
+    a.apply(Action::GbaDown(Btn::B));
     assert!(matches!(a.phase(), Phase::Playing { .. }));
-    assert_eq!(a.quick_menu(), None);
+    assert_eq!(a.seated_cart().map(|c| c.stem.as_str()), Some("Emerald"));
+}
+
+#[test]
+fn menu_over_a_gb_game_includes_picture() {
+    let d = common::tmp_root_with_gb_carts(&["Tetris", "Mario"]);
+    let mut a = app_playing_in(d.path(), "Tetris");
+    a.apply(Action::QuickMenu);
+    assert_eq!(a.quick_menu(), Some(QuickRow::LcdEffect));
+    for want in [
+        QuickRow::ColourCorrection,
+        QuickRow::Overlay,
+        QuickRow::Picture,
+        QuickRow::Picture,
+    ] {
+        press(&mut a, Btn::Down);
+        assert_eq!(a.quick_menu(), Some(want));
+    }
 }
 
 #[test]
@@ -94,6 +129,7 @@ fn up_and_down_move_the_bar_and_stop_at_the_ends() {
         QuickRow::Rumble,
         QuickRow::FaceButtons,
         QuickRow::Overlay,
+        QuickRow::LcdEffect,
         QuickRow::DateTime,
         QuickRow::About,
         QuickRow::About,
@@ -312,7 +348,7 @@ fn colour_correction_leaves_the_settings_around_it_alone() {
 fn fake_faces(a: &mut App) {
     let id = TexId::from_raw;
     a.set_quick_menu_faces(QuickMenuFaces {
-        labels: (0..QuickRow::ALL.len())
+        labels: (0..QuickRow::LABELS.len())
             .map(|i| (id(100 + i), 200, 40))
             .collect(),
         values: (0..QuickValue::ALL.len())
@@ -417,13 +453,60 @@ fn labels_start_and_values_end_thirty_two_pixels_in() {
     let out = frame(&a);
     let right = OUT_W as f32 - QUICK_EDGE;
     for row in QuickRow::ALL {
-        let [x, ..] = placed(&out, 100 + row.index()).expect("a label was not drawn");
+        let [x, ..] = placed(&out, 100 + row.label_index()).expect("a label was not drawn");
         assert_eq!(x + MENU_PAD as f32, QUICK_EDGE);
     }
     let [x, _, w, _] = placed(&out, value(QuickValue::On, false)).expect("rumble's value");
     assert_eq!(x + w - MENU_PAD as f32, right);
     let [x, _, w, _] = placed(&out, 301).expect("the right arrow");
     assert_eq!(x + w, right);
+}
+
+#[test]
+fn lcd_effect_flips_on_either_arrow_and_writes_lcd_txt() {
+    let (d, mut a, _) = on_carousel();
+    open_at(&mut a, QuickRow::LcdEffect);
+    assert!(a.lcd_enabled());
+    assert!(slot_store::read_lcd(d.path()));
+    press(&mut a, Btn::Right);
+    assert!(!a.lcd_enabled());
+    assert!(!slot_store::read_lcd(d.path()));
+    assert_eq!(a.quick_value(QuickRow::LcdEffect), Some(QuickValue::Off));
+    press(&mut a, Btn::Left);
+    assert!(a.lcd_enabled());
+    assert!(slot_store::read_lcd(d.path()));
+}
+
+#[test]
+fn picture_in_play_settings_cycles_and_persists() {
+    let d = common::tmp_root_with_gb_carts(&["Tetris", "Mario"]);
+    let mut a = app_playing_in(d.path(), "Tetris");
+    a.apply(Action::QuickMenu);
+    open_play_row(&mut a, QuickRow::Picture);
+    assert_eq!(a.quick_value(QuickRow::Picture), Some(QuickValue::ActualSize));
+    press(&mut a, Btn::Right);
+    assert_eq!(a.video_mode(), slot::video_mode::VideoMode::Stretch);
+    assert_eq!(
+        slot::video_mode::video_mode_for(d.path(), "Tetris"),
+        slot::video_mode::VideoMode::Stretch
+    );
+    press(&mut a, Btn::Left);
+    assert_eq!(a.video_mode(), slot::video_mode::VideoMode::Actual);
+}
+
+/// Walk the in-game display menu to `row` after it is already open.
+fn open_play_row(a: &mut App, row: QuickRow) {
+    let rows = [
+        QuickRow::LcdEffect,
+        QuickRow::ColourCorrection,
+        QuickRow::Overlay,
+        QuickRow::Picture,
+    ];
+    let i = rows.iter().position(|r| *r == row).expect("playing row");
+    for _ in 0..i {
+        press(a, Btn::Down);
+    }
+    assert_eq!(a.quick_menu(), Some(row));
 }
 
 #[test]

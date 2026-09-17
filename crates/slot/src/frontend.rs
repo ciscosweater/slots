@@ -371,7 +371,7 @@ impl Frontend {
                 // changing a value never waits on a font. Only Date & Time's value is left to
                 // `sync_quick_clock`: it is the one thing on the menu that changes by itself.
                 let mut up = |f: UndoFace| (compositor.create_texture(f.w, f.h, &f.rgba), f.w, f.h);
-                let labels = QuickRow::ALL
+                let labels = QuickRow::LABELS
                     .iter()
                     .map(|r| up(quick_label_face(*r)))
                     .collect();

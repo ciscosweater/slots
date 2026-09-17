@@ -445,7 +445,7 @@ impl Session {
     /// press taken while paused whose release arrives after it is a button the game finds
     /// already down. This is what stops either edge reaching the pad at all.
     fn overlaid(&self) -> bool {
-        self.showing_polaroids() || self.app.game_menu_open()
+        self.showing_polaroids() || self.app.game_menu_open() || self.app.play_settings_open()
     }
 
     /// Whether the game is live and in charge of the device. Not the phase alone: the power
@@ -460,7 +460,10 @@ impl Session {
     /// The screens that have taken the panel away from a cart still seated. The switcher is
     /// not one of them: it has its own phase and `sync_speed` names it separately.
     fn held(&self) -> bool {
-        self.app.power_menu().is_some() || self.app.game_menu_open() || self.app.shutting_down()
+        self.app.power_menu().is_some()
+            || self.app.game_menu_open()
+            || self.app.play_settings_open()
+            || self.app.shutting_down()
     }
 
     fn dozing(&self) -> bool {

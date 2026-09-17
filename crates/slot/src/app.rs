@@ -314,11 +314,11 @@ pub enum Phase {
         from_menu: bool,
     },
     Shelf,
-    /// The settings, off a tap of MENU on the carousel. A screen of its own, as the label is,
-    /// holding the row in hand. The shelf keeps its place underneath, so MENU or B puts the
-    /// carousel back exactly where it was.
+    /// The settings, off a tap of MENU. On the shelf it is the full menu; over a game it is
+    /// the display set and `resume` is the cart to put back when the menu closes.
     QuickMenu {
         row: QuickRow,
+        resume: Option<String>,
     },
     Inserting {
         cart: String,
@@ -781,6 +781,7 @@ impl App {
         if from_menu {
             self.phase = Phase::QuickMenu {
                 row: QuickRow::DateTime,
+                resume: None,
             };
         } else {
             self.start();
@@ -818,9 +819,14 @@ impl App {
     /// The row in hand while the quick menu is up, and `None` everywhere else.
     pub fn quick_menu(&self) -> Option<QuickRow> {
         match self.phase {
-            Phase::QuickMenu { row } => Some(row),
+            Phase::QuickMenu { row, .. } => Some(row),
             _ => None,
         }
+    }
+
+    /// Whether the in-game display settings are up over a paused cart.
+    pub fn play_settings_open(&self) -> bool {
+        matches!(self.phase, Phase::QuickMenu { resume: Some(_), .. })
     }
 
     /// What a row of the quick menu shows. `None` for the two rows that open something: Date &
@@ -833,6 +839,11 @@ impl App {
             QuickRow::Rumble => Some(QuickValue::flag(self.state.rumble)),
             QuickRow::FaceButtons => Some(QuickValue::face_buttons(self.state.face_buttons)),
             QuickRow::Overlay => Some(QuickValue::flag(self.state.gb_overlay)),
+            QuickRow::LcdEffect => Some(QuickValue::flag(self.lcd)),
+            QuickRow::Picture => Some(match self.video_mode {
+                VideoMode::Stretch => QuickValue::FillScreen,
+                VideoMode::Actual => QuickValue::ActualSize,
+            }),
             QuickRow::DateTime | QuickRow::About => None,
         }
     }
@@ -920,7 +931,10 @@ impl App {
             Phase::Inserting { .. }
             | Phase::Playing { .. }
             | Phase::Ejecting { .. }
-            | Phase::Polaroids { .. } => self.platform.or(self.state.cart_platform),
+            | Phase::Polaroids { .. }
+            | Phase::QuickMenu {
+                resume: Some(_), ..
+            } => self.platform.or(self.state.cart_platform),
             _ => None,
         }
     }
@@ -959,6 +973,9 @@ impl App {
             | Phase::Playing { cart }
             | Phase::Ejecting { cart, .. }
             | Phase::Polaroids { cart, .. } => cart,
+            Phase::QuickMenu {
+                resume: Some(cart), ..
+            } => cart,
             _ => return None,
         };
         self.shelf
@@ -1602,6 +1619,7 @@ impl App {
                 Action::GbaDown(Btn::B) if *from_menu => {
                     self.phase = Phase::QuickMenu {
                         row: QuickRow::DateTime,
+                        resume: None,
                     }
                 }
                 _ => {}
@@ -1690,6 +1708,7 @@ impl App {
             Phase::Playing { .. } => match action {
                 Action::Eject => self.eject(),
                 Action::GameMenu => self.open_game_menu(),
+                Action::QuickMenu => self.open_play_settings(),
                 Action::Polaroids => self.open_polaroids(),
                 Action::SaveState => self.save_state(),
                 Action::LoadState => self.load_newest(),
@@ -1733,6 +1752,7 @@ impl App {
                 Action::GbaDown(Btn::B) | Action::QuickMenu => {
                     self.phase = Phase::QuickMenu {
                         row: QuickRow::About,
+                        resume: None,
                     }
                 }
                 Action::GbaDown(Btn::Left)
@@ -1750,11 +1770,38 @@ impl App {
                 }
                 _ => {}
             },
-            Phase::QuickMenu { row } => self.quick_menu_input(row, action),
+            Phase::QuickMenu { row, .. } => self.quick_menu_input(row, action),
             _ => {}
         }
         if matches!(self.phase, Phase::Shelf) {
             self.remember_shelf_selection();
+        }
+    }
+
+    /// Rows the current quick-menu opening shows.
+    fn quick_menu_rows(&self) -> Vec<QuickRow> {
+        match &self.phase {
+            Phase::QuickMenu {
+                resume: Some(_), ..
+            } => {
+                let mut rows = QuickRow::PLAYING.to_vec();
+                if matches!(self.platform, Some(Platform::Gb | Platform::Gbc)) {
+                    rows.push(QuickRow::Picture);
+                }
+                rows
+            }
+            _ => QuickRow::ALL.to_vec(),
+        }
+    }
+
+    /// Stem whose `video_mode.ini` Picture writes, when a cart is live or paused under settings.
+    fn picture_cart(&self) -> Option<&str> {
+        match &self.phase {
+            Phase::Playing { cart } => Some(cart.as_str()),
+            Phase::QuickMenu {
+                resume: Some(cart), ..
+            } => Some(cart.as_str()),
+            _ => None,
         }
     }
 
@@ -1772,10 +1819,11 @@ impl App {
             },
             self.now(),
         );
-        let (Some(root), Phase::Playing { cart }) = (self.root.clone(), &self.phase) else {
+        let (Some(root), Some(cart)) = (self.root.clone(), self.picture_cart().map(str::to_owned))
+        else {
             return;
         };
-        if let Err(e) = video_mode::write_video_mode(&root, cart, mode) {
+        if let Err(e) = video_mode::write_video_mode(&root, &cart, mode) {
             eprintln!("slot: video: could not write video_mode.ini: {e}");
         }
     }
@@ -1784,25 +1832,55 @@ impl App {
     fn open_quick_menu(&mut self) {
         self.phase = Phase::QuickMenu {
             row: QuickRow::ALL[0],
+            resume: None,
         };
     }
 
+    /// MENU over a game: display settings only, paused until closed back onto the cart.
+    fn open_play_settings(&mut self) {
+        let Phase::Playing { cart } = &self.phase else {
+            return;
+        };
+        let cart = cart.clone();
+        self.phase = Phase::QuickMenu {
+            row: QuickRow::PLAYING[0],
+            resume: Some(cart),
+        };
+    }
+
+    fn close_quick_menu(&mut self) {
+        match &self.phase {
+            Phase::QuickMenu {
+                resume: Some(cart), ..
+            } => {
+                let cart = cart.clone();
+                self.phase = Phase::Playing { cart };
+            }
+            _ => self.phase = Phase::Shelf,
+        }
+    }
+
     /// Up and Down move the bar and stop at the ends, Left and Right change the row in hand, A
-    /// opens the two rows that open, and MENU or B puts the carousel back.
+    /// opens the two rows that open, and MENU or B puts the carousel — or the game — back.
     fn quick_menu_input(&mut self, row: QuickRow, action: Action) {
+        let rows = self.quick_menu_rows();
+        let resume = match &self.phase {
+            Phase::QuickMenu { resume, .. } => resume.clone(),
+            _ => None,
+        };
         let row = match action {
-            Action::GbaDown(Btn::Up) => row.up(),
-            Action::GbaDown(Btn::Down) => row.down(),
+            Action::GbaDown(Btn::Up) => row.up_in(&rows),
+            Action::GbaDown(Btn::Down) => row.down_in(&rows),
             Action::GbaDown(Btn::Left) => return self.change_setting(row, false),
             Action::GbaDown(Btn::Right) => return self.change_setting(row, true),
             Action::GbaDown(Btn::A) => return self.open_quick_row(row),
             Action::GbaDown(Btn::B) | Action::QuickMenu => {
-                self.phase = Phase::Shelf;
+                self.close_quick_menu();
                 return;
             }
             _ => return,
         };
-        self.phase = Phase::QuickMenu { row };
+        self.phase = Phase::QuickMenu { row, resume };
     }
 
     /// A on a row. Only Date & Time and About open anything.
@@ -1819,7 +1897,9 @@ impl App {
             | QuickRow::ColourCorrection
             | QuickRow::Rumble
             | QuickRow::FaceButtons
-            | QuickRow::Overlay => {}
+            | QuickRow::Overlay
+            | QuickRow::LcdEffect
+            | QuickRow::Picture => {}
         }
     }
 
@@ -1862,6 +1942,23 @@ impl App {
                         self.video_mode = VideoMode::Actual;
                     }
                 }
+            }
+            QuickRow::LcdEffect => {
+                self.lcd = !self.lcd;
+                if let Some(root) = &self.root {
+                    if let Err(e) = write_lcd(root, self.lcd) {
+                        eprintln!("slot: lcd: {e}");
+                    }
+                }
+            }
+            QuickRow::Picture => {
+                let mode = if right {
+                    VideoMode::Stretch
+                } else {
+                    VideoMode::Actual
+                };
+                self.set_picture(mode);
+                return;
             }
             QuickRow::DateTime | QuickRow::About => return,
         }
@@ -2448,13 +2545,27 @@ impl App {
             }
             // Not returned from: brightness and volume are still answered here, and the bar they
             // raise goes over the menu the way it goes over the shelf.
-            Phase::QuickMenu { row } => QuickMenu {
-                row: *row,
-                values: QuickRow::ALL.map(|r| self.quick_value(r)),
-                clock: self.quick_clock_faces,
-                faces: self.quick_menu_faces.as_ref(),
+            Phase::QuickMenu { row, resume } => {
+                let playing_rows;
+                let rows: &[QuickRow] = if resume.is_some() {
+                    playing_rows = self.quick_menu_rows();
+                    &playing_rows
+                } else {
+                    &QuickRow::ALL
+                };
+                let mut values = [None; QuickRow::LABELS.len()];
+                for &r in QuickRow::LABELS.iter() {
+                    values[r.label_index()] = self.quick_value(r);
+                }
+                QuickMenu {
+                    row: *row,
+                    rows,
+                    values,
+                    clock: self.quick_clock_faces,
+                    faces: self.quick_menu_faces.as_ref(),
+                }
+                .draw(out)
             }
-            .draw(out),
             Phase::Shelf => {
                 draw_backdrop(self.wallpaper, out);
                 match (self.core_picker_shown(), self.selected_stem()) {
@@ -3687,6 +3798,9 @@ impl App {
     fn seated(&self) -> Option<&str> {
         match &self.phase {
             Phase::Playing { cart } | Phase::Polaroids { cart } => Some(cart),
+            Phase::QuickMenu {
+                resume: Some(cart), ..
+            } => Some(cart),
             _ => None,
         }
     }

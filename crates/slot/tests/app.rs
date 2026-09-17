@@ -493,11 +493,9 @@ fn eject_is_the_insert_backwards() {
     assert!(a.screen_power() < first, "the screen is not closing");
 }
 
-/// The quick menu, and the about screen inside it, are shelf affordances. MENU means eject and
-/// polaroids once a cart is in, and a menu over a running game is a pause screen nobody asked
-/// for.
+/// The shelf MENU opens the full quick menu; in-game MENU opens display settings over the cart.
 #[test]
-fn the_quick_menu_opens_from_the_shelf_and_nowhere_else() {
+fn the_quick_menu_opens_from_the_shelf_and_over_a_game() {
     // Two carts, or `single_cart` makes this a dedicated device: one cart is seated at boot
     // whatever the state says, and the shelf is never on screen to press MENU from.
     let d = common::tmp_root_with_carts(&["Emerald", "Fusion"]);
@@ -511,18 +509,17 @@ fn the_quick_menu_opens_from_the_shelf_and_nowhere_else() {
     s.app_mut().apply(slot_input::Action::QuickMenu);
     assert!(matches!(
         s.app().phase(),
-        slot::app::Phase::QuickMenu { .. }
+        slot::app::Phase::QuickMenu { resume: None, .. }
     ));
-
-    // And a seated cart has no quick menu at all.
     s.app_mut()
         .apply(slot_input::Action::GbaDown(slot_input::Btn::B));
-    s.app_mut().apply(slot_input::Action::Insert);
-    s.app_mut().apply(slot_input::Action::QuickMenu);
-    assert!(
-        !matches!(s.app().phase(), slot::app::Phase::QuickMenu { .. }),
-        "a menu opened over a seated cart"
-    );
+
+    let mut a = common::app_playing_in(d.path(), "Emerald");
+    a.apply(slot_input::Action::QuickMenu);
+    assert!(a.play_settings_open());
+    assert_eq!(a.quick_menu(), Some(slot_ui::QuickRow::LcdEffect));
+    a.apply(slot_input::Action::GbaDown(slot_input::Btn::B));
+    assert!(matches!(a.phase(), slot::app::Phase::Playing { .. }));
 }
 
 /// Both ways out of the label land back on the quick menu, on its About row. MENU works as well
@@ -830,6 +827,9 @@ fn lcd_effect_stays_on_when_the_picture_is_stretched() {
     assert_eq!(app.video_mode(), slot::video_mode::VideoMode::Stretch);
     assert_eq!(app.toast(), Some(Toast::LcdOn));
 }
+
+#[test]
+fn gb_and_gbc_can_toggle_lcd_and_that_hides_the_overlay() {
     for platform in [slot_store::Platform::Gb, slot_store::Platform::Gbc] {
         let mut app = App::new(vec![
             Cart {
@@ -2100,10 +2100,12 @@ fn r2_rapid_taps_on_shelf_advance_category_without_swallowing() {
     // Tap 2: RECENTS -> GBA
     s.feed([RawEvent::Down(Btn::R2), RawEvent::Up(Btn::R2)], 200);
     assert_eq!(s.app().shelf_category(), 2);
-    // Tap 3: GBA -> ALL (would have been swallowed by FF double-tap latch previously)
+    // Tap 3: GBA stays put (no wrap); previously a latched FF would have swallowed the next tap
     s.feed([RawEvent::Down(Btn::R2), RawEvent::Up(Btn::R2)], 300);
-    assert_eq!(s.app().shelf_category(), 0);
-    // Tap 4: ALL -> RECENTS
-    s.feed([RawEvent::Down(Btn::R2), RawEvent::Up(Btn::R2)], 400);
+    assert_eq!(s.app().shelf_category(), 2);
+    // Tap 4 still works after the end-stop: L2 back, then R2 forward again
+    s.feed([RawEvent::Down(Btn::L2), RawEvent::Up(Btn::L2)], 400);
     assert_eq!(s.app().shelf_category(), 1);
+    s.feed([RawEvent::Down(Btn::R2), RawEvent::Up(Btn::R2)], 500);
+    assert_eq!(s.app().shelf_category(), 2);
 }

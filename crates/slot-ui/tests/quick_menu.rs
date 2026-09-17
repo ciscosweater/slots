@@ -62,6 +62,7 @@ fn the_rows_and_values_match_the_menu() {
             "Rumble",
             "X / Y Buttons",
             "GB Overlay",
+            "LCD Effect",
             "Date & Time",
             "About"
         ]
@@ -77,7 +78,9 @@ fn the_rows_and_values_match_the_menu() {
             "Off",
             "Shortcuts",
             "L / R",
-            "A / B Turbo"
+            "A / B Turbo",
+            "Fill Screen",
+            "Actual Size"
         ]
     );
     assert_eq!(

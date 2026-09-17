@@ -6,7 +6,7 @@ use crate::power_menu::{MENU_H, MENU_INK, MENU_PAD, MENU_PX};
 use crate::slot_chrome::{edge, opening};
 use crate::text;
 
-/// The menu's rows, top to bottom in the order the user chose.
+/// The menu's rows. Shelf and in-game show different subsets; label faces cover every variant.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum QuickRow {
     FastForward,
@@ -15,25 +15,61 @@ pub enum QuickRow {
     Rumble,
     FaceButtons,
     Overlay,
+    LcdEffect,
+    Picture,
     DateTime,
     About,
 }
 
 impl QuickRow {
-    pub const ALL: [QuickRow; 8] = [
+    /// Shelf menu, top to bottom. Picture stays out: it is per-cart and only live in-game.
+    pub const ALL: [QuickRow; 9] = [
         QuickRow::FastForward,
         QuickRow::FastForwardSound,
         QuickRow::ColourCorrection,
         QuickRow::Rumble,
         QuickRow::FaceButtons,
         QuickRow::Overlay,
+        QuickRow::LcdEffect,
         QuickRow::DateTime,
         QuickRow::About,
     ];
 
-    /// Position in `ALL`, which is the order the labels are uploaded in and drawn in.
+    /// Every row that has a rastered label, including Picture for the in-game menu.
+    pub const LABELS: [QuickRow; 10] = [
+        QuickRow::FastForward,
+        QuickRow::FastForwardSound,
+        QuickRow::ColourCorrection,
+        QuickRow::Rumble,
+        QuickRow::FaceButtons,
+        QuickRow::Overlay,
+        QuickRow::LcdEffect,
+        QuickRow::Picture,
+        QuickRow::DateTime,
+        QuickRow::About,
+    ];
+
+    /// In-game display settings. Callers append `Picture` for Game Boy carts.
+    pub const PLAYING: [QuickRow; 3] = [
+        QuickRow::LcdEffect,
+        QuickRow::ColourCorrection,
+        QuickRow::Overlay,
+    ];
+
+    /// Position in `LABELS`, which is the order faces are uploaded in.
+    pub fn label_index(self) -> usize {
+        Self::LABELS
+            .iter()
+            .position(|row| *row == self)
+            .expect("every QuickRow is in LABELS")
+    }
+
+    /// Position in `ALL` for walking the shelf menu with Down.
     pub fn index(self) -> usize {
-        self as usize
+        Self::ALL
+            .iter()
+            .position(|row| *row == self)
+            .expect("row is on the shelf menu")
     }
 
     pub fn label(self) -> &'static str {
@@ -44,6 +80,8 @@ impl QuickRow {
             QuickRow::Rumble => "Rumble",
             QuickRow::FaceButtons => "X / Y Buttons",
             QuickRow::Overlay => "GB Overlay",
+            QuickRow::LcdEffect => "LCD Effect",
+            QuickRow::Picture => "Picture",
             QuickRow::DateTime => "Date & Time",
             QuickRow::About => "About",
         }
@@ -54,13 +92,28 @@ impl QuickRow {
         matches!(self, QuickRow::DateTime | QuickRow::About)
     }
 
-    /// The row above, stopping at the top: the bar does not wrap, as no menu here does.
+    /// The row above within `rows`, stopping at the top.
+    pub fn up_in(self, rows: &[QuickRow]) -> QuickRow {
+        match rows.iter().position(|row| *row == self) {
+            Some(i) if i > 0 => rows[i - 1],
+            _ => self,
+        }
+    }
+
+    pub fn down_in(self, rows: &[QuickRow]) -> QuickRow {
+        match rows.iter().position(|row| *row == self) {
+            Some(i) if i + 1 < rows.len() => rows[i + 1],
+            _ => self,
+        }
+    }
+
+    /// Shelf navigation helper kept for call sites that only ever walk `ALL`.
     pub fn up(self) -> QuickRow {
-        QuickRow::ALL[self.index().saturating_sub(1)]
+        self.up_in(&Self::ALL)
     }
 
     pub fn down(self) -> QuickRow {
-        QuickRow::ALL[(self.index() + 1).min(QuickRow::ALL.len() - 1)]
+        self.down_in(&Self::ALL)
     }
 }
 
@@ -77,10 +130,12 @@ pub enum QuickValue {
     Shortcuts,
     Shoulders,
     Turbo,
+    FillScreen,
+    ActualSize,
 }
 
 impl QuickValue {
-    pub const ALL: [QuickValue; 9] = [
+    pub const ALL: [QuickValue; 11] = [
         QuickValue::Speed2,
         QuickValue::Speed3,
         QuickValue::Speed4,
@@ -90,6 +145,8 @@ impl QuickValue {
         QuickValue::Shortcuts,
         QuickValue::Shoulders,
         QuickValue::Turbo,
+        QuickValue::FillScreen,
+        QuickValue::ActualSize,
     ];
 
     /// Position in `ALL`, which is the order in which faces are uploaded.
@@ -108,6 +165,8 @@ impl QuickValue {
             QuickValue::Shortcuts => "Shortcuts",
             QuickValue::Shoulders => "L / R",
             QuickValue::Turbo => "A / B Turbo",
+            QuickValue::FillScreen => "Fill Screen",
+            QuickValue::ActualSize => "Actual Size",
         }
     }
 
@@ -139,10 +198,8 @@ impl QuickValue {
     }
 }
 
-/// A size up from the power menu's rows. Eight rows at 44 px leave room for the legend.
-pub const QUICK_PITCH: f32 = 44.0;
-/// The first row's top, with all rows centred on the panel.
-pub const QUICK_TOP: f32 = (OUT_H as f32 - QUICK_PITCH * QuickRow::ALL.len() as f32) / 2.0;
+/// Nine shelf rows at 40 px leave room for the legend under the last bar.
+pub const QUICK_PITCH: f32 = 40.0;
 /// Labels start this far in from the left, and values end this far in from the right.
 pub const QUICK_EDGE: f32 = 32.0;
 const BAR_INSET: f32 = 4.0;
@@ -151,6 +208,13 @@ const CARET_GAP: f32 = 14.0;
 const CARET_PX: f32 = 24.0;
 const LEGEND_Y: f32 = 440.0;
 const DIM_INK: [u8; 3] = [0x9a, 0x9a, 0xa4];
+
+pub fn quick_top(row_count: usize) -> f32 {
+    (OUT_H as f32 - QUICK_PITCH * row_count as f32) / 2.0
+}
+
+/// The first row's top when the shelf menu is showing every `ALL` row.
+pub const QUICK_TOP: f32 = (OUT_H as f32 - QUICK_PITCH * QuickRow::ALL.len() as f32) / 2.0;
 
 pub fn quick_label_face(row: QuickRow) -> UndoFace {
     quick_text_face(row.label(), MENU_INK)
@@ -231,7 +295,10 @@ pub struct QuickMenuFaces {
 
 pub struct QuickMenu<'a> {
     pub row: QuickRow,
-    pub values: [Option<QuickValue>; QuickRow::ALL.len()],
+    /// Which rows this opening shows, in order. Shelf uses `ALL`; in-game uses the display set.
+    pub rows: &'a [QuickRow],
+    /// Value for each entry in `LABELS` order (`None` for rows that open or are not shown).
+    pub values: [Option<QuickValue>; QuickRow::LABELS.len()],
     pub clock: Option<[(TexId, u32, u32); 2]>,
     pub faces: Option<&'a QuickMenuFaces>,
 }
@@ -245,26 +312,30 @@ impl QuickMenu<'_> {
             h: OUT_H as f32,
             colour: opening(),
         });
-        out.push(Draw::Rect {
-            x: 0.0,
-            y: row_top(self.row) + BAR_INSET,
-            w: OUT_W as f32,
-            h: QUICK_PITCH - 2.0 * BAR_INSET,
-            colour: edge(),
-        });
+        let top = quick_top(self.rows.len());
         let Some(faces) = self.faces else {
             return;
         };
         let (right, pad) = (OUT_W as f32 - QUICK_EDGE, MENU_PAD as f32);
-        for row in QuickRow::ALL {
-            let y = row_top(row) + TYPE_DROP;
+        for (i, &row) in self.rows.iter().enumerate() {
+            let y0 = top + QUICK_PITCH * i as f32;
             let lit = row == self.row;
-            if let Some(&(tex, w, h)) = faces.labels.get(row.index()) {
+            if lit {
+                out.push(Draw::Rect {
+                    x: 0.0,
+                    y: y0 + BAR_INSET,
+                    w: OUT_W as f32,
+                    h: QUICK_PITCH - 2.0 * BAR_INSET,
+                    colour: edge(),
+                });
+            }
+            let y = y0 + TYPE_DROP;
+            if let Some(&(tex, w, h)) = faces.labels.get(row.label_index()) {
                 push(out, tex, QUICK_EDGE - pad, y, w, h);
             }
             let value = match row {
                 QuickRow::DateTime => self.clock.map(|c| c[lit as usize]),
-                _ => self.values[row.index()]
+                _ => self.values[row.label_index()]
                     .and_then(|v| faces.values.get(v.index()))
                     .map(|v| v[lit as usize]),
             };
@@ -288,10 +359,6 @@ impl QuickMenu<'_> {
             push(out, tex, x, LEGEND_Y, w, HINT_H);
         }
     }
-}
-
-fn row_top(row: QuickRow) -> f32 {
-    QUICK_TOP + QUICK_PITCH * row.index() as f32
 }
 
 fn push(out: &mut Vec<Draw>, tex: TexId, x: f32, y: f32, w: u32, h: u32) {

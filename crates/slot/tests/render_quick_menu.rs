@@ -84,7 +84,7 @@ fn the_quick_menu_renders_full_screen() {
     // Down presses from wherever the bar was before.
     for (name, downs, selected) in [
         ("fast-forward", 0, QuickRow::FastForward),
-        ("date-time", 3, QuickRow::DateTime),
+        ("date-time", QuickRow::DateTime.index(), QuickRow::DateTime),
         ("about", 1, QuickRow::About),
     ] {
         for _ in 0..downs {

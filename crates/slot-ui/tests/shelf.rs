@@ -184,9 +184,23 @@ fn categories_cycle_and_filter_by_platform() {
         (4, Platform::Gbc)
     );
     shelf.next_category();
-    assert_eq!((shelf.category(), shelf.carts.len()), (0, 3));
+    assert_eq!(
+        shelf.category(),
+        4,
+        "next category stops at the last available tab"
+    );
     shelf.previous_category();
-    assert_eq!(shelf.category(), 4);
+    assert_eq!(shelf.category(), 3);
+    while shelf.category() > 0 {
+        shelf.previous_category();
+    }
+    assert_eq!(shelf.category(), 0);
+    shelf.previous_category();
+    assert_eq!(
+        shelf.category(),
+        0,
+        "previous category stops at ALL rather than wrapping to the end"
+    );
 }
 
 #[test]
@@ -217,14 +231,18 @@ fn platform_categories_without_roms_are_skipped() {
     shelf.next_category();
     assert_eq!(
         shelf.category(),
-        0,
-        "empty GB and GBC categories were not skipped"
+        2,
+        "empty GB and GBC were skipped and the end does not wrap"
     );
+    shelf.previous_category();
+    assert_eq!(shelf.category(), 1);
+    shelf.previous_category();
+    assert_eq!(shelf.category(), 0);
     shelf.previous_category();
     assert_eq!(
         shelf.category(),
-        2,
-        "reverse navigation did not skip GB and GBC"
+        0,
+        "ALL is the left edge and does not wrap"
     );
 }
 

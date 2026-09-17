@@ -295,21 +295,19 @@ impl Shelf {
     }
 
     pub fn previous_category(&mut self) {
-        for distance in 1..CATEGORY_COUNT {
-            let category = (self.category + CATEGORY_COUNT - distance) % CATEGORY_COUNT;
+        for category in (0..self.category).rev() {
             if self.category_available(category) {
                 self.set_category(category);
-                break;
+                return;
             }
         }
     }
 
     pub fn next_category(&mut self) {
-        for distance in 1..CATEGORY_COUNT {
-            let category = (self.category + distance) % CATEGORY_COUNT;
+        for category in (self.category + 1)..CATEGORY_COUNT {
             if self.category_available(category) {
                 self.set_category(category);
-                break;
+                return;
             }
         }
     }
@@ -708,7 +706,13 @@ impl Shelf {
                 }
                 self.index = candidate;
                 self.held = None;
-                self.ride = self.index as f32;
+                // Keep `ride` on the short arc after D-pad wraps have carried it off the
+                // bare index, or L1/R1 would send the spring the long way round the row.
+                let from = self.ride;
+                let n_f = n as f32;
+                let shortest =
+                    (candidate as f32 - from + n_f / 2.0).rem_euclid(n_f) - n_f / 2.0;
+                self.ride = from + shortest;
                 return;
             }
         }
