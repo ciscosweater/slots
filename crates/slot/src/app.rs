@@ -1099,16 +1099,24 @@ impl App {
             .enumerate()
             .filter(|(i, _)| self.shelf.category_available(*i))
             .collect();
+        let tab_h = |face: &Printed| -> u32 {
+            if face.h == 0 {
+                HINT_H
+            } else {
+                face.h
+            }
+        };
+        let row_h = tabs.iter().map(|(_, face)| tab_h(face)).max().unwrap_or(0);
         let tabs_w = tabs.iter().map(|(_, face)| face.w as f32).sum::<f32>()
             + CATEGORY_GAP * tabs.len().saturating_sub(1) as f32;
         let mut tab_x = (OUT_W as f32 - MARK_MARGIN - tabs_w).round();
         for (i, face) in tabs {
             let selected = i == self.shelf.category();
-            let h = if face.h == 0 { HINT_H } else { face.h };
+            let h = tab_h(&face);
             if let Some(tex) = face.face {
                 out.push(Draw::Tex {
                     x: tab_x,
-                    y: CATEGORY_Y,
+                    y: (CATEGORY_Y + (row_h.saturating_sub(h) as f32) / 2.0).round(),
                     w: face.w as f32,
                     h: h as f32,
                     tex,

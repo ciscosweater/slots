@@ -31,11 +31,14 @@ const GBC_SVG: &str = include_str!("../assets/platform_gbc.svg");
 /// a height that leaves `MARK_H * 5 / 8` with a remainder squeezes every drawing by the rounding.
 pub const MARK_H: u32 = 48;
 
-/// Category tab chips in the top-right. Console tabs are the hand-pixel 21×16 icons; ALL / REC
-/// stay as Nerd Font glyphs sized to that same height.
-const TAB_MARK_H: u32 = 16;
-const TAB_MARK_W: u32 = 21;
-const TAB_GLYPH_PX: f32 = 16.0;
+/// Category tab chips in the top-right. Source art is 21×16; drawn at 2× so they read beside
+/// the ALL / REC glyphs instead of as dust in the corner.
+const TAB_SRC_W: u32 = 21;
+const TAB_SRC_H: u32 = 16;
+const TAB_SCALE: u32 = 2;
+const TAB_MARK_W: u32 = TAB_SRC_W * TAB_SCALE;
+const TAB_MARK_H: u32 = TAB_SRC_H * TAB_SCALE;
+const TAB_GLYPH_PX: f32 = 28.0;
 
 const TAB_GBA_PNG: &[u8] = include_bytes!("../assets/tab_gba.png");
 const TAB_GB_PNG: &[u8] = include_bytes!("../assets/tab_gb.png");
@@ -153,8 +156,8 @@ pub fn category_tab_face(category: usize) -> UndoFace {
     }
 }
 
-/// Decode a tab chip at its native size and keep the artist's colours. These are not the
-/// monochrome shelf marks — they only live in the category row.
+/// Decode a tab chip, scale it up by nearest neighbour, and keep the artist's colours. These
+/// are not the monochrome shelf marks — they only live in the category row.
 fn tab_png(bytes: &[u8]) -> CartFace {
     let mut dec = png::Decoder::new(std::io::Cursor::new(bytes));
     dec.set_transformations(png::Transformations::normalize_to_color8());
@@ -173,7 +176,7 @@ fn tab_png(bytes: &[u8]) -> CartFace {
             h: 0,
         };
     };
-    if info.width != TAB_MARK_W || info.height != TAB_MARK_H {
+    if info.width != TAB_SRC_W || info.height != TAB_SRC_H {
         return CartFace {
             rgba: Vec::new(),
             w: 0,
@@ -181,7 +184,7 @@ fn tab_png(bytes: &[u8]) -> CartFace {
         };
     }
     let src = &buf[..info.buffer_size()];
-    let n = (TAB_MARK_W * TAB_MARK_H) as usize;
+    let n = (TAB_SRC_W * TAB_SRC_H) as usize;
     let mut rgba = vec![0u8; n * 4];
     match info.color_type {
         png::ColorType::Rgba => rgba.copy_from_slice(src),
@@ -199,11 +202,23 @@ fn tab_png(bytes: &[u8]) -> CartFace {
             }
         }
     }
-    CartFace {
-        rgba,
-        w: TAB_MARK_W,
-        h: TAB_MARK_H,
+    let (rgba, w, h) = scale_nearest(&rgba, TAB_SRC_W, TAB_SRC_H, TAB_SCALE);
+    CartFace { rgba, w, h }
+}
+
+/// Integer nearest-neighbour scale. Pixel chips stay sharp; bilinear would smear them.
+fn scale_nearest(src: &[u8], sw: u32, sh: u32, scale: u32) -> (Vec<u8>, u32, u32) {
+    let dw = sw * scale;
+    let dh = sh * scale;
+    let mut out = vec![0u8; (dw * dh * 4) as usize];
+    for y in 0..dh {
+        for x in 0..dw {
+            let si = (((y / scale) * sw + (x / scale)) * 4) as usize;
+            let di = ((y * dw + x) * 4) as usize;
+            out[di..di + 4].copy_from_slice(&src[si..si + 4]);
+        }
     }
+    (out, dw, dh)
 }
 
 fn platform_face(platform: Platform, w: u32, h: u32) -> CartFace {
@@ -298,8 +313,8 @@ mod tests {
         );
         assert_eq!(
             (TAB_MARK_W, TAB_MARK_H),
-            (21, 16),
-            "console tab chips are the 21×16 pixel icons"
+            (42, 32),
+            "console tab chips draw at 2× the 21×16 source"
         );
         for category in 2..=4 {
             let face = category_tab_face(category);

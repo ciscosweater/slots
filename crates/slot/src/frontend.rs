@@ -278,11 +278,13 @@ impl Frontend {
                 let category_faces = (0..5)
                     .map(|category| {
                         let face = category_tab_face(category);
-                        Printed::sized(
-                            compositor.create_texture(face.w, face.h, &face.rgba),
-                            face.w,
-                            face.h,
-                        )
+                        // Pixel chips need nearest upload; glyphs are fine either way.
+                        let tex = if category >= 2 {
+                            compositor.create_texture_nearest(face.w, face.h, &face.rgba)
+                        } else {
+                            compositor.create_texture(face.w, face.h, &face.rgba)
+                        };
+                        Printed::sized(tex, face.w, face.h)
                     })
                     .collect();
                 self.session
