@@ -8,25 +8,26 @@ use slot_retro::LinkChannel;
 use slot_store::{
     format_stamp, read_favorites, read_last_shelf, read_lcd, read_pixelify, read_recents,
     read_slot_state, touch_recent, write_favorites, write_last_shelf, write_lcd, write_pixelify,
-    write_recents, write_slot_state, Cart, Core, SlotState, StateEntry, StateRing, Theme,
-    BLUE_LIGHT_MAX, BRIGHTNESS_MAX, FF_SPEED_MAX, FF_SPEED_MIN, RING_MAX, VOLUME_MAX,
+    write_recents, write_slot_state, Cart, Core, Platform, SlotState, StateEntry, StateRing, Theme,
+    BLUE_LIGHT_MAX, BRIGHTNESS_MAX, FF_SPEEDS, RING_MAX, VOLUME_MAX,
 };
 use slot_ui::{
     board_at, board_zoom, draw_backdrop, draw_empty_slot, draw_footer, draw_printed, draw_sticker,
-    ease, grown, lid_at, lift_of, on_board, ClockPicker, Draw, FfState, Hud, HudKind, Icon,
-    LinkBadge, Millis, Placed, Polaroids, PowerChoice, Printed, QuickMenu, QuickMenuFaces,
-    QuickRow, QuickValue, Refusal, Shelf, SlotChrome, StickerPage, TexId, Toast, BOARD_W, BOARD_X,
-    CART_W, CHIP_H, CHIP_U, CHIP_V, CHIP_W, HINT_EDGE, HINT_H, HOP_LIFT, SHADOW_H, SHADOW_W,
-    SOCKET_H, SOCKET_U, SOCKET_V, SOCKET_W, TURN_PAD,
+    ease, grown, lid_at, lift_of, mark_at, mark_box, on_board, ClockPicker, Draw, FfState, Hud,
+    HudKind, Icon, LinkBadge, Millis, Placed, Polaroids, PowerChoice, Printed, QuickMenu,
+    QuickMenuFaces, QuickRow, QuickValue, Refusal, Shelf, SlotChrome, StickerPage, TexId, Toast,
+    BOARD_W, BOARD_X, CART_W, CHIP_H, CHIP_U, CHIP_V, CHIP_W, HINT_EDGE, HINT_H, HOP_LIFT,
+    SHADOW_H, SHADOW_W, SOCKET_H, SOCKET_U, SOCKET_V, SOCKET_W, TURN_PAD,
 };
 
 use crate::audio::Sfx;
 use crate::core_picker::{Chip, CorePicker, Outcome, Press};
-use crate::link_kind::{link_kind, LinkKind};
+use crate::link_kind::{link_carried, link_kind, LinkKind};
 use crate::link_radio::LinkRole;
 use crate::link_screen::LinkSprites;
 use crate::link_start::{link_port, LinkFail, LinkProgress, LinkStarter, LinkStep};
 use crate::persist::{self, Snapshot};
+use crate::video_mode::{self, VideoMode};
 
 /// A floor, not a delay. The animation is where the core load hides, so a slow load
 /// extends it and a load that is already done still waits it out.
@@ -209,6 +210,8 @@ pub enum GameMenu {
         worked: Millis,
         since: Millis,
     },
+    /// The link has ended and the plug is being animated back out of the port.
+    Unplug { role: LinkRow, since: Millis },
 }
 
 /// Which end of a link this device is offering to be. The player picks; there is no
@@ -293,6 +296,7 @@ impl LinkLegend {
 
 /// How long LINKED stays on screen once a link is up.
 pub const LINKED_HOLD_MS: Millis = 1000;
+pub const UNPLUG_HOLD_MS: Millis = 420;
 
 #[derive(Debug)]
 pub enum Phase {
@@ -442,6 +446,9 @@ pub struct App {
     /// The last highlighted cart on the shelf. Kept separately from `state.cart`, which is the
     /// cart physically seated in the slot and is cleared as soon as it is ejected.
     last_shelf_stem: Option<String>,
+    /// Platform shelf currently shown. `None` is used by standalone App tests that supply a
+    /// single-platform library; boot selects the first available platform on a real card.
+    shelf_platform: Option<slot_store::Platform>,
     shelf_captions: BTreeMap<String, (Printed, Printed)>,
     favorite_caption: Printed,
     empty_caption: Printed,
@@ -475,6 +482,16 @@ pub struct App {
     /// exactly the way `snapshot` is — both are set together and neither is cleared on eject —
     /// which is safe because every reader of either is gated on a cart actually being seated.
     core: Core,
+    /// Platform of the cart currently travelling through or seated in the slot. Unlike a stem,
+    /// this remains unambiguous when a GBA and a Game Boy ROM share a filename.
+    platform: Option<slot_store::Platform>,
+    /// Whether the opened emulator is the named core rather than the test fallback. A fallback
+    /// can refuse a resume for lack of a matching machine, but that is not evidence that the
+    /// player's state should be retired.
+    named_core: bool,
+    /// How a Game Boy picture is fitted to the panel. GBA pictures always use the whole texture;
+    /// this preference only becomes visible while a GB/GBC cart is playing.
+    video_mode: VideoMode,
     /// `Some` for as long as a netpacket session is live. `App` never touches the transport
     /// or the core itself — those live on the emulator thread, wherever `EmuHandle::begin_link`
     /// was called from the same gesture this answers — this is only what the interlocks below
@@ -512,6 +529,8 @@ pub struct App {
     /// The charging glyph, uploaded once at boot with the other icons rather than whenever
     /// the percent changes: unlike the percent, its face never varies.
     bolt: Option<TexId>,
+    /// One platform mark per `Platform::ALL`, uploaded once with the other static shelf art.
+    mark_faces: Vec<TexId>,
     shelf_clock: slot_ui::Printed,
     hud: Hud,
     /// How far up the game layer's own screen is. Not a phase: it outlives the insert, since
@@ -591,6 +610,7 @@ impl App {
             favorites: BTreeSet::new(),
             recents: Vec::new(),
             last_shelf_stem: None,
+            shelf_platform: None,
             shelf_captions: BTreeMap::new(),
             favorite_caption: Printed::default(),
             empty_caption: Printed::default(),
@@ -611,6 +631,9 @@ impl App {
             vol_before: Vec::new(),
             snapshot: None,
             core: Core::default(),
+            platform: None,
+            named_core: false,
+            video_mode: VideoMode::default(),
             link: None,
             sfx: None,
             polaroids: None,
@@ -624,6 +647,7 @@ impl App {
             wallpaper: None,
             battery_percent: slot_ui::Printed::default(),
             bolt: None,
+            mark_faces: Vec::new(),
             shelf_clock: slot_ui::Printed::default(),
             hud: Hud::new(),
             screen: 0.0,
@@ -661,6 +685,16 @@ impl App {
         app.pixelify = read_pixelify(root);
         slot_ui::text::set_pixelify(app.pixelify);
         app.state = read_slot_state(root);
+        let shelf_platform = app
+            .state
+            .cart_platform
+            .filter(|platform| app.shelf.has_platform(*platform))
+            .or_else(|| {
+                slot_store::Platform::ALL
+                    .into_iter()
+                    .find(|platform| app.shelf.has_platform(*platform))
+            });
+        app.set_shelf_platform(shelf_platform);
         if app.state.clock_set {
             app.start();
         } else {
@@ -681,7 +715,15 @@ impl App {
             Some(0)
         } else {
             let stem = self.state.cart.clone();
-            stem.and_then(|stem| self.shelf.carts.iter().position(|c| c.stem == stem))
+            stem.and_then(|stem| {
+                self.shelf.carts.iter().position(|c| {
+                    c.stem == stem
+                        && self
+                            .state
+                            .cart_platform
+                            .is_none_or(|platform| c.platform == platform)
+                })
+            })
         };
         self.phase = Phase::Shelf;
         self.shelf_idle_at = self.now();
@@ -690,6 +732,7 @@ impl App {
             Some(i) => {
                 // The shelf sits on the resumed cart so ejecting it lands where it left.
                 let stem = self.shelf.carts[i].stem.clone();
+                self.platform = Some(self.shelf.carts[i].platform);
                 self.shelf.select_stem(&stem);
                 // Never clean: a resume is the whole point of the cart still being in there.
                 self.insert(false);
@@ -704,6 +747,8 @@ impl App {
             // the next seat rewrites it, and a boot is the worst moment to need a write.
             None => {
                 self.state.cart = None;
+                self.state.cart_platform = None;
+                self.platform = None;
                 if let Some(stem) = self.last_shelf_stem.clone() {
                     self.shelf.select_stem(&stem);
                 }
@@ -789,6 +834,7 @@ impl App {
         match row {
             QuickRow::FastForward => QuickValue::speed(self.state.ff_speed),
             QuickRow::FastForwardSound => Some(QuickValue::flag(self.state.ff_sound)),
+            QuickRow::ColourCorrection => Some(QuickValue::flag(self.state.colour_correction)),
             QuickRow::Rumble => Some(QuickValue::flag(self.state.rumble)),
             QuickRow::DateTime | QuickRow::About => None,
         }
@@ -833,8 +879,46 @@ impl App {
         self.shelf.category()
     }
 
+    pub fn shelf_platform(&self) -> Option<slot_store::Platform> {
+        self.shelf_platform
+    }
+
+    fn set_shelf_platform(&mut self, platform: Option<slot_store::Platform>) {
+        self.shelf_platform = platform;
+        self.shelf.set_platform(platform);
+    }
+
+    fn switch_shelf_platform(&mut self, right: bool) {
+        let current = self
+            .shelf_platform
+            .and_then(|platform| {
+                slot_store::Platform::ALL
+                    .iter()
+                    .position(|p| *p == platform)
+            })
+            .unwrap_or(0);
+        for distance in 1..=slot_store::Platform::ALL.len() {
+            let offset = if right {
+                distance
+            } else {
+                slot_store::Platform::ALL.len() - distance
+            };
+            let platform =
+                slot_store::Platform::ALL[(current + offset) % slot_store::Platform::ALL.len()];
+            if self.shelf.has_platform(platform) {
+                self.set_shelf_platform(Some(platform));
+                return;
+            }
+        }
+    }
+
     pub fn cart_upload_priority(&self, stem: &str) -> usize {
         self.shelf.cart_upload_priority(stem)
+    }
+
+    pub fn cart_upload_priority_for(&self, cart: &Cart) -> usize {
+        self.shelf
+            .cart_upload_priority_for(Some(cart.platform), &cart.stem)
     }
 
     pub fn set_wallpaper(&mut self, face: TexId) {
@@ -843,6 +927,27 @@ impl App {
 
     pub fn set_bolt_face(&mut self, bolt: TexId) {
         self.bolt = Some(bolt);
+    }
+
+    pub fn set_mark_faces(&mut self, faces: Vec<TexId>) {
+        self.mark_faces = faces;
+    }
+
+    /// The active platform icon is useful when the card contains more than one platform. A
+    /// single-platform card keeps the corner quiet, as there is no platform choice to explain.
+    fn shelf_mark(&self) -> Option<TexId> {
+        if !self.has_multiple_platforms() {
+            return None;
+        }
+        let platform = self.shelf_platform?;
+        let index = Platform::ALL.iter().position(|p| *p == platform)?;
+        self.mark_faces.get(index).copied()
+    }
+
+    /// The source rectangle used by the live game pass. The stored mode is only meaningful for
+    /// Game Boy-family carts; GBA always fills the backing texture as before.
+    pub fn source_rect(&self) -> [f32; 4] {
+        video_mode::source_rect(self.platform.unwrap_or_default(), self.video_mode)
     }
 
     pub fn set_battery_percent_face(&mut self, face: TexId, w: u32) {
@@ -862,6 +967,37 @@ impl App {
     }
 
     pub fn game_platform(&self) -> Option<slot_store::Platform> {
+        match self.phase {
+            Phase::Inserting { .. }
+            | Phase::Playing { .. }
+            | Phase::Ejecting { .. }
+            | Phase::Polaroids { .. } => self.platform.or(self.state.cart_platform),
+            _ => None,
+        }
+    }
+
+    /// Shoulders taken by slot itself while a Game Boy-family game is live. Those consoles have
+    /// no L/R buttons; the same physical inputs select the picture mode instead.
+    pub fn taken_buttons(&self) -> &'static [Btn] {
+        if matches!(self.phase, Phase::Playing { .. })
+            && matches!(self.platform, Some(Platform::Gb | Platform::Gbc))
+        {
+            &[Btn::L1, Btn::R1]
+        } else {
+            &[]
+        }
+    }
+
+    pub fn takes_from_game(&self, action: Action) -> bool {
+        match action {
+            Action::GbaDown(btn) | Action::GbaUp(btn) => self.taken_buttons().contains(&btn),
+            _ => false,
+        }
+    }
+
+    /// The exact cart travelling through or seated in the slot. The platform is checked first
+    /// so duplicate stems on different system shelves cannot open the wrong ROM.
+    pub fn seated_cart(&self) -> Option<&Cart> {
         let stem = match &self.phase {
             Phase::Inserting { cart, .. }
             | Phase::Playing { cart }
@@ -872,13 +1008,12 @@ impl App {
         self.shelf
             .carts
             .iter()
-            .find(|cart| &cart.stem == stem)
-            .map(|cart| cart.platform)
+            .find(|cart| &cart.stem == stem && self.platform.is_none_or(|p| cart.platform == p))
     }
 
     /// Exactly one cart on the card. The shelf is unreachable and eject is refused.
     pub fn single_cart(&self) -> bool {
-        self.shelf.carts.len() == 1
+        self.shelf.all_carts().len() == 1
     }
 
     /// Face textures in `carts` order. Only the compositor can mint a `TexId`.
@@ -903,6 +1038,18 @@ impl App {
     ) {
         self.shelf
             .set_face_with_size_and_artwork(stem, face, size, complete_artwork);
+    }
+
+    pub fn set_face_for(
+        &mut self,
+        platform: Platform,
+        stem: &str,
+        face: TexId,
+        size: (u32, u32),
+        complete_artwork: bool,
+    ) {
+        self.shelf
+            .set_face_for(platform, stem, face, size, complete_artwork);
     }
 
     pub fn set_shelf_caption(&mut self, stem: String, caption: (Printed, Printed)) {
@@ -1061,6 +1208,26 @@ impl App {
         self.core = core;
     }
 
+    pub fn set_platform(&mut self, platform: slot_store::Platform) {
+        self.platform = Some(platform);
+    }
+
+    pub fn set_video_mode(&mut self, mode: VideoMode) {
+        self.video_mode = mode;
+    }
+
+    pub fn video_mode(&self) -> VideoMode {
+        self.video_mode
+    }
+
+    pub fn set_named_core(&mut self, named: bool) {
+        self.named_core = named;
+    }
+
+    pub fn colour_correction(&self) -> bool {
+        self.state.colour_correction
+    }
+
     pub fn core(&self) -> Core {
         self.core
     }
@@ -1139,6 +1306,23 @@ impl App {
             session.lost_at.get_or_insert(now);
         }
         self.sync_link_badge();
+    }
+
+    /// The peer sent an explicit end marker. Unlike a silent transport loss, there is no grace
+    /// period: show the acknowledgement and animate the shared plug back out immediately.
+    pub fn peer_ended(&mut self) {
+        if !self.link_active() {
+            return;
+        }
+        let role = self
+            .link_client_id()
+            .map_or(self.last_role, LinkRow::from_client_id);
+        self.end_link();
+        self.hud.toast(Toast::PeerEnded, self.now());
+        self.game_menu = Some(GameMenu::Unplug {
+            role,
+            since: self.now(),
+        });
     }
 
     pub fn link_badge(&self) -> LinkBadge {
@@ -1496,6 +1680,12 @@ impl App {
                     _ if self.core_picker.is_some() => self.core_picker_input(action),
                     Action::ShelfLeft | Action::GbaDown(Btn::Left) => self.shelf.hold_left(now),
                     Action::ShelfRight | Action::GbaDown(Btn::Right) => self.shelf.hold_right(now),
+                    Action::GbaDown(Btn::L1) if self.has_multiple_platforms() => {
+                        self.switch_shelf_platform(false)
+                    }
+                    Action::GbaDown(Btn::R1) if self.has_multiple_platforms() => {
+                        self.switch_shelf_platform(true)
+                    }
                     Action::GbaDown(Btn::L1) => self.shelf.previous_letter(),
                     Action::GbaDown(Btn::R1) => self.shelf.next_letter(),
                     Action::RewindStart => self.shelf.previous_category(),
@@ -1525,6 +1715,16 @@ impl App {
                 Action::Polaroids => self.open_polaroids(),
                 Action::SaveState => self.save_state(),
                 Action::LoadState => self.load_newest(),
+                Action::GbaDown(Btn::L1)
+                    if matches!(self.platform, Some(Platform::Gb | Platform::Gbc)) =>
+                {
+                    self.set_picture(VideoMode::Stretch)
+                }
+                Action::GbaDown(Btn::R1)
+                    if matches!(self.platform, Some(Platform::Gb | Platform::Gbc)) =>
+                {
+                    self.set_picture(VideoMode::Actual)
+                }
                 // Rewinding interrupts communication libretro's contract says must not be
                 // interrupted. Declined the same way every other "nothing doing" action in
                 // this file is, so the press reads as answered rather than dropped.
@@ -1580,6 +1780,29 @@ impl App {
         }
     }
 
+    /// Change the live Game Boy picture mode and persist it for the cart. The write is best
+    /// effort: the picture changes immediately even on a read-only card.
+    fn set_picture(&mut self, mode: VideoMode) {
+        if self.video_mode == mode {
+            return;
+        }
+        self.video_mode = mode;
+        let (Some(root), Phase::Playing { cart }) = (self.root.clone(), &self.phase) else {
+            return;
+        };
+        if let Err(e) = video_mode::write_video_mode(&root, cart, mode) {
+            eprintln!("slot: video: could not write video_mode.ini: {e}");
+        }
+    }
+
+    fn has_multiple_platforms(&self) -> bool {
+        slot_store::Platform::ALL
+            .into_iter()
+            .filter(|platform| self.shelf.has_platform(*platform))
+            .count()
+            > 1
+    }
+
     /// MENU on the carousel. On the top row every time, however the menu was last left.
     fn open_quick_menu(&mut self) {
         self.phase = Phase::QuickMenu {
@@ -1614,7 +1837,10 @@ impl App {
                 self.phase = clock_screen(self.utc_secs(), self.state.utc_offset_min, true);
             }
             QuickRow::About => self.phase = Phase::About,
-            QuickRow::FastForward | QuickRow::FastForwardSound | QuickRow::Rumble => {}
+            QuickRow::FastForward
+            | QuickRow::FastForwardSound
+            | QuickRow::ColourCorrection
+            | QuickRow::Rumble => {}
         }
     }
 
@@ -1626,9 +1852,9 @@ impl App {
         match row {
             QuickRow::FastForward => {
                 let to = if right {
-                    up(s.ff_speed, 1, FF_SPEED_MAX)
+                    ff_next(s.ff_speed, true)
                 } else {
-                    s.ff_speed.saturating_sub(1).max(FF_SPEED_MIN)
+                    ff_next(s.ff_speed, false)
                 };
                 if to == s.ff_speed {
                     return;
@@ -1637,6 +1863,7 @@ impl App {
             }
             // Two values each, so either arrow is the other one.
             QuickRow::FastForwardSound => s.ff_sound = !s.ff_sound,
+            QuickRow::ColourCorrection => s.colour_correction = !s.colour_correction,
             QuickRow::Rumble => s.rumble = !s.rumble,
             QuickRow::DateTime | QuickRow::About => return,
         }
@@ -1971,6 +2198,11 @@ impl App {
                 self.game_menu = None;
             }
         }
+        if let Some(GameMenu::Unplug { since, .. }) = self.game_menu {
+            if self.now().saturating_sub(since) >= UNPLUG_HOLD_MS {
+                self.game_menu = None;
+            }
+        }
         // A lost peer's session ends on its own, once the broken badge has been seen.
         if let Some(at) = self.link.as_ref().and_then(|s| s.lost_at) {
             if self.now().saturating_sub(at) >= LINK_LOST_MS {
@@ -2023,10 +2255,12 @@ impl App {
     }
 
     fn record_cart(&mut self, cart: Option<String>) {
-        if self.state.cart == cart {
+        let platform = cart.as_ref().and(self.platform);
+        if self.state.cart == cart && self.state.cart_platform == platform {
             return;
         }
         self.state.cart = cart;
+        self.state.cart_platform = platform;
         self.persist();
     }
 
@@ -2069,8 +2303,43 @@ impl App {
     }
 
     pub fn on_core_ready(&mut self) {
-        if let Phase::Inserting { core_ready, .. } = &mut self.phase {
-            *core_ready = true;
+        let Phase::Inserting {
+            cart, core_ready, ..
+        } = &mut self.phase
+        else {
+            return;
+        };
+        *core_ready = true;
+        let cart = cart.clone();
+        self.retire_refused_resume(&cart);
+    }
+
+    /// A real core refusing the resume means those bytes belong to an incompatible session. Move
+    /// them out of the live slot so the same refusal is not repeated on every boot, while leaving
+    /// the file available for recovery with the core that wrote it. A test/mock fallback is not
+    /// evidence that the state is bad: it only says the named dylib was unavailable.
+    fn retire_refused_resume(&mut self, stem: &str) {
+        let Some(snapshot) = &self.snapshot else {
+            return;
+        };
+        if snapshot.resume_trusted() || !self.named_core {
+            return;
+        }
+        let Some(root) = &self.root else {
+            return;
+        };
+        let Some(platform) = self.platform else {
+            return;
+        };
+        let ring = StateRing::new(root, platform, self.core, stem);
+        match ring.retire_resume(&format_stamp(self.wall_secs())) {
+            Ok(Some(path)) => eprintln!(
+                "slot: resume: {} refused this state, moved it to {}",
+                self.core.as_str(),
+                path.display()
+            ),
+            Ok(None) => {}
+            Err(e) => eprintln!("slot: resume: could not move the refused state aside: {e}"),
         }
     }
 
@@ -2298,6 +2567,22 @@ impl App {
         }
         // Over everything, in every phase. The bar is never what the user is looking at.
         self.hud.draw(self.now(), out);
+        // The platform mark belongs to the shelf, not to a seated cart or its switcher. Draw it
+        // after the HUD so it keeps the same undimmed ink as the link badge it replaces.
+        if matches!(self.phase, Phase::Shelf) {
+            if let Some(tex) = self.shelf_mark() {
+                let (w, h) = mark_box();
+                let (x, y) = mark_at(w as f32);
+                out.push(Draw::Tex {
+                    x,
+                    y,
+                    w: w as f32,
+                    h: h as f32,
+                    tex,
+                    alpha: 1.0,
+                });
+            }
+        }
     }
 
     pub fn screen_shake(&self) -> f32 {
@@ -2701,6 +2986,7 @@ impl App {
             GameMenu::Failed { fail, .. } => fail
                 .shown()
                 .and_then(|i| self.link_fail_faces.get(i).copied()),
+            GameMenu::Unplug { .. } => None,
         };
         if let Some((tex, w, h)) = line {
             out.push(Draw::Tex {
@@ -2717,6 +3003,7 @@ impl App {
             GameMenu::Working { .. } => &[LinkLegend::Cancel],
             GameMenu::Linked { .. } => &[],
             GameMenu::Failed { .. } => &[LinkLegend::Ok],
+            GameMenu::Unplug { .. } => &[],
         };
         let faces: Vec<(TexId, u32)> = keys
             .iter()
@@ -2757,19 +3044,15 @@ impl App {
         if !self.on_shelf() {
             return;
         }
-        let Some(cart) = self
-            .shelf
-            .carts
-            .get(self.shelf.index)
-            .map(|c| c.stem.clone())
-        else {
+        let Some(cart) = self.shelf.carts.get(self.shelf.index).cloned() else {
             return;
         };
+        self.platform = Some(cart.platform);
         self.play_held = None;
         self.refusal = None;
         self.refused_from = None;
         self.phase = Phase::Inserting {
-            cart,
+            cart: cart.stem,
             t: 0.0,
             core_ready: false,
             resumed: false,
@@ -2827,6 +3110,7 @@ impl App {
         }
         // Inserting as well as Playing, so a slot with no core behind it can still be
         // emptied: that is the only way to watch the travel more than once.
+        let platform = self.game_platform().unwrap_or_default();
         let cart = match &mut self.phase {
             Phase::Playing { cart } | Phase::Inserting { cart, .. } => std::mem::take(cart),
             _ => return,
@@ -2845,7 +3129,7 @@ impl App {
         // comes next, the way `begin_power_off` guards its own chokepoint rather than the
         // one caller that happened to need it.
         self.close_game_menu();
-        self.flush_eject(&cart);
+        self.flush_eject(&cart, platform);
         // The offer names a file in this cart's ring and a state only this cart's core can
         // read. Carried across the slot it would delete or load the wrong one.
         self.pending = None;
@@ -2862,7 +3146,7 @@ impl App {
     /// card can be pulled while the cart is still sliding out. A write that failed leaves
     /// the cart recorded as seated, so the next boot resumes it and the end of the
     /// animation retries the clear.
-    fn flush_eject(&mut self, stem: &str) {
+    fn flush_eject(&mut self, stem: &str, platform: slot_store::Platform) {
         let (Some(root), Some(snapshot)) = (&self.root, &self.snapshot) else {
             return;
         };
@@ -2872,8 +3156,18 @@ impl App {
             return;
         };
         let (state, sav) = trusted_write(snapshot.as_ref(), state, "eject");
-        match persist::eject(root, self.core, stem, state.as_deref(), sav.as_deref()) {
-            Ok(()) => self.state.cart = None,
+        match persist::eject(
+            root,
+            platform,
+            self.core,
+            stem,
+            state.as_deref(),
+            sav.as_deref(),
+        ) {
+            Ok(()) => {
+                self.state.cart = None;
+                self.state.cart_platform = None;
+            }
             Err(e) => eprintln!("slot: eject: {e}"),
         }
     }
@@ -3122,8 +3416,26 @@ impl App {
         if self.link_active() {
             return self.refuse();
         }
-        // gpSP is the only core with a netpacket interface to link over. The screen stays shut,
-        // and the save-state banner says what would open it, so the press is not simply lost.
+        // Platform first: neither `link_carried` nor "switch to gpSP" is about a Game Boy cart.
+        // `link_carried` matches Pokémon by title alone, and a `.gb` header's `POKEMON RED` would
+        // otherwise earn advice to switch to a core that cannot run it at all.
+        if self.platform != Some(Platform::Gba) {
+            self.hud.toast(Toast::NoLink, self.now());
+            return;
+        }
+        // gpSP fakes named protocols rather than emulating the cable, so for a cart it has none
+        // for there is nothing on the far side of the link to reach. Ahead of the core check:
+        // "nothing can link this" outranks "something else could".
+        let carried = self
+            .seated()
+            .and_then(|stem| self.shelf.carts.iter().find(|c| c.stem == stem))
+            .is_some_and(|c| link_carried(&c.code, &c.title));
+        if !carried {
+            self.hud.toast(Toast::NoLink, self.now());
+            return;
+        }
+        // gpSP is the only core with a netpacket interface to link over. Reached only for a cart
+        // gpSP really can carry, so switching to it is advice that works.
         if self.core != Core::Gpsp {
             self.hud.toast(Toast::NeedsGpsp, self.now());
             return;
@@ -3168,6 +3480,7 @@ impl App {
                     self.close_game_menu();
                 }
             }
+            GameMenu::Unplug { .. } => {}
         }
     }
 
@@ -3356,7 +3669,15 @@ impl App {
             return;
         };
         let (state, sav) = trusted_write(snapshot.as_ref(), state, "flush");
-        if let Err(e) = persist::flush(root, self.core, cart, state.as_deref(), sav.as_deref()) {
+        let platform = self.game_platform().unwrap_or_default();
+        if let Err(e) = persist::flush(
+            root,
+            platform,
+            self.core,
+            cart,
+            state.as_deref(),
+            sav.as_deref(),
+        ) {
             eprintln!("slot: flush: {e}");
         }
     }
@@ -3367,7 +3688,8 @@ impl App {
         let (Some(root), Some(cart)) = (&self.root, self.seated()) else {
             return None;
         };
-        Some(StateRing::new(root, self.core, cart))
+        let platform = self.game_platform().unwrap_or_default();
+        Some(StateRing::new(root, platform, self.core, cart))
     }
 
     fn seated(&self) -> Option<&str> {
@@ -3739,6 +4061,19 @@ fn trusted_write(
 
 fn up(level: u8, step: u8, max: u8) -> u8 {
     level.saturating_add(step).min(max)
+}
+
+fn ff_next(from: u8, right: bool) -> u8 {
+    let at = FF_SPEEDS
+        .iter()
+        .position(|&speed| speed == from)
+        .unwrap_or(0);
+    let next = if right {
+        (at + 1).min(FF_SPEEDS.len() - 1)
+    } else {
+        at.saturating_sub(1)
+    };
+    FF_SPEEDS[next]
 }
 
 /// The clock screen, opened on `utc` with `offset_min` already chosen. The picker shows only the

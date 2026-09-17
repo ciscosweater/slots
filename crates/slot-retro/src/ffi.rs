@@ -18,6 +18,9 @@ pub const GET_VARIABLE_UPDATE: c_uint = 17;
 pub const GET_RUMBLE_INTERFACE: c_uint = 23;
 pub const GET_LOG_INTERFACE: c_uint = 27;
 pub const GET_SAVE_DIRECTORY: c_uint = 31;
+/// The callback used by a core's automatic frameskip mode to ask whether its audio buffer is
+/// close to underrunning.
+pub const SET_AUDIO_BUFFER_STATUS_CALLBACK: c_uint = 62;
 pub const SET_NETPACKET_INTERFACE: c_uint = 78;
 
 pub const RUMBLE_STRONG: c_uint = 0;
@@ -85,6 +88,14 @@ pub type SetRumbleStateFn = unsafe extern "C" fn(c_uint, c_uint, u16) -> bool;
 #[repr(C)]
 pub struct RumbleInterface {
     pub set_rumble_state: SetRumbleStateFn,
+}
+
+pub type AudioBufferStatusFn =
+    unsafe extern "C" fn(active: bool, occupancy: c_uint, underrun_likely: bool);
+
+#[repr(C)]
+pub struct AudioBufferStatusCallback {
+    pub callback: Option<AudioBufferStatusFn>,
 }
 
 // The core hands these two to `start` so the frontend can push and pull packets on its own

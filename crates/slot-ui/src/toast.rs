@@ -5,33 +5,38 @@ use crate::icon::{haloed, HALO_PX};
 use crate::text;
 use crate::CartFace;
 
-/// Everything the HUD ever says in words. Each answers something the user just did: two
-/// confirm it, and the third answers the link shortcut on a core that cannot link, which would
-/// otherwise do nothing and say nothing.
+/// Everything the HUD ever says in words. Each answers something the user just did: confirmations,
+/// display/font toggles, and the link shortcut where it cannot be carried out — on a platform or
+/// cart with no link at all, or on a core that cannot link — either of which would otherwise do
+/// nothing and say nothing.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Toast {
     StateSaved,
     StateLoaded,
     NeedsGpsp,
+    NoLink,
     Favorited,
     Unfavorited,
     LcdOn,
     LcdOff,
     FontPixelify,
     FontOriginal,
+    PeerEnded,
 }
 
 impl Toast {
-    pub const ALL: [Toast; 9] = [
+    pub const ALL: [Toast; 11] = [
         Toast::StateSaved,
         Toast::StateLoaded,
         Toast::NeedsGpsp,
+        Toast::NoLink,
         Toast::Favorited,
         Toast::Unfavorited,
         Toast::LcdOn,
         Toast::LcdOff,
         Toast::FontPixelify,
         Toast::FontOriginal,
+        Toast::PeerEnded,
     ];
 
     /// Position in `ALL`, which is the order faces are uploaded in.
@@ -44,12 +49,14 @@ impl Toast {
             Toast::StateSaved => "State Saved",
             Toast::StateLoaded => "State Loaded",
             Toast::NeedsGpsp => "Please switch to gpSP",
+            Toast::NoLink => "No link support",
             Toast::Favorited => "Added to Favorites",
             Toast::Unfavorited => "Removed from Favorites",
             Toast::LcdOn => "LCD Effect On",
             Toast::LcdOff => "LCD Effect Off",
             Toast::FontPixelify => "Font: Pixelify",
             Toast::FontOriginal => "Font: Original",
+            Toast::PeerEnded => "Link was ended",
         }
     }
 }

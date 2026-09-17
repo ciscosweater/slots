@@ -4,7 +4,7 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use slot::audio::{AudioSink, StubSink};
-use slot::emu::{CoreState, EmuHandle, Speed, FAST_STEPS};
+use slot::emu::{CoreState, EmuHandle, Speed, FAST_STEPS, FAST_STEPS_MAX};
 use slot::persist::Snapshot;
 use slot_retro::{
     AvInfo, ButtonMask, CoreError, LinkChannel, MockCore, RetroCore, NETPACKET_RELIABLE,
@@ -201,13 +201,21 @@ fn held_counts(emu: &EmuHandle) -> (u64, u64) {
     (frame_count(emu), emu.published_count())
 }
 
-/// The quick menu's speed is how many core frames each present runs. Counted against presents
+/// The quick menu's speed is the most core frames each present may run. Counted against presents
 /// rather than against time, so a loaded machine running the suite moves neither side of it.
-/// Never more than `FAST_STEPS`, whatever is asked: that is all an H700 can serve.
+/// Never more than `FAST_STEPS_MAX`, whatever is asked: that is the top of the row.
 #[test]
 fn fast_forward_runs_the_chosen_number_of_core_frames_per_present() {
     let emu = spawn();
-    for (asked, runs) in [(2, 2), (3, 3), (4, 4), (FAST_STEPS + 4, FAST_STEPS)] {
+    // Let normal play establish the frame-cost estimate before checking fast-forward ceilings.
+    std::thread::sleep(Duration::from_millis(300));
+    for (asked, runs) in [
+        (2, 2),
+        (3, 3),
+        (4, 4),
+        (FAST_STEPS_MAX, FAST_STEPS_MAX),
+        (FAST_STEPS_MAX + 4, FAST_STEPS_MAX),
+    ] {
         emu.set_fast_steps(asked);
         let (frames, presents) = held_counts(&emu);
         emu.set_speed(Speed::Fast);
@@ -215,7 +223,17 @@ fn fast_forward_runs_the_chosen_number_of_core_frames_per_present() {
         let (frames_after, presents_after) = held_counts(&emu);
         let (ran, shown) = (frames_after - frames, presents_after - presents);
         assert!(shown > 0, "nothing was presented asking for {asked}");
-        assert_eq!(ran, shown * u64::from(runs));
+        let want = shown * u64::from(runs);
+        assert!(
+            ran <= want,
+            "{ran} frames over {shown} presents ran past the ceiling of {runs}, asking for {asked}"
+        );
+        // A cheap mock should normally reach the ceiling. Allow a little scheduler noise while
+        // still catching a worker that is consistently running below the requested ceiling.
+        assert!(
+            ran * 5 >= want * 4,
+            "{ran} frames over {shown} presents is well short of the ceiling of {runs}, asking for {asked}"
+        );
     }
 }
 

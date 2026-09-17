@@ -87,7 +87,7 @@ pub fn cart_face_with_artwork(cart: &Cart) -> (CartFace, bool) {
     if cart.platform != slot_store::Platform::Gba {
         return (gb_cart_face(cart), false);
     }
-    let shell = shell_for(&cart.code);
+    let shell = shell_for(cart);
     let mut face = shell_face(&shell);
     let label = match cart
         .label

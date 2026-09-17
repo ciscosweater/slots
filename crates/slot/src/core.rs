@@ -69,7 +69,29 @@ fn candidates(root: &Path, core: Core) -> Vec<PathBuf> {
 /// the same value for every later read and write, and it does that by storing it rather than
 /// asking again.
 pub fn open_core(root: &Path, core: Core) -> Option<Box<dyn RetroCore>> {
-    if let Some(opened) = open_core_for(root, core, &candidates(root, core)) {
+    if let Some(opened) = open_core_with_options(root, core, "auto", true) {
+        return Some(opened);
+    }
+    if ALLOW_MOCK.load(Ordering::Relaxed) && std::env::var_os(CORE_ENV).is_none() {
+        eprintln!(
+            "slot: no {} core found in tests, running the mock",
+            core.as_str()
+        );
+        return Some(Box::new(MockCore::new()));
+    }
+    None
+}
+
+/// Open a core with the options that are selected for the next session. Options must be seeded
+/// before the ROM is loaded because libretro cores read most of them during `retro_load_game`.
+pub fn open_core_with_options(
+    root: &Path,
+    core: Core,
+    serial: &str,
+    colour: bool,
+) -> Option<Box<dyn RetroCore>> {
+    let paths = candidates(root, core);
+    if let Some(opened) = open_core_for_with_options(root, core, serial, colour, &paths) {
         return Some(opened);
     }
     if ALLOW_MOCK.load(Ordering::Relaxed) && std::env::var_os(CORE_ENV).is_none() {
@@ -99,15 +121,39 @@ pub fn open_core(root: &Path, core: Core) -> Option<Box<dyn RetroCore>> {
 /// and never again; mGBA already defaults to the official GBA intro when `gba_bios.bin` is
 /// in this folder, and is left alone.
 pub fn open_core_for(root: &Path, core: Core, paths: &[PathBuf]) -> Option<Box<dyn RetroCore>> {
+    open_core_for_with_options(root, core, "auto", true, paths)
+}
+
+/// Test seam for opening a named core while supplying the same runtime options as production.
+pub fn open_core_for_with_options(
+    root: &Path,
+    core: Core,
+    serial: &str,
+    colour: bool,
+    paths: &[PathBuf],
+) -> Option<Box<dyn RetroCore>> {
     let bios = root::bios_dir(root);
     let saves = root::saves_dir(root);
-    let options = core_options(core);
+    // Gambatte reads its bootloader option during retro_init; the remaining options are applied
+    // immediately after opening and before the ROM is loaded.
+    let init_options = if core == Core::Gambatte {
+        vec![("gambatte_gb_bootloader", "enabled")]
+    } else {
+        Vec::new()
+    };
     for path in paths {
         if !path.exists() {
             continue;
         }
-        match LibretroCore::open_with_options(path, &bios, &saves, &options) {
-            Ok(opened) => {
+        match LibretroCore::open_with_options(path, &bios, &saves, &init_options) {
+            Ok(mut opened) => {
+                apply_core_options_with(
+                    &mut opened,
+                    core,
+                    serial,
+                    root::has_real_bios(root),
+                    colour,
+                );
                 eprintln!("slot: core {}", path.display());
                 return Some(Box::new(opened));
             }
@@ -165,6 +211,40 @@ pub fn core_options(which: Core) -> Vec<(&'static str, &'static str)> {
 pub fn apply_core_options(core: &mut LibretroCore, which: Core) {
     for (key, value) in core_options(which) {
         core.set_option(key, value);
+    }
+}
+
+/// Apply the options that vary per session while retaining the Gambatte palette and boot setup.
+pub fn apply_core_options_with(
+    core: &mut LibretroCore,
+    which: Core,
+    serial: &str,
+    bios: bool,
+    colour: bool,
+) {
+    core.set_option(&format!("{}_frameskip", which.as_str()), "auto");
+    match which {
+        Core::Mgba => {
+            core.set_option("mgba_sgb_borders", "OFF");
+            core.set_option("mgba_gb_colors_preset", "1");
+            core.set_option("mgba_gb_colors", "GBC Dark Green →A");
+            core.set_option("mgba_color_correction", if colour { "Auto" } else { "OFF" });
+        }
+        Core::Gpsp => {
+            core.set_option("gpsp_serial", serial);
+            if bios {
+                core.set_option("gpsp_boot_mode", "bios");
+            }
+            core.set_option(
+                "gpsp_color_correction",
+                if colour { "enabled" } else { "disabled" },
+            );
+        }
+        Core::Gambatte => {
+            for (key, value) in core_options(which) {
+                core.set_option(key, value);
+            }
+        }
     }
 }
 

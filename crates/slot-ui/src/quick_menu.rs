@@ -11,15 +11,17 @@ use crate::text;
 pub enum QuickRow {
     FastForward,
     FastForwardSound,
+    ColourCorrection,
     Rumble,
     DateTime,
     About,
 }
 
 impl QuickRow {
-    pub const ALL: [QuickRow; 5] = [
+    pub const ALL: [QuickRow; 6] = [
         QuickRow::FastForward,
         QuickRow::FastForwardSound,
+        QuickRow::ColourCorrection,
         QuickRow::Rumble,
         QuickRow::DateTime,
         QuickRow::About,
@@ -34,6 +36,7 @@ impl QuickRow {
         match self {
             QuickRow::FastForward => "Fast Forward",
             QuickRow::FastForwardSound => "Fast Forward Sound",
+            QuickRow::ColourCorrection => "Colour Correction",
             QuickRow::Rumble => "Rumble",
             QuickRow::DateTime => "Date & Time",
             QuickRow::About => "About",
@@ -62,15 +65,17 @@ pub enum QuickValue {
     Speed2,
     Speed3,
     Speed4,
+    Speed6,
     On,
     Off,
 }
 
 impl QuickValue {
-    pub const ALL: [QuickValue; 5] = [
+    pub const ALL: [QuickValue; 6] = [
         QuickValue::Speed2,
         QuickValue::Speed3,
         QuickValue::Speed4,
+        QuickValue::Speed6,
         QuickValue::On,
         QuickValue::Off,
     ];
@@ -85,6 +90,7 @@ impl QuickValue {
             QuickValue::Speed2 => "2×",
             QuickValue::Speed3 => "3×",
             QuickValue::Speed4 => "4×",
+            QuickValue::Speed6 => "6×",
             QuickValue::On => "On",
             QuickValue::Off => "Off",
         }
@@ -96,6 +102,7 @@ impl QuickValue {
             2 => Some(QuickValue::Speed2),
             3 => Some(QuickValue::Speed3),
             4 => Some(QuickValue::Speed4),
+            6 => Some(QuickValue::Speed6),
             _ => None,
         }
     }
@@ -202,7 +209,7 @@ pub struct QuickMenuFaces {
 
 pub struct QuickMenu<'a> {
     pub row: QuickRow,
-    pub values: [Option<QuickValue>; 5],
+    pub values: [Option<QuickValue>; QuickRow::ALL.len()],
     pub clock: Option<[(TexId, u32, u32); 2]>,
     pub faces: Option<&'a QuickMenuFaces>,
 }

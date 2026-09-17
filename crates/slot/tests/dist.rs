@@ -15,8 +15,12 @@ fn ensure_creates_the_content_folders_and_nothing_else() {
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
         .collect();
     got.sort();
-    let mut want: Vec<String> = slot::root::DIRS.iter().map(|s| s.to_string()).collect();
+    let mut want: Vec<String> = slot::root::DIRS
+        .iter()
+        .map(|s| s.split('/').next().unwrap().to_string())
+        .collect();
     want.sort();
+    want.dedup();
     assert_eq!(got, want);
 }
 

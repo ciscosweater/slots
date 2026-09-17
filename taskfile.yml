@@ -154,7 +154,7 @@ tasks:
       ROOT: '{{.ROOT | default "./sdcard"}}'
     cmds:
       - ./target/debug/slot --init-root {{.ROOT}}
-      - 'echo "content root ready at {{.ROOT}}: roms in Games, cartridge art in Cartridges, labels in Labels, gba_bios.bin in BIOS, pngs in Wallpapers, palette in System/theme.txt"'
+      - 'echo "content root ready at {{.ROOT}}: roms in Games/<platform>, cartridge art in Cartridges/<platform>, labels in Labels/<platform>, gba_bios.bin in BIOS, pngs in Wallpapers, palette in System/theme.txt"'
 
   run:
     desc: >-

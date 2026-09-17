@@ -27,6 +27,16 @@ pub trait LinkChannel: Send {
     fn is_closed(&self) -> bool {
         false
     }
+
+    /// Ask a transport to send the control marker that tells its peer the link ended. Most
+    /// in-memory transports have no control channel and keep the default no-op.
+    fn send_end(&mut self) {}
+
+    /// Whether the peer explicitly ended the session. A transport without a control channel
+    /// cannot know this and therefore reports false.
+    fn peer_ended(&self) -> bool {
+        false
+    }
 }
 
 /// Hands back whatever was put in, in the order it was sent. No network, no peer, no

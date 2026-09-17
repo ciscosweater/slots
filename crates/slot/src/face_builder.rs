@@ -27,6 +27,7 @@ pub struct FaceBuilder {
 /// A shelf cart's complete visual payload. Rasterising a cart (and its two captions) touches
 /// the label image and font for every entry, so it must never happen on the render thread.
 pub struct BuiltShelfFace {
+    pub platform: slot_store::Platform,
     pub stem: String,
     pub face: CartFace,
     pub complete_artwork: bool,
@@ -57,6 +58,7 @@ impl ShelfFaceBuilder {
                         .unwrap_or_else(|| "#".to_string());
                     let (face, complete_artwork) = cart_face_with_artwork(&cart);
                     let faces = BuiltShelfFace {
+                        platform: cart.platform,
                         stem: cart.stem.clone(),
                         face,
                         complete_artwork,

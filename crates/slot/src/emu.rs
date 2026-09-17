@@ -3,9 +3,7 @@ use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, AtomicU64, AtomicU8, O
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 use std::thread::JoinHandle;
-use std::time::Duration;
-#[cfg(not(feature = "device"))]
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use slot_retro::{
     ButtonMask, Link, LinkChannel, RetroCore, Rumble, GBA_H, GBA_W, NETPACKET_RELIABLE,
@@ -23,16 +21,20 @@ use crate::timing::PANEL_FRAME;
 /// present. The GBA-to-panel difference lands entirely on audio rate control.
 const PRESENT: Duration = PANEL_FRAME;
 
-/// Core frames per present while fast forwarding. There is no ramp and no adaptive cap: the
-/// core is stepped this many times and the deadline below absorbs whatever that costs.
-///
-/// Four, because an H700 cannot serve more. Eight was measured on hardware and pegged the
-/// worker at the same 100.5% of one core that four does — a thread already at 100% does the
-/// same work per second either way, so the extra steps bought no speed at all. What they cost
-/// was presents: the deadline sleep was never reached, so the picture fell from 60 Hz to
-/// around 30 at the same ~4x. A step count the hardware cannot serve does not run faster, it
-/// runs choppier.
-pub const FAST_STEPS: u32 = 4;
+/// The default fast-forward ceiling. The quick menu offers 2, 3, 4 and 6, and the worker treats
+/// the selected value as a ceiling rather than blindly overrunning a slow game.
+pub const FAST_STEPS: u32 = 6;
+
+/// The greatest number of core frames one present may run. This matches the top value offered by
+/// the quick menu and keeps a bad or stale setting from creating an unbounded present.
+pub const FAST_STEPS_MAX: u32 = 6;
+
+/// Budget reserved for core frames during fast forward. The remaining part of the 60 Hz present
+/// is left for publishing, snapshots, audio and link traffic.
+const FAST_TARGET: Duration = Duration::from_micros(14_000);
+
+/// Fraction of the old per-frame estimate replaced by each new measurement.
+const COST_BLEND: u32 = 4;
 
 /// Snapshot every other frame, so rewinding at one pop per present runs back at 2x.
 ///
@@ -141,6 +143,9 @@ struct Shared {
     /// The transport's far end went away during a session. Cleared when a session begins or
     /// ends. See `EmuHandle::link_lost`.
     link_lost: AtomicBool,
+    /// The transport's far end explicitly said it was ending the session. Kept separate from
+    /// `link_lost` because a deliberate goodbye is followed by the socket closing too.
+    peer_ended: AtomicBool,
     /// Completed display swaps. A device core advances from this clock, not from a second
     /// sleep-based clock that can drift in and out of phase with the LCD.
     presents: AtomicU64,
@@ -191,6 +196,7 @@ impl EmuHandle {
             resume_refused: AtomicBool::new(false),
             sav_refused: AtomicBool::new(false),
             link_lost: AtomicBool::new(false),
+            peer_ended: AtomicBool::new(false),
             presents: AtomicU64::new(0),
         });
         let (tx, rx) = channel();
@@ -238,6 +244,13 @@ impl EmuHandle {
     /// ends.
     pub fn link_lost(&self) -> bool {
         self.shared.link_lost.load(Ordering::Relaxed)
+    }
+
+    /// The transport's far end explicitly said it was ending the session, rather than merely
+    /// disappearing. The session layer checks this before `link_lost` because a deliberate
+    /// goodbye closes the socket immediately afterwards.
+    pub fn peer_ended(&self) -> bool {
+        self.shared.peer_ended.load(Ordering::Relaxed)
     }
 
     /// Wires a transport into the core's serial traffic, on the emulator thread — the only
@@ -329,7 +342,7 @@ impl EmuHandle {
     pub fn set_fast_steps(&self, steps: u32) {
         self.shared
             .fast_steps
-            .store(steps.clamp(1, FAST_STEPS), Ordering::Relaxed);
+            .store(steps.clamp(1, FAST_STEPS_MAX), Ordering::Relaxed);
     }
 
     /// What the worker will step its next fast-forward present by.
@@ -486,13 +499,18 @@ impl Worker {
             }
             Cmd::BeginLink(client_id, t) => {
                 self.shared.link_lost.store(false, Ordering::Relaxed);
+                self.shared.peer_ended.store(false, Ordering::Relaxed);
                 core.start_link(client_id);
                 link.set_active(true);
                 *transport = Some(t);
             }
             Cmd::EndLink => {
                 self.shared.link_lost.store(false, Ordering::Relaxed);
+                self.shared.peer_ended.store(false, Ordering::Relaxed);
                 core.stop_link();
+                if let Some(t) = transport.as_mut() {
+                    t.send_end();
+                }
                 *transport = None;
                 // Clear before publishing inactive: an Acquire reader that sees false must
                 // also see queues that cannot leak into the next session.
@@ -570,6 +588,14 @@ impl Worker {
         let mut gated = (false, false);
         let rewind = RewindThread::spawn(REWIND_BYTES);
         let mut since_snapshot = 0;
+        // Running estimate used to decide whether another fast-forward frame fits this present.
+        // Starting pessimistically prevents the first fast present from spending its entire
+        // budget before any frame cost has been measured.
+        let mut frame_peak = PRESENT;
+        // Trailing work is measured separately so the core budget does not crowd out publishing,
+        // snapshots, audio or link traffic. Start with the margin reserved by FAST_TARGET.
+        let mut post_cost = PRESENT.saturating_sub(FAST_TARGET);
+        let mut fast_span: Option<(Instant, Duration)> = None;
         #[cfg(not(feature = "device"))]
         let mut deadline = Instant::now();
         #[cfg(feature = "device")]
@@ -611,6 +637,9 @@ impl Worker {
                 drain_transport(t.as_mut(), &link, MAX_LINK_PACKETS_PER_PRESENT);
                 // Checked after the drain, so the last packets a peer sent before leaving still
                 // reach the core.
+                if t.peer_ended() {
+                    self.shared.peer_ended.store(true, Ordering::Relaxed);
+                }
                 if t.is_closed() {
                     self.shared.link_lost.store(true, Ordering::Relaxed);
                 }
@@ -647,7 +676,7 @@ impl Worker {
             }
             let input = ButtonMask(self.shared.input.load(Ordering::Relaxed));
             let rewinding = speed != Speed::Paused && self.shared.rewind.load(Ordering::Relaxed);
-            let steps = match speed {
+            let ceiling = match speed {
                 Speed::Paused => 0,
                 Speed::Normal => 1,
                 Speed::Fast => self.shared.fast_steps.load(Ordering::Relaxed),
@@ -668,6 +697,8 @@ impl Worker {
                     // state landed on when the trigger was released inherited the
                     // difference. Nothing was being replayed faithfully; it was being
                     // re-played.
+                    // Rewind always shows the frame it just restored, never a skipped frame.
+                    core.set_frame_skip(false);
                     core.run_frame(ButtonMask(0));
                 }
                 // Publish even at the bottom of the rewind ring. The display-side barrier
@@ -679,10 +710,36 @@ impl Worker {
                     .store(rewind.fill(), Ordering::Relaxed);
                 // Reverse audio is noise, and the sink runs itself dry into silence.
                 let _ = core.take_audio();
-            } else if steps > 0 {
-                for _ in 0..steps {
+            } else if ceiling > 0 {
+                // A selected fast-forward value is a ceiling, not a promise. Run as many frames
+                // as this present can afford and draw only the last one; a heavy game therefore
+                // gives speed back without overrunning the panel's deadline.
+                let budget = FAST_TARGET.saturating_sub(post_cost);
+                let began = Instant::now();
+                let mut ran = 0u32;
+                let mut worst = Duration::ZERO;
+                loop {
+                    ran += 1;
+                    // The decision must happen before the frame: this is the only point at which
+                    // libretro's auto frameskip callback can affect the frame being run.
+                    let last = ran >= ceiling || began.elapsed() + frame_peak * 2 > budget;
+                    core.set_frame_skip(!last);
+                    let frame_began = Instant::now();
                     core.run_frame(input);
+                    worst = worst.max(frame_began.elapsed());
+                    if last {
+                        break;
+                    }
                 }
+                let core_time = began.elapsed();
+                // A costly frame is believed immediately; a cheap one is blended in slowly so a
+                // single descheduled present cannot collapse the next fast-forward present.
+                frame_peak = if worst > frame_peak {
+                    worst
+                } else {
+                    blend(frame_peak, worst)
+                };
+                fast_span = Some((began, core_time));
                 // Immediately, and this is the one that decides whether a link is playable.
                 // The emulated serial hardware only executes inside `run_frame`, so every
                 // packet a session actually produces is born here. Sending them from the top
@@ -723,7 +780,7 @@ impl Worker {
                 if speed == Speed::Normal || ff_sound {
                     let target = drc_target(ring.capacity_frames());
                     let queued = ring.queued_frames();
-                    resampler.set_ratio(drc_ratio(queued, target) / f64::from(steps));
+                    resampler.set_ratio(drc_ratio(queued, target) / f64::from(ran));
                     resampler.process(&audio, &mut out);
                     crate::audio::volume::apply(
                         &mut out,
@@ -740,6 +797,13 @@ impl Worker {
                         );
                     }
                 }
+            }
+
+            // Everything after the core frames is the fixed tail the next fast present must leave
+            // room for. Measure it before any desktop sleep; otherwise the scheduler delay would
+            // be mistaken for rendering work.
+            if let Some((began, core_time)) = fast_span.take() {
+                post_cost = blend(post_cost, began.elapsed().saturating_sub(core_time));
             }
 
             // Desktop has no render-thread feedback, so it retains an absolute nominal
@@ -799,6 +863,11 @@ fn flush_outbound(transport: &mut Option<Box<dyn LinkChannel>>, link: &Link) {
     while let Some(packet) = link.take_outbound() {
         t.send(NETPACKET_RELIABLE, &packet);
     }
+}
+
+/// Fold one measured duration into a running estimate, replacing one quarter of the old value.
+fn blend(estimate: Duration, measured: Duration) -> Duration {
+    (estimate * (COST_BLEND - 1) + measured) / COST_BLEND
 }
 
 fn drain_transport(transport: &mut dyn LinkChannel, link: &Link, cap: u32) {

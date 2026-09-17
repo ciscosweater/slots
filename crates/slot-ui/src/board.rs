@@ -9,7 +9,7 @@ use slot_store::{Cart, Core};
 
 use crate::art;
 use crate::cart::{clean_label, CartFace, CART_H, CART_W};
-use crate::shelf::FOOT_Y;
+use crate::shelf::rest_y;
 use crate::shell::shell_for;
 use crate::slot_chrome::ease;
 use crate::text;
@@ -86,7 +86,7 @@ pub fn rom_marking_face(stem: &str) -> CartFace {
 }
 
 pub fn board_face(cart: &Cart) -> CartFace {
-    let shell = shell_for(&cart.code);
+    let shell = shell_for(cart);
     // Deepest placeholder first and the wall last, so a shell whose own hex or shade matches
     // a placeholder still further down the list finds nothing left to replace: once a
     // placeholder's `.replace` call has run, its literal text is gone from the SVG.
@@ -235,11 +235,29 @@ pub struct Placed {
     pub h: f32,
 }
 
-/// The highlighted cart as the shelf stands it, once the row has settled.
+/// The highlighted cart as a shelf centred on its selection stands it, once the row has
+/// settled. That is every shelf except one holding exactly two carts, which centres the pair
+/// instead; `shelf_cart_at` is what serves that one.
 pub fn shelf_cart() -> Placed {
+    shelf_cart_at((OUT_W - CART_W) as f32 / 2.0)
+}
+
+/// The same, for a row that stands its selection somewhere other than the middle. `x` is what
+/// `Shelf::rest_x` gives, so the cart the picker opens grows out of where it was standing
+/// rather than out of the middle of a screen it was never on.
+///
+/// `CART_W` and `CART_H` are the right constants here, where `SlotChrome` asks `cart_box` for
+/// the same two numbers. The difference is what the two are drawing. The chrome carries
+/// whatever cartridge was chosen, so it has to ask. This is the cart the core picker opens, and
+/// `App::open_core_picker` refuses to open one on anything but a GBA cart — the board inside is
+/// a traced GBA PCB, and there is no core to choose for a Game Boy cart anyway. So these are
+/// not a GBA cart standing in for a cartridge in general: they are the GBA cart, which is the
+/// only cartridge this rect is ever the rest of. Asking `cart_box` would read as a promise that
+/// a pak can open here, which is a decision the app has deliberately taken the other way.
+pub fn shelf_cart_at(x: f32) -> Placed {
     Placed {
-        x: (OUT_W - CART_W) as f32 / 2.0,
-        y: FOOT_Y - CART_H as f32,
+        x,
+        y: rest_y(CART_H as f32),
         w: CART_W as f32,
         h: CART_H as f32,
     }
@@ -247,18 +265,28 @@ pub fn shelf_cart() -> Placed {
 
 /// The back half: standing where the shelf stood it through the slide, then growing to its rest.
 pub fn board_at(progress: f32) -> Placed {
+    board_from(shelf_cart(), progress)
+}
+
+/// The same, growing out of wherever the row was standing the cart rather than out of the
+/// middle of the screen.
+pub fn board_from(shelf: Placed, progress: f32) -> Placed {
     let rest = Placed {
         x: BOARD_X,
         y: BOARD_Y,
         w: BOARD_W as f32,
         h: BOARD_H as f32,
     };
-    lerp(shelf_cart(), rest, lift_of(progress))
+    lerp(shelf, rest, lift_of(progress))
 }
 
 /// The front half and its turn: slid up off the back, then lifted from there to its rest.
 pub fn lid_at(progress: f32) -> (Placed, f32) {
-    let shelf = shelf_cart();
+    lid_from(shelf_cart(), progress)
+}
+
+/// The same, off a cart the row was standing somewhere other than the middle.
+pub fn lid_from(shelf: Placed, progress: f32) -> (Placed, f32) {
     let slid = Placed {
         y: shelf.y - SLIDE_UP * slide_of(progress),
         ..shelf

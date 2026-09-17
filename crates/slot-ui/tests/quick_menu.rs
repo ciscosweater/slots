@@ -58,6 +58,7 @@ fn the_rows_and_values_match_the_menu() {
         [
             "Fast Forward",
             "Fast Forward Sound",
+            "Colour Correction",
             "Rumble",
             "Date & Time",
             "About"
@@ -65,14 +66,15 @@ fn the_rows_and_values_match_the_menu() {
     );
     assert_eq!(
         QuickValue::ALL.map(QuickValue::text),
-        ["2×", "3×", "4×", "On", "Off"]
+        ["2×", "3×", "4×", "6×", "On", "Off"]
     );
     assert_eq!(
-        [2, 3, 4].map(QuickValue::speed),
+        [2, 3, 4, 6].map(QuickValue::speed),
         [
             Some(QuickValue::Speed2),
             Some(QuickValue::Speed3),
-            Some(QuickValue::Speed4)
+            Some(QuickValue::Speed4),
+            Some(QuickValue::Speed6)
         ]
     );
     assert_eq!(QuickValue::speed(5), None);

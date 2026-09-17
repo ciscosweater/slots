@@ -90,6 +90,7 @@ fn up_and_down_move_the_bar_and_stop_at_the_ends() {
     assert_eq!(a.quick_menu(), Some(QuickRow::FastForward));
     for want in [
         QuickRow::FastForwardSound,
+        QuickRow::ColourCorrection,
         QuickRow::Rumble,
         QuickRow::DateTime,
         QuickRow::About,
@@ -105,12 +106,15 @@ fn fast_forward_steps_through_its_speeds_and_saves_each_one() {
     let (d, mut a, _) = on_carousel();
     open_at(&mut a, QuickRow::FastForward);
     for (btn, want) in [
+        (Btn::Left, 4),
         (Btn::Left, 3),
         (Btn::Left, 2),
         (Btn::Left, 2),
         (Btn::Right, 3),
         (Btn::Right, 4),
-        (Btn::Right, 4),
+        (Btn::Right, 6),
+        (Btn::Right, 6),
+        (Btn::Left, 4),
     ] {
         press(&mut a, btn);
         assert_eq!(a.ff_speed(), want);
@@ -138,6 +142,7 @@ fn rumble_and_fast_forward_sound_flip_on_either_arrow_and_save() {
     );
     press(&mut a, Btn::Right);
     assert_eq!(card(&d), (false, true));
+    press(&mut a, Btn::Down);
     press(&mut a, Btn::Down);
     press(&mut a, Btn::Right);
     assert_eq!(card(&d), (false, false));
@@ -260,11 +265,55 @@ fn brightness_and_volume_still_answer_over_the_quick_menu() {
         .any(|d| matches!(*d, Draw::Tex { tex, .. } if icons.contains(&tex))));
 }
 
+#[test]
+fn colour_correction_flips_on_either_arrow_and_saves() {
+    let (d, mut a, _) = on_carousel();
+    open_at(&mut a, QuickRow::ColourCorrection);
+    assert!(!a.colour_correction());
+    assert_eq!(
+        a.quick_value(QuickRow::ColourCorrection),
+        Some(QuickValue::Off)
+    );
+    for (btn, want) in [
+        (Btn::Right, true),
+        (Btn::Left, false),
+        (Btn::Left, true),
+        (Btn::Right, false),
+    ] {
+        press(&mut a, btn);
+        assert_eq!(a.colour_correction(), want);
+        assert_eq!(read_slot_state(d.path()).colour_correction, want);
+        assert_eq!(
+            a.quick_value(QuickRow::ColourCorrection),
+            Some(QuickValue::flag(want))
+        );
+    }
+}
+
+#[test]
+fn colour_correction_leaves_the_settings_around_it_alone() {
+    let (d, mut a, _) = on_carousel();
+    open_at(&mut a, QuickRow::ColourCorrection);
+    press(&mut a, Btn::Right);
+    let s = read_slot_state(d.path());
+    assert!(s.colour_correction);
+    assert_eq!(
+        (s.ff_speed, s.ff_sound, s.rumble),
+        (
+            SlotState::default().ff_speed,
+            SlotState::default().ff_sound,
+            SlotState::default().rumble
+        )
+    );
+}
+
 fn fake_faces(a: &mut App) {
     let id = TexId::from_raw;
     a.set_quick_menu_faces(QuickMenuFaces {
-        labels: (0..5).map(|i| (id(100 + i), 200, 40)).collect(),
-        values: (0..5)
+        labels: (0..QuickRow::ALL.len())
+            .map(|i| (id(100 + i), 200, 40))
+            .collect(),
+        values: (0..QuickValue::ALL.len())
             .map(|i| [(id(200 + i), 60, 40), (id(210 + i), 60, 40)])
             .collect(),
         carets: [(id(300), 10, 40), (id(301), 10, 40)],
@@ -322,18 +371,18 @@ fn the_arrows_stand_only_around_the_selected_rows_value() {
     a.apply(Action::QuickMenu);
     let out = frame(&a);
     assert!(drawn(&out, 300) && drawn(&out, 301));
-    assert!(drawn(&out, value(QuickValue::Speed4, true)));
+    assert!(drawn(&out, value(QuickValue::Speed6, true)));
     assert!(drawn(&out, value(QuickValue::Off, false)));
     assert!(drawn(&out, value(QuickValue::On, false)));
     assert!(drawn(&out, 500));
 
-    for _ in 0..3 {
+    for _ in 0..QuickRow::DateTime.index() {
         press(&mut a, Btn::Down);
     }
     let out = frame(&a);
     assert!(!drawn(&out, 300) && !drawn(&out, 301));
     assert!(drawn(&out, 501));
-    assert!(drawn(&out, value(QuickValue::Speed4, false)));
+    assert!(drawn(&out, value(QuickValue::Speed6, false)));
 }
 
 #[test]

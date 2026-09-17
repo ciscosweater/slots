@@ -1,4 +1,4 @@
-use slot::link_kind::{link_kind, LinkKind};
+use slot::link_kind::{link_carried, link_kind, LinkKind};
 
 #[test]
 fn the_wireless_adapter_games_are_wireless() {
@@ -53,4 +53,15 @@ fn a_pokemon_hack_links_by_cable() {
 fn everything_else_is_the_cable() {
     assert_eq!(link_kind("SLTE", "SLOT TEST", true), LinkKind::Cable);
     assert_eq!(link_kind("", "", true), LinkKind::Cable);
+}
+
+#[test]
+fn gpsp_carries_the_protocols_it_speaks() {
+    assert!(link_carried("BMGE", "MARIO GOLF"));
+    assert!(link_carried("BPEE", "POKEMON EMER"));
+    assert!(link_carried("AXVE", "POKEMON RUBY"));
+    assert!(link_carried("AWRE", "ADVANCEWARS"));
+    assert!(link_carried("AW2E", "ADVANCEWARS2"));
+    assert!(!link_carried("2ATE", "APOTRIS"));
+    assert!(!link_carried("SLTE", "SLOT TEST"));
 }

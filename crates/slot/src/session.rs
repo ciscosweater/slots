@@ -6,11 +6,10 @@ use slot_ui::FfState;
 
 use crate::app::{App, Phase};
 use crate::audio::{open_sink, AudioSink, Ring, Sfx, GBA_HZ};
-use crate::core::open_core;
 use crate::emu::{CoreState, EmuHandle, Speed};
 use crate::frames::FrameRef;
 use crate::input::Pad;
-use crate::persist::{self, Snapshot};
+use crate::persist;
 
 /// Everything the frontend is that is not a window: the app, the core behind it, and the
 /// gesture layer between the two. The binary owns the GL and hands raw events in.
@@ -199,9 +198,7 @@ impl Session {
         for action in actions {
             self.act(action);
         }
-        if let Some(emu) = &self.emu {
-            emu.set_input(self.pad.mask());
-        }
+        self.sync_pad();
     }
 
     /// `App` only ever holds a session's own bookkeeping (see `App::link`'s doc comment) —
@@ -261,6 +258,10 @@ impl Session {
         }
         if menu || self.overlaid() {
             self.pad.clear();
+        } else if self.app.takes_from_game(action) {
+            if let Action::GbaDown(btn) | Action::GbaUp(btn) = action {
+                self.pad.apply(Action::GbaUp(btn));
+            }
         } else {
             self.pad.apply(action);
         }
@@ -292,8 +293,12 @@ impl Session {
         }
         // The far end went away. `App` breaks the badge and ends the session itself later, from
         // inside `update`, where `bridge_link` carries the ending to the emulator thread.
-        if self.app.link_active() && self.emu.as_ref().is_some_and(EmuHandle::link_lost) {
-            self.app.peer_lost();
+        if self.app.link_active() {
+            if self.emu.as_ref().is_some_and(EmuHandle::peer_ended) {
+                self.bridge_link(|app| app.peer_ended());
+            } else if self.emu.as_ref().is_some_and(EmuHandle::link_lost) {
+                self.app.peer_lost();
+            }
         }
         if let Some(sfx) = self.app.take_sfx() {
             self.play_sfx(sfx);
@@ -307,6 +312,18 @@ impl Session {
         self.sync_rewind_hud();
         self.sync_ff_hud();
         self.sync_rumble();
+        self.sync_pad();
+    }
+
+    /// Re-evaluate ownership after a phase or platform change, including a shoulder held across
+    /// that change. Releasing only the buttons slot owns preserves every other game input.
+    fn sync_pad(&mut self) {
+        for btn in self.app.taken_buttons() {
+            self.pad.apply(Action::GbaUp(*btn));
+        }
+        if let Some(emu) = &self.emu {
+            emu.set_input(self.pad.mask());
+        }
     }
 
     /// The core writes its motor from the emulator thread and this is the one place that
@@ -536,35 +553,7 @@ impl Session {
         }
         match self.emu.as_ref().map(EmuHandle::state) {
             Some(CoreState::Loading) => {}
-            Some(CoreState::Ready) => {
-                // A real core can legitimately reject a state written by an older core
-                // build. Preserve those bytes, then let this known-good core establish a
-                // fresh resume lineage instead of refusing every autosave forever.
-                if self
-                    .emu
-                    .as_ref()
-                    .is_some_and(|emu| !emu.snapshot().resume_trusted())
-                {
-                    let ring = slot_store::StateRing::new(&self.root, self.app.core(), &stem);
-                    match ring.quarantine_resume() {
-                        Ok(path) => {
-                            if let Some(path) = path {
-                                eprintln!(
-                                    "slot: resume: preserved rejected state as {}",
-                                    path.display()
-                                );
-                            }
-                            if let Some(emu) = &self.emu {
-                                emu.accept_cold_start_after_resume_backup();
-                            }
-                        }
-                        Err(e) => eprintln!(
-                            "slot: resume: could not preserve rejected state, autosave remains disabled: {e}"
-                        ),
-                    }
-                }
-                self.app.on_core_ready()
-            }
+            Some(CoreState::Ready) => self.app.on_core_ready(),
             // A refused cart leaves a dead worker behind. Dropping it here is what frees the
             // core for the next insert, since libretro allows only one.
             Some(CoreState::Failed) | None => {
@@ -575,10 +564,16 @@ impl Session {
     }
 
     fn spawn_core(&mut self, stem: &str) {
-        let Some(cart) = self.app.carts().iter().find(|c| c.stem == stem).cloned() else {
+        let Some(cart) = self
+            .app
+            .seated_cart()
+            .filter(|cart| cart.stem == stem)
+            .cloned()
+        else {
             return;
         };
         let rom = cart.rom.clone();
+        let platform = cart.platform;
         // Resolved once, and only here: this is which dylib gets opened, which `States/<core>/`
         // directory the resume lookup below reads from, and — via `set_core` — every later
         // flush, eject and polaroid read for this cart too. Deriving it twice let a `gpsp` cart
@@ -587,20 +582,30 @@ impl Session {
         // this rather than re-deriving it later, which is what makes that class of drift
         // structurally unreachable now instead of merely unobserved.
         let core = slot_store::core_for_cart(&self.root, &cart);
+        self.app.set_platform(platform);
+        self.app
+            .set_video_mode(crate::video_mode::video_mode_for(&self.root, stem));
         self.app.set_core(core);
         // A clean start skips the state, it does not delete it: the file stays on the card
         // for the next tap to resume from.
         let resume = (!self.app.starting_clean())
-            .then(|| persist::read_resume(&self.root, core, stem))
+            .then(|| persist::read_resume(&self.root, platform, core, stem))
             .flatten();
-        let Some(opened) = open_core(&self.root, core) else {
+        let opened = crate::core::open_core_with_options(
+            &self.root,
+            core,
+            "auto",
+            self.app.colour_correction(),
+        );
+        self.app.set_named_core(opened.is_some());
+        let Some(opened) = opened else {
             return;
         };
         let emu = EmuHandle::spawn(
             opened,
             rom,
             self.sink.ring(),
-            persist::read_sav(&self.root, stem),
+            persist::read_sav(&self.root, platform, stem),
             resume,
         );
         // A cart seated after the level was lowered has to start there, not at full.

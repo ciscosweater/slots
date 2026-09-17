@@ -1,7 +1,7 @@
 use slot_gfx::BACKDROP;
 use slot_ui::{
-    edge, favorite_mark_face, housing, opening, shell_for, title_face, DEFAULT_SHELL, EMPTY_SHELF,
-    FAVORITE_INK,
+    edge, favorite_mark_face, gba_shell_for, housing, opening, title_face, DEFAULT_SHELL,
+    EMPTY_SHELF, FAVORITE_INK,
 };
 
 fn distance(a: [u8; 3], b: [f32; 4]) -> u32 {
@@ -17,7 +17,7 @@ fn distance(a: [u8; 3], b: [f32; 4]) -> u32 {
 fn every_shell_is_visible_against_the_backdrop() {
     let codes = ["", "AMTE", "AXVE", "AXPE", "BPEE", "BPRE", "BPGE", "MSKE"];
     for code in codes {
-        let s = shell_for(code);
+        let s = gba_shell_for(code);
         let d = distance(s.colour, BACKDROP);
         assert!(
             d > 60,

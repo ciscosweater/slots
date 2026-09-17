@@ -9,6 +9,7 @@ use crate::surface::{GfxError, OUT_H, OUT_W};
 pub const SCALE: u32 = 3;
 pub const SRC_W: u32 = OUT_W / SCALE;
 pub const SRC_H: u32 = OUT_H / SCALE;
+pub const WHOLE_TEXTURE: [f32; 4] = [0.0, 0.0, 1.0, 1.0];
 
 pub struct GamePass {
     prog: gl::types::GLuint,
@@ -17,9 +18,12 @@ pub struct GamePass {
     u_rect: gl::types::GLint,
     u_bright: gl::types::GLint,
     u_lcd: gl::types::GLint,
+    u_uv: gl::types::GLint,
     /// A compositor with nobody driving it is a screen that is on.
     power: f32,
     lcd: bool,
+    /// Origin and size of the live game's source rectangle in texture coordinates.
+    src: [f32; 4],
 }
 
 impl GamePass {
@@ -34,7 +38,7 @@ impl GamePass {
             gl::RGBA,
             Some(&mask_texture_rgba8()),
         );
-        let (u_rect, u_bright, u_lcd);
+        let (u_rect, u_bright, u_lcd, u_uv);
         unsafe {
             // The other two are fixed for the life of the program: the mask always tiles once
             // per source pixel and the target is always the offscreen frame.
@@ -54,6 +58,7 @@ impl GamePass {
             u_rect = crate::gl::uniform_location(prog, "u_rect");
             u_bright = crate::gl::uniform_location(prog, "u_bright");
             u_lcd = crate::gl::uniform_location(prog, "u_lcd");
+            u_uv = crate::gl::uniform_location(prog, "u_uv");
         }
         Ok(GamePass {
             prog,
@@ -62,8 +67,10 @@ impl GamePass {
             u_rect,
             u_bright,
             u_lcd,
+            u_uv,
             power: 1.0,
             lcd: true,
+            src: WHOLE_TEXTURE,
         })
     }
 
@@ -73,6 +80,10 @@ impl GamePass {
 
     pub fn set_lcd(&mut self, enabled: bool) {
         self.lcd = enabled;
+    }
+
+    pub fn set_source_rect(&mut self, rect: [f32; 4]) {
+        self.src = rect;
     }
 
     pub fn upload(&mut self, xrgb8888: &[u8]) {
@@ -97,21 +108,22 @@ impl GamePass {
     }
 
     pub fn draw(&self, quad: &Quad) {
-        self.draw_source(self.game, quad);
+        self.draw_source(self.game, quad, self.src);
     }
 
     /// The same pass over a still. A saved shot is a picture of this panel at exactly the
     /// scale the mask is built for, so it is filtered at draw time rather than blitted flat
     /// beside a game that is filtered.
     pub fn draw_still(&self, tex: gl::types::GLuint, quad: &Quad) {
-        self.draw_source(tex, quad);
+        self.draw_source(tex, quad, WHOLE_TEXTURE);
     }
 
-    fn draw_source(&self, tex: gl::types::GLuint, quad: &Quad) {
+    fn draw_source(&self, tex: gl::types::GLuint, quad: &Quad, src: [f32; 4]) {
         let (x, y, w, h) = screen_rect(self.power);
         unsafe {
             gl::UseProgram(self.prog);
             gl::Uniform4f(self.u_rect, x, y, w, h);
+            gl::Uniform4f(self.u_uv, src[0], src[1], src[2], src[3]);
             gl::Uniform1f(self.u_bright, screen_brightness(self.power));
             gl::Uniform1f(self.u_lcd, if self.lcd { 1.0 } else { 0.0 });
             gl::ActiveTexture(gl::TEXTURE0);

@@ -13,7 +13,7 @@ use slot_store::format_stamp;
 use slot_ui::{
     arrows_hint_face, badge_face, cart_placeholder_for, cart_shadow, cart_shadow_for,
     category_face, chip_face, chip_shadow_face, date_time_text, favorite_mark_face, hhmm,
-    hint_face, icon_face, menu_face, photo_face, quick_caret_face, quick_label_face,
+    hint_face, icon_face, mark_face, menu_face, photo_face, quick_caret_face, quick_label_face,
     quick_legend_faces, quick_value_face, set_clock_hint_face, socket_face, sticker_face,
     title_face, toast_face, word_face, Icon, LinkBadge, PowerChoice, Printed, QuickMenuFaces,
     QuickRow, QuickValue, StickerFields, StickerPage, Toast, UndoFace, ALERT_PX, BOLT_PX, CART_H,
@@ -306,6 +306,14 @@ impl Frontend {
                         mark.h,
                     );
                 }
+                let marks = slot_store::Platform::ALL
+                    .iter()
+                    .map(|platform| {
+                        let face = mark_face(*platform);
+                        compositor.create_texture(face.w, face.h, &face.rgba)
+                    })
+                    .collect();
+                self.session.app_mut().set_mark_faces(marks);
                 // The clock screen's instruction never changes. Upload it with the other key
                 // caps so reopening Date & Time only has to rasterise the line under the caret.
                 let clock_hint = set_clock_hint_face();
@@ -484,7 +492,7 @@ impl Frontend {
                 .cart_upload_queue
                 .iter()
                 .enumerate()
-                .min_by_key(|(_, cart)| self.session.app().cart_upload_priority(&cart.stem))
+                .min_by_key(|(_, cart)| self.session.app().cart_upload_priority_for(cart))
                 .map(|(i, _)| i)
                 .unwrap_or(0);
             let cart = self.cart_upload_queue.swap_remove(best_idx);
@@ -499,7 +507,8 @@ impl Frontend {
         built: crate::face_builder::BuiltShelfFace,
     ) {
         let tex = compositor.create_texture(built.face.w, built.face.h, &built.face.rgba);
-        self.session.app_mut().set_face_with_size_and_artwork(
+        self.session.app_mut().set_face_for(
+            built.platform,
             &built.stem,
             tex,
             (built.face.w, built.face.h),
@@ -587,6 +596,7 @@ impl Frontend {
         compositor.set_lcd(self.session.app().lcd_enabled());
         compositor.set_shake(self.session.app().screen_shake());
         compositor.set_screen_power(self.session.app().screen_power());
+        compositor.set_game_source_rect(self.session.app().source_rect());
         compositor.begin_frame();
         if let Some(frame) = self.session.frame() {
             compositor.upload_game(&frame);

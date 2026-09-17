@@ -7,8 +7,16 @@ use tempfile::TempDir;
 
 fn tmp_root() -> TempDir {
     let d = tempfile::tempdir().expect("tempdir");
-    for sub in ["Games", "Cartridges", "Labels", "Saves", "States", "System"] {
-        std::fs::create_dir(d.path().join(sub)).expect("create content dir");
+    for sub in [
+        "Games",
+        "Games/GB",
+        "Cartridges",
+        "Labels",
+        "Saves",
+        "States",
+        "System",
+    ] {
+        std::fs::create_dir_all(d.path().join(sub)).expect("create content dir");
     }
     d
 }
@@ -190,7 +198,7 @@ fn the_cart_box_matches_the_traced_outline() {
 #[test]
 fn game_boy_cart_uses_the_real_front_and_label_proportions() {
     let d = tmp_root();
-    std::fs::write(d.path().join("Games/Tetris.gb"), vec![0u8; 0x150]).unwrap();
+    std::fs::write(d.path().join("Games/GB/Tetris.gb"), vec![0u8; 0x150]).unwrap();
     let face = cart_face(&scan(d.path()).unwrap()[0]);
     assert_eq!((face.w, face.h), (slot_ui::GB_CART_W, slot_ui::GB_CART_H));
     let cart_ratio = face.w as f32 / face.h as f32;

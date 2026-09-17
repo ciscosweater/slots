@@ -17,8 +17,15 @@ use crate::slot_chrome::draw_empty_slot;
 const PITCH: f32 = 240.0;
 const SIDE_SCALE: f32 = 0.78;
 const SIDE_ALPHA: f32 = 0.55;
-/// Carts stand on the row rather than float: the foot stays put as a cart shrinks away.
-pub(crate) const FOOT_Y: f32 = (OUT_H + CART_H) as f32 / 2.0;
+/// The top of a full-size cart centred in the output. Platform-specific shelves use this for
+/// their own cartridge height; side carts keep the same foot while shrinking upward.
+pub fn rest_y(h: f32) -> f32 {
+    (OUT_H as f32 - h) / 2.0
+}
+
+pub fn foot_y(h: f32) -> f32 {
+    rest_y(h) + h
+}
 /// Critically damped, so a flick lands on a cart instead of bouncing past and returning.
 const OMEGA: f32 = 20.0;
 /// How far the cart next to the selection is pushed aside as the chosen one goes in. Enough
@@ -43,6 +50,10 @@ fn cart_size(cart: &Cart) -> (u32, u32) {
     }
 }
 
+fn same_cart(a: &Cart, b: &Cart) -> bool {
+    a.platform == b.platform && a.stem == b.stem
+}
+
 /// Printed on the case when `Games/` is empty. Same type as a cart title, not a dialog.
 pub const EMPTY_SHELF: &str = "no carts in Games/";
 
@@ -61,6 +72,7 @@ pub struct Shelf {
     /// fallback. This remains separate from `Cart::artwork`, whose path may be malformed.
     complete_artwork: Vec<bool>,
     all_complete_artwork: Vec<bool>,
+    platform_filter: Option<slot_store::Platform>,
     category: usize,
     /// The cart silhouette in black, drawn under a dimmed cart. One texture for the whole
     /// row: every cart is the same shape.
@@ -70,6 +82,10 @@ pub struct Shelf {
     /// are silhouettes rather than rectangles, so the ring remains legible while it hydrates.
     placeholder: Option<TexId>,
     gb_placeholder: Option<TexId>,
+    /// The presses added up, in the same continuous coordinate `scroll` lives in, so it counts
+    /// laps rather than wrapping. This is what the spring aims at — see `scroll_target` — because
+    /// it is the only thing that remembers which button was pressed once the row has wrapped.
+    ride: f32,
     vel: f32,
     /// The direction being held, when it next repeats, and the repeat count for acceleration.
     held: Option<(i32, Millis, u32)>,
@@ -93,11 +109,13 @@ impl Shelf {
             all_face_sizes: sizes,
             complete_artwork: Vec::new(),
             all_complete_artwork: vec![false; cart_count],
+            platform_filter: None,
             category: 0,
             shadow: None,
             gb_shadow: None,
             placeholder: None,
             gb_placeholder: None,
+            ride: 0.0,
             vel: 0.0,
             held: None,
             favorites: BTreeSet::new(),
@@ -140,13 +158,13 @@ impl Shelf {
     }
 
     /// Publish one library face while the rest of the shelf still uses cheap colour
-    /// placeholders. Resolve by stem so a favorite/category reorder during hydration cannot
-    /// pair a texture with the wrong cart.
+    /// placeholders. The compatibility helper resolves the first matching stem; asynchronous
+    /// callers should use `set_face_for` so equal stems on different platforms stay distinct.
     pub fn set_face(&mut self, stem: &str, face: TexId) {
         let Some(cart) = self.all_carts.iter().find(|cart| cart.stem == stem) else {
             return;
         };
-        self.set_face_with_size_and_artwork(stem, face, cart_size(cart), false);
+        self.set_face_for(cart.platform, stem, face, cart_size(cart), false);
     }
 
     /// Publish a face with its actual texture dimensions. The width remains the platform slot
@@ -164,7 +182,33 @@ impl Shelf {
         size: (u32, u32),
         complete_artwork: bool,
     ) {
-        let Some(all_index) = self.all_carts.iter().position(|cart| cart.stem == stem) else {
+        let Some(platform) = self
+            .all_carts
+            .iter()
+            .find(|cart| cart.stem == stem)
+            .map(|cart| cart.platform)
+        else {
+            return;
+        };
+        self.set_face_for(platform, stem, face, size, complete_artwork);
+    }
+
+    /// Publish a face for the cart identified by both its platform and stem. Stems are allowed to
+    /// repeat across platform folders, so the platform has to travel with an asynchronous build
+    /// result rather than being reconstructed from the current shelf.
+    pub fn set_face_for(
+        &mut self,
+        platform: slot_store::Platform,
+        stem: &str,
+        face: TexId,
+        size: (u32, u32),
+        complete_artwork: bool,
+    ) {
+        let Some(all_index) = self
+            .all_carts
+            .iter()
+            .position(|cart| cart.platform == platform && cart.stem == stem)
+        else {
             return;
         };
         if self.all_faces.len() < self.all_carts.len() {
@@ -193,7 +237,11 @@ impl Shelf {
         if self.complete_artwork.len() < self.carts.len() {
             self.complete_artwork = vec![false; self.carts.len()];
         }
-        if let Some(current_index) = self.carts.iter().position(|cart| cart.stem == stem) {
+        if let Some(current_index) = self
+            .carts
+            .iter()
+            .position(|cart| cart.platform == platform && cart.stem == stem)
+        {
             self.faces[current_index] = Some(face);
             self.face_sizes[current_index] = size;
             self.complete_artwork[current_index] = complete_artwork;
@@ -202,6 +250,21 @@ impl Shelf {
 
     pub fn all_carts(&self) -> &[Cart] {
         &self.all_carts
+    }
+
+    pub fn has_platform(&self, platform: slot_store::Platform) -> bool {
+        self.all_carts.iter().any(|cart| cart.platform == platform)
+    }
+
+    /// Show one platform while retaining the complete library and its hydrated faces underneath.
+    /// The application uses this for shoulder-based platform shelves; direct Shelf users keep the
+    /// historical unfiltered view until they opt in.
+    pub fn set_platform(&mut self, platform: Option<slot_store::Platform>) {
+        if self.platform_filter == platform {
+            return;
+        }
+        self.platform_filter = platform;
+        self.set_category(0);
     }
 
     pub fn category(&self) -> usize {
@@ -263,14 +326,16 @@ impl Shelf {
         let selected = self.carts.get(self.index).map(|c| c.stem.clone());
         self.category = category;
         let wanted = |cart: &Cart| {
-            category == 0
-                || match category {
-                    1 => self.recents.contains(&cart.stem),
-                    2 => cart.platform == slot_store::Platform::Gba,
-                    3 => cart.platform == slot_store::Platform::Gb,
-                    4 => cart.platform == slot_store::Platform::Gbc,
-                    _ => false,
-                }
+            self.platform_filter
+                .is_none_or(|platform| cart.platform == platform)
+                && (category == 0
+                    || match category {
+                        1 => self.recents.contains(&cart.stem),
+                        2 => cart.platform == slot_store::Platform::Gba,
+                        3 => cart.platform == slot_store::Platform::Gb,
+                        4 => cart.platform == slot_store::Platform::Gbc,
+                        _ => false,
+                    })
         };
         self.carts = self
             .all_carts
@@ -309,6 +374,7 @@ impl Shelf {
             .and_then(|stem| self.carts.iter().position(|cart| cart.stem == stem))
             .unwrap_or(0);
         self.scroll = self.index as f32;
+        self.ride = self.index as f32;
         self.vel = 0.0;
         self.held = None;
     }
@@ -346,7 +412,7 @@ impl Shelf {
     /// ring: the visible tail when index zero is selected is the last cart, so a plain FIFO
     /// leaves exactly the end of the row as rectangles during boot.
     pub fn face_upload_order(&self) -> Vec<Cart> {
-        let mut stems = Vec::with_capacity(self.all_carts.len());
+        let mut carts = Vec::with_capacity(self.all_carts.len());
         if !self.carts.is_empty() {
             let n = self.carts.len() as i32;
             let mut offsets = Vec::with_capacity(self.carts.len());
@@ -360,32 +426,38 @@ impl Shelf {
                 let Some(index) = self.cart_at_offset(offset) else {
                     continue;
                 };
-                let stem = &self.carts[index].stem;
-                if !stems.iter().any(|seen| seen == stem) {
-                    stems.push(stem.clone());
+                let cart = &self.carts[index];
+                if !carts.iter().any(|seen: &Cart| same_cart(seen, cart)) {
+                    carts.push(cart.clone());
                 }
             }
         }
         for cart in &self.all_carts {
-            if !stems.iter().any(|seen| seen == &cart.stem) {
-                stems.push(cart.stem.clone());
+            if !carts.iter().any(|seen| same_cart(seen, cart)) {
+                carts.push(cart.clone());
             }
         }
-        stems
-            .into_iter()
-            .filter_map(|stem| {
-                self.all_carts
-                    .iter()
-                    .find(|cart| cart.stem == stem)
-                    .cloned()
-            })
-            .collect()
+        carts
     }
 
     /// Priority order for asset hydration: visible carts in the ring around the current
     /// selection first (alternating left/right), followed by off-screen carts. Zero-alloc.
     pub fn cart_upload_priority(&self, stem: &str) -> usize {
-        if let Some(pos) = self.carts.iter().position(|c| c.stem == stem) {
+        self.cart_upload_priority_for(None, stem)
+    }
+
+    /// Priority for a specific cart. The optional platform disambiguates equal stems when the
+    /// card contains the same filename in more than one platform folder.
+    pub fn cart_upload_priority_for(
+        &self,
+        platform: Option<slot_store::Platform>,
+        stem: &str,
+    ) -> usize {
+        if let Some(pos) = self
+            .carts
+            .iter()
+            .position(|c| c.stem == stem && platform.is_none_or(|p| c.platform == p))
+        {
             let n = self.carts.len() as i32;
             if n <= 1 {
                 return 0;
@@ -403,7 +475,11 @@ impl Shelf {
             } else {
                 (signed * 2) as usize
             }
-        } else if let Some(all_pos) = self.all_carts.iter().position(|c| c.stem == stem) {
+        } else if let Some(all_pos) = self
+            .all_carts
+            .iter()
+            .position(|c| c.stem == stem && platform.is_none_or(|p| c.platform == p))
+        {
             self.carts.len() * 2 + all_pos
         } else {
             usize::MAX
@@ -418,6 +494,19 @@ impl Shelf {
         self.step(1);
     }
 
+    /// Select by current cart index. This is useful to deterministic callers that already own
+    /// the shelf order; application code should prefer `select_stem` because filters reorder it.
+    pub fn select(&mut self, index: usize) {
+        if index >= self.carts.len() {
+            return;
+        }
+        self.index = index;
+        self.scroll = index as f32;
+        self.ride = index as f32;
+        self.vel = 0.0;
+        self.held = None;
+    }
+
     /// Select a cart by its stable filename stem. Indices can change when a category or the
     /// favourite order is rebuilt, so callers restoring the shelf must use the stem instead.
     pub fn select_stem(&mut self, stem: &str) -> bool {
@@ -426,6 +515,7 @@ impl Shelf {
         };
         self.index = index;
         self.scroll = index as f32;
+        self.ride = index as f32;
         self.vel = 0.0;
         self.held = None;
         true
@@ -501,6 +591,7 @@ impl Shelf {
             .and_then(|stem| self.carts.iter().position(|cart| cart.stem == stem))
             .unwrap_or(0);
         self.scroll = self.index as f32;
+        self.ride = self.index as f32;
         self.vel = 0.0;
         self.held = None;
         self.favorites = favorites.clone();
@@ -570,8 +661,10 @@ impl Shelf {
         if self.is_linear() {
             let next = (self.index as i32 + by).clamp(0, n as i32 - 1);
             self.index = next as usize;
+            self.ride = self.index as f32;
         } else {
             self.index = (self.index as i32 + by).rem_euclid(n as i32) as usize;
+            self.ride += by as f32;
         }
     }
 
@@ -583,6 +676,7 @@ impl Shelf {
         if self.is_linear() {
             let target = if by < 0 { 0 } else { n - 1 };
             self.index = target;
+            self.ride = target as f32;
             self.held = None;
             return;
         }
@@ -612,14 +706,19 @@ impl Shelf {
                 }
                 self.index = candidate;
                 self.held = None;
+                self.ride = self.index as f32;
                 return;
             }
         }
     }
 
-    /// Where the spring is heading, in the continuous coordinate `scroll` lives in. The row
-    /// is a ring, so the selected cart has an image every `n` slots; this is the one nearest
-    /// where the row already is, which is what stops a wrap unwinding the whole row.
+    /// Where the spring is heading, in the continuous coordinate `scroll` lives in. The row is a
+    /// ring, so the selected cart has an image every `n` slots, and the one to head for is the
+    /// one a single press away in the direction that press asked for — never a lap of the row.
+    ///
+    /// Adding the presses up answers it for every length at once. `ride` counts laps instead of
+    /// wrapping, so one press is one slot the way it was pressed whatever the row is doing at the
+    /// time, and the row still never unwinds: a single step round a ring *is* the short way round.
     pub fn scroll_target(&self) -> f32 {
         let n = self.carts.len();
         if n == 0 {
@@ -628,14 +727,17 @@ impl Shelf {
         if self.is_linear() {
             return self.index as f32;
         }
+        let from = self.ride;
         let n = n as f32;
-        self.scroll + (self.index as f32 - self.scroll + n / 2.0).rem_euclid(n) - n / 2.0
+        from + (self.index as f32 - from + n / 2.0).rem_euclid(n) - n / 2.0
     }
 
-    /// The cart `off` slots right of the selection. `None` when the row is empty, or when
-    /// this slot would repeat a cart another slot is already showing: with two carts the
-    /// left and right neighbours are the same one, and a row holding it twice reads as a
-    /// bug. The row is left with a gap instead.
+    /// The cart `off` slots right of the selection, or `None` when the row is empty or when this
+    /// slot falls off the end of a row too short to reach it.
+    ///
+    /// A ring of two fills every slot, which means one of the two carts is drawn twice at once.
+    /// One cart stays alone in the middle — repeating it would put three identical faces across a
+    /// row that cannot scroll.
     pub fn cart_at_offset(&self, off: i32) -> Option<usize> {
         let n = self.carts.len() as i32;
         if n == 0 {
@@ -645,9 +747,13 @@ impl Shelf {
             let target = self.index as i32 + off;
             return (target >= 0 && target < n).then_some(target as usize);
         }
+        let at = |off: i32| (self.index as i32 + off).rem_euclid(n) as usize;
+        if n == 2 {
+            return Some(at(off));
+        }
         let r = off.rem_euclid(n);
         let nearest = if r * 2 > n { r - n } else { r };
-        (nearest == off).then(|| (self.index as i32 + off).rem_euclid(n) as usize)
+        (nearest == off).then(|| at(off))
     }
 
     pub fn update(&mut self, dt: f32) {

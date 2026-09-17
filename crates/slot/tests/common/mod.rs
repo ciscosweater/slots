@@ -40,6 +40,31 @@ pub fn tmp_root_with_carts(stems: &[&str]) -> TempDir {
     d
 }
 
+/// A card populated with Game Boy ROMs in the platform-specific layout.
+pub fn tmp_root_with_gb_carts(stems: &[&str]) -> TempDir {
+    let d = tmp_root();
+    for stem in stems {
+        let title = stem.to_uppercase();
+        let title = &title[..title.len().min(11)];
+        let mut rom = vec![0u8; 0x150];
+        rom[0x134..0x134 + title.len()].copy_from_slice(title.as_bytes());
+        std::fs::write(d.path().join("Games/GB").join(format!("{stem}.gb")), rom)
+            .expect("write Game Boy rom");
+    }
+    d
+}
+
+pub fn write_gb_cart(d: &TempDir, stem: &str, title: &str) {
+    assert!(
+        title.len() <= 11,
+        "Game Boy titles fit in eleven header bytes"
+    );
+    let mut rom = vec![0u8; 0x150];
+    rom[0x134..0x134 + title.len()].copy_from_slice(title.as_bytes());
+    std::fs::write(d.path().join("Games/GB").join(format!("{stem}.gb")), rom)
+        .expect("write Game Boy rom");
+}
+
 /// The headers `tmp_root_with_carts` writes are not roms, and a real core refuses them.
 /// Anything that puts a cart in the slot for real needs these instead.
 pub fn tmp_root_with_real_carts(stems: &[&str]) -> TempDir {

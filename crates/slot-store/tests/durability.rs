@@ -3,6 +3,7 @@ mod common;
 use common::tmp_root;
 use slot_store::{
     atomic_write, read_last_shelf, read_slot_state, write_last_shelf, write_slot_state, SlotState,
+    FF_SPEED_DEFAULT,
 };
 use tempfile::tempdir;
 
@@ -43,6 +44,7 @@ fn slot_state_round_trips_including_a_stem_with_an_equals_sign() {
     let d = tmp_root();
     let s = SlotState {
         cart: Some("Cheats = On".into()),
+        cart_platform: None,
         brightness: 3,
         blue_light: 9,
         volume: 71,
@@ -52,6 +54,7 @@ fn slot_state_round_trips_including_a_stem_with_an_equals_sign() {
         rumble: true,
         ff_speed: 4,
         ff_sound: false,
+        colour_correction: false,
     };
     write_slot_state(d.path(), &s).unwrap();
     assert_eq!(read_slot_state(d.path()), s);
@@ -112,6 +115,7 @@ fn slot_state_round_trips_a_negative_utc_offset() {
     let d = tmp_root();
     let s = SlotState {
         cart: None,
+        cart_platform: None,
         brightness: 5,
         blue_light: 0,
         volume: 60,
@@ -121,6 +125,7 @@ fn slot_state_round_trips_a_negative_utc_offset() {
         rumble: true,
         ff_speed: 4,
         ff_sound: false,
+        colour_correction: false,
     };
     write_slot_state(d.path(), &s).unwrap();
     assert_eq!(read_slot_state(d.path()).utc_offset_min, -450);
@@ -154,7 +159,7 @@ fn a_line_the_reader_does_not_know_is_skipped() {
 fn a_first_boot_keeps_the_existing_fast_forward_and_rumble_defaults() {
     let s = SlotState::default();
     assert!(s.rumble);
-    assert_eq!(s.ff_speed, 4);
+    assert_eq!(s.ff_speed, FF_SPEED_DEFAULT);
     assert!(!s.ff_sound);
 }
 
@@ -173,7 +178,7 @@ fn a_card_from_before_the_settings_keeps_all_its_values() {
     assert!(s.muted && s.clock_set);
     assert_eq!(s.utc_offset_min, -300);
     assert!(s.rumble);
-    assert_eq!(s.ff_speed, 4);
+    assert_eq!(s.ff_speed, FF_SPEED_DEFAULT);
     assert!(!s.ff_sound);
 }
 
@@ -207,7 +212,10 @@ fn an_invalid_quick_menu_setting_falls_back_without_losing_the_rest() {
     ] {
         std::fs::write(d.path().join("System/slot.state"), format!("{known}{bad}")).unwrap();
         let s = read_slot_state(d.path());
-        assert_eq!((s.rumble, s.ff_speed, s.ff_sound), (true, 4, false));
+        assert_eq!(
+            (s.rumble, s.ff_speed, s.ff_sound),
+            (true, FF_SPEED_DEFAULT, false)
+        );
         assert_eq!(
             (s.cart.as_deref(), s.brightness, s.volume, s.clock_set),
             (Some("Emerald"), 3, 40, true)

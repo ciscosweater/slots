@@ -62,33 +62,13 @@ impl Core {
 /// card, and the cost of a typo must be that one cart opens with the default core, never
 /// that the shelf fails to load.
 pub fn read_selected_cores(root: &Path) -> HashMap<String, Core> {
-    let mut out = HashMap::new();
-    let Ok(text) = std::fs::read_to_string(root.join(SELECTED_CORE_FILE)) else {
-        return out;
-    };
-    for line in text.lines() {
-        let line = line.trim();
-        if line.is_empty()
-            || line.starts_with('#')
-            || line.starts_with(';')
-            || line.starts_with('[')
-        {
-            continue;
-        }
-        let Some((stem, core)) = line.split_once('=') else {
-            continue;
-        };
-        let stem = stem.trim();
-        if stem.is_empty() {
-            continue;
-        }
-        // A name we do not know is not a failure: it is a card written for a newer build,
-        // or a typo. Either way the default is the safe reading.
-        if let Some(core) = Core::parse(core) {
-            out.insert(stem.to_string(), core);
-        }
-    }
-    out
+    // Let the shared INI reader resolve duplicate keys before parsing the value. In particular,
+    // a later typo must supersede an earlier valid core and therefore fall back to the default;
+    // filtering invalid values while walking lines would incorrectly keep the earlier choice.
+    crate::ini::read(root, SELECTED_CORE_FILE)
+        .into_iter()
+        .filter_map(|(stem, core)| Core::parse(&core).map(|core| (stem, core)))
+        .collect()
 }
 
 /// The core one cart wants. Reads the file each time: it is a few lines on a card that a

@@ -32,6 +32,14 @@ fn the_link_shortcut_on_the_wrong_core_says_to_switch() {
     assert!(f.rgba.chunks(4).any(|p| p[3] > 0), "the banner is blank");
 }
 
+/// A platform or cart with no link at all says so, rather than asking for a core swap.
+#[test]
+fn a_cart_with_no_link_says_so() {
+    assert_eq!(Toast::NoLink.text(), "No link support");
+    let f = toast_face(Toast::NoLink);
+    assert!(f.rgba.chunks(4).any(|p| p[3] > 0), "the banner is blank");
+}
+
 #[test]
 fn a_toast_fades_on_the_same_curve_as_the_bar() {
     let mut h = Hud::new();

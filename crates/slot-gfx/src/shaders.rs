@@ -70,10 +70,11 @@ uniform sampler2D u_mask;
 uniform vec2 u_src;
 uniform float u_bright;
 uniform float u_lcd;
+uniform vec4 u_uv;
 varying vec2 v_uv;
 void main() {
     vec3 mask = mix(vec3(1.0), texture2D(u_mask, v_uv * u_src).rgb, u_lcd);
-    vec3 rgb = texture2D(u_game, v_uv).rgb * mask;
+    vec3 rgb = texture2D(u_game, u_uv.xy + v_uv * u_uv.zw).rgb * mask;
     FRAG_COLOR = vec4(rgb * u_bright, 1.0);
 }
 "#;

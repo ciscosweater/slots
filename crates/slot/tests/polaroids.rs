@@ -3,7 +3,7 @@ mod common;
 use common::{app_playing_in, app_playing_with, tmp_root_with_carts, StubSnapshot};
 use slot::app::{App, Phase};
 use slot_input::{Action, Btn};
-use slot_store::{Cart, Core, StateRing};
+use slot_store::{Cart, Core, Platform, StateRing};
 
 /// No content root, so nothing this app does can reach a ring.
 fn app_playing(stem: &str) -> App {
@@ -46,7 +46,7 @@ fn saving_pushes_a_polaroid_with_its_picture() {
     let d = tmp_root_with_carts(&["Emerald"]);
     let mut a = app_playing_in(d.path(), "Emerald");
     a.apply(Action::SaveState);
-    let entries = StateRing::new(d.path(), Core::Mgba, "Emerald")
+    let entries = StateRing::new(d.path(), Platform::Gba, Core::Mgba, "Emerald")
         .list()
         .expect("list");
     assert_eq!(entries.len(), 1);
@@ -68,7 +68,7 @@ fn two_saves_in_the_same_second_are_two_entries() {
     a.apply(Action::SaveState);
     a.apply(Action::SaveState);
     assert_eq!(
-        StateRing::new(d.path(), Core::Mgba, "Emerald")
+        StateRing::new(d.path(), Platform::Gba, Core::Mgba, "Emerald")
             .list()
             .expect("list")
             .len(),
@@ -124,7 +124,7 @@ fn menu_dismisses_the_switcher_it_opened() {
 #[test]
 fn flicking_selects_which_state_a_loads() {
     let d = tmp_root_with_carts(&["Emerald"]);
-    let ring = StateRing::new(d.path(), Core::Mgba, "Emerald");
+    let ring = StateRing::new(d.path(), Platform::Gba, Core::Mgba, "Emerald");
     ring.push(&[1u8; 16], b"png", "2026-08-09_00-00-01")
         .expect("push");
     ring.push(&[2u8; 16], b"png", "2026-08-09_00-00-02")
@@ -144,7 +144,7 @@ fn flicking_selects_which_state_a_loads() {
 #[test]
 fn load_state_takes_the_newest_entry_without_the_switcher() {
     let d = tmp_root_with_carts(&["Emerald"]);
-    let ring = StateRing::new(d.path(), Core::Mgba, "Emerald");
+    let ring = StateRing::new(d.path(), Platform::Gba, Core::Mgba, "Emerald");
     ring.push(&[1u8; 16], b"png", "2026-08-09_00-00-01")
         .expect("push");
     ring.push(&[2u8; 16], b"png", "2026-08-09_00-00-02")

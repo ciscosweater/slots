@@ -30,9 +30,14 @@ impl Printed {
     }
 }
 
-/// The gauge on the left, the time on the right, both on the case. The wordmark used to have
-/// the left shelf; a device that tells you its charge is worth more than one that tells you
-/// its own name.
+/// The gauge at the left margin and the time at the right, both printed on the case.
+///
+/// The shelf's mark was briefly the leftmost thing here, with the gauge held one mark and one gap
+/// in from the margin to make room. It has gone to the top plate's right corner, where the link
+/// badge goes: that corner is 40 px deep against this band's 24, nothing else is ever in it — a
+/// badge belongs to a live session and a mark to the carousel, so the two cannot meet — and the
+/// band's own middle is not free either, since the cart slot's bay, opening and thumb scoop run
+/// from x 224 to x 496. So the gauge is back at the margin the wordmark once had.
 pub fn draw_footer(
     battery: Option<Battery>,
     percent: Printed,

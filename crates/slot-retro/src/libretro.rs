@@ -56,6 +56,8 @@ struct Host {
     /// host told the core every packet — including the joiner's — came from itself. `None`
     /// before a session starts and once `halt_link` has read it back out for `disconnected`.
     net_peer: Option<u16>,
+    /// The callback registered by a core's automatic frameskip option, if any.
+    audio_status: Option<AudioBufferStatusFn>,
     /// Core options, keyed as libretro names them. Values are kept as CStrings because the
     /// pointer handed back to the core has to stay valid after the callback returns.
     options: std::collections::HashMap<String, std::ffi::CString>,
@@ -194,6 +196,13 @@ unsafe extern "C" fn environment(cmd: c_uint, data: *mut c_void) -> bool {
             }
             (*(data as *mut LogCallback)).log = log_noop as *const c_void;
             true
+        }
+        SET_AUDIO_BUFFER_STATUS_CALLBACK => {
+            if data.is_null() {
+                return with_host(|h| h.audio_status = None).is_some();
+            }
+            let cb = std::ptr::read(data as *const AudioBufferStatusCallback);
+            with_host(|h| h.audio_status = cb.callback).is_some()
         }
         SET_NETPACKET_INTERFACE => {
             // A NULL pointer is the core withdrawing the interface, which is legal.
@@ -379,6 +388,15 @@ unsafe fn drain_link() {
     }
 }
 
+/// Report the frame's draw decision through the callback registered by an automatic frameskip
+/// mode. The callback is optional; cores with no such mode are a no-op here.
+unsafe fn report_audio_status(skip: bool) {
+    let Some(status) = with_host(|h| h.audio_status).flatten() else {
+        return;
+    };
+    status(true, if skip { 0 } else { 100 }, skip);
+}
+
 unsafe extern "C" fn video_refresh(
     data: *const c_void,
     width: c_uint,
@@ -395,6 +413,12 @@ unsafe extern "C" fn video_refresh(
         // A 160x144 GB frame is centred in the GBA-sized backing texture, then moved four
         // source pixels upward: at the fixed 3x presentation this is the requested 12 px.
         let top = if width == 160 && height == 144 { 4 } else { 0 };
+        // A core may change geometry between loads. Clear the backing texture before placing a
+        // smaller frame so old pixels cannot survive in the margins or below a newly shortened
+        // picture.
+        if cols != GBA_W as usize || rows != GBA_H as usize {
+            h.video.fill(0);
+        }
         for y in 0..rows {
             let src = (data as *const u8).add(y * pitch);
             let row = ((y + top) * GBA_W as usize + left) * 4;
@@ -575,6 +599,7 @@ impl LibretroCore {
             netpacket: None,
             net: Link::default(),
             net_peer: None,
+            audio_status: None,
             options: seeded,
             options_dirty: false,
         });
@@ -668,6 +693,11 @@ impl RetroCore for LibretroCore {
         self.host.inputs = [p1.0, p2.0];
         let _a = Active::bind(&mut self.host);
         unsafe { (self.api.run)() };
+    }
+
+    fn set_frame_skip(&mut self, skip: bool) {
+        let _a = Active::bind(&mut self.host);
+        unsafe { report_audio_status(skip) };
     }
 
     fn video_xrgb8888(&self) -> &[u8] {
@@ -795,6 +825,7 @@ mod tests {
             netpacket: None,
             net: Link::default(),
             net_peer: None,
+            audio_status: None,
             options,
             options_dirty,
         })
@@ -888,6 +919,58 @@ mod tests {
         };
         let ok = unsafe { environment(GET_VARIABLE, &mut var as *mut Variable as *mut c_void) };
         assert!(!ok);
+    }
+
+    thread_local! {
+        static TEST_AUDIO_STATUS: RefCell<Vec<(bool, c_uint, bool)>> = const { RefCell::new(Vec::new()) };
+    }
+
+    unsafe extern "C" fn test_audio_status(active: bool, occupancy: c_uint, underrun: bool) {
+        TEST_AUDIO_STATUS.with(|r| r.borrow_mut().push((active, occupancy, underrun)));
+    }
+
+    #[test]
+    fn audio_status_callback_is_stored_and_can_be_withdrawn() {
+        let mut host = host_with(HashMap::new(), false);
+        let mut callback = AudioBufferStatusCallback {
+            callback: Some(test_audio_status),
+        };
+        let ok = {
+            let _active = Active::bind(&mut host);
+            unsafe {
+                environment(
+                    SET_AUDIO_BUFFER_STATUS_CALLBACK,
+                    &mut callback as *mut AudioBufferStatusCallback as *mut c_void,
+                )
+            }
+        };
+        assert!(ok);
+        assert!(host.audio_status.is_some());
+
+        let ok = {
+            let _active = Active::bind(&mut host);
+            unsafe { environment(SET_AUDIO_BUFFER_STATUS_CALLBACK, ptr::null_mut()) }
+        };
+        assert!(ok);
+        assert!(host.audio_status.is_none());
+    }
+
+    #[test]
+    fn set_frame_skip_reports_the_buffer_state_the_core_uses_for_auto_frameskip() {
+        TEST_AUDIO_STATUS.with(|r| r.borrow_mut().clear());
+        let mut host = host_with(HashMap::new(), false);
+        host.audio_status = Some(test_audio_status);
+        let _active = Active::bind(&mut host);
+        unsafe {
+            report_audio_status(true);
+            report_audio_status(false);
+        }
+        TEST_AUDIO_STATUS.with(|r| {
+            assert_eq!(
+                r.borrow().as_slice(),
+                &[(true, 0, true), (true, 100, false)]
+            );
+        });
     }
 
     // --- netpacket -----------------------------------------------------------------------

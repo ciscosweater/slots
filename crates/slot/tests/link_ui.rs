@@ -22,7 +22,7 @@ use slot::session::Session;
 use slot_input::{Action, Btn, Millis, RawEvent};
 use slot_retro::ButtonMask;
 use slot_store::{write_slot_state, Core, SlotState};
-use slot_ui::{opening, Draw, TexId, OUT_H, OUT_W};
+use slot_ui::{opening, Draw, TexId, Toast, OUT_H, OUT_W};
 use tempfile::TempDir;
 
 /// How long a test waits on a real worker thread before deciding it never will answer.
@@ -32,10 +32,13 @@ const BAIL: Duration = Duration::from_secs(5);
 /// it — once, by whoever spawned the core — because it is the thing that decides whether the
 /// link screen exists at all.
 ///
-/// Two carts, so `single_cart` does not turn this into a dedicated device.
+/// Two carts, so `single_cart` does not turn this into a dedicated device. Emerald is written
+/// with a retail Pokémon header so `link_carried` lets the screen open under gpSP.
 fn playing_on(core: Core) -> (App, TempDir) {
-    let d = common::tmp_root_with_carts(&["Emerald", "Zzz"]);
+    let d = common::tmp_root_with_carts(&["Zzz"]);
+    common::write_retail_header(&d, "Emerald", "POKEMON EMER", "BPEE");
     let mut app = common::boot(d.path());
+    // Emerald sorts before Zzz.
     app.apply(Action::Insert);
     app.set_core(core);
     app.on_core_ready();
@@ -44,6 +47,29 @@ fn playing_on(core: Core) -> (App, TempDir) {
     }
     assert!(matches!(app.phase(), Phase::Playing { .. }), "never seated");
     (app, d)
+}
+
+fn seated_on(d: &TempDir, core: Core) -> App {
+    seated_on_platform(d, core, slot_store::Platform::Gba)
+}
+
+fn seated_on_gpsp(d: &TempDir) -> App {
+    seated_on(d, Core::Gpsp)
+}
+
+/// The core and the platform are set here in one breath, as `session::spawn_core` sets them,
+/// because the refusal asks the platform before anything else.
+fn seated_on_platform(d: &TempDir, core: Core, platform: slot_store::Platform) -> App {
+    let mut app = common::boot(d.path());
+    app.apply(Action::Insert);
+    app.set_core(core);
+    app.set_platform(platform);
+    app.on_core_ready();
+    for _ in 0..120 {
+        app.update(1.0 / 60.0);
+    }
+    assert!(matches!(app.phase(), Phase::Playing { .. }), "never seated");
+    app
 }
 
 /// A worker whose radio always comes up and whose socket step is whatever the test says.
@@ -479,6 +505,7 @@ fn the_link_screen_draws_its_role_over_the_game() {
 /// `selected_core.ini` says gpSP, because that is what decides the link screen exists.
 fn session_playing_on_gpsp() -> (Session, TempDir, Millis) {
     let d = common::tmp_root_with_carts(&["Emerald"]);
+    common::write_retail_header(&d, "Emerald", "POKEMON EMER", "BPEE");
     slot_store::write_selected_core(d.path(), "Emerald", Core::Gpsp).expect("write core");
     write_slot_state(
         d.path(),
@@ -759,4 +786,116 @@ fn a_pokemon_hack_shows_the_cable() {
             .any(|d| matches!(*d, Draw::Tex { tex, .. } if tex == TexId::from_raw(4))),
         "the adapter on a Pokémon hack"
     );
+}
+
+// --- carts gpSP cannot link / platforms with no link ------------------------------------
+
+#[test]
+fn a_cart_gpsp_cannot_carry_is_refused_the_link_screen_and_told_why() {
+    let d = common::tmp_root_with_carts(&["Apotris", "Zzz"]);
+    common::write_retail_header(&d, "Apotris", "APOTRIS", "2ATE");
+    let mut app = seated_on_gpsp(&d);
+    app.apply(Action::GameMenu);
+    assert!(
+        !app.game_menu_open(),
+        "a cart gpSP has no protocol for was offered a link screen"
+    );
+    assert_eq!(
+        app.toast(),
+        Some(Toast::NoLink),
+        "the press did nothing and said nothing"
+    );
+    assert!(
+        matches!(app.phase(), Phase::Playing { .. }),
+        "the refusal took the game away: {:?}",
+        app.phase()
+    );
+}
+
+#[test]
+fn a_cart_gpsp_carries_still_opens_the_link_screen() {
+    for (stem, title, code) in [
+        ("Mario Golf", "MARIO GOLF", "BMGE"),
+        ("Emerald", "POKEMON EMER", "BPEE"),
+        ("Advance Wars", "ADVANCEWARS", "AWRE"),
+    ] {
+        let d = common::tmp_root_with_carts(&["Zzz"]);
+        common::write_retail_header(&d, stem, title, code);
+        let mut app = seated_on_gpsp(&d);
+        app.apply(Action::GameMenu);
+        assert!(app.game_menu_open(), "{code} was refused its link screen");
+        assert_eq!(
+            app.toast(),
+            None,
+            "{code} opened the screen and said so too"
+        );
+    }
+}
+
+#[test]
+fn a_cart_nothing_can_link_is_refused_whatever_core_is_selected() {
+    for core in [Core::Mgba, Core::Gpsp] {
+        let d = common::tmp_root_with_carts(&["Apotris", "Zzz"]);
+        common::write_retail_header(&d, "Apotris", "APOTRIS", "2ATE");
+        let mut app = seated_on(&d, core);
+        app.apply(Action::GameMenu);
+        assert!(
+            !app.game_menu_open(),
+            "{core:?} offered a link screen for a cart nothing can link"
+        );
+        assert_eq!(
+            app.toast(),
+            Some(Toast::NoLink),
+            "{core:?} answered a cart nothing can link with the wrong banner"
+        );
+    }
+}
+
+#[test]
+fn a_cart_gpsp_can_link_still_says_to_switch_to_it() {
+    let d = common::tmp_root_with_carts(&["Emerald", "Zzz"]);
+    common::write_retail_header(&d, "Emerald", "POKEMON RUBY", "AXVE");
+    let mut app = seated_on(&d, Core::Mgba);
+    app.apply(Action::GameMenu);
+    assert!(
+        !app.game_menu_open(),
+        "mGBA opened a link screen it has no netpacket interface for"
+    );
+    assert_eq!(
+        app.toast(),
+        Some(Toast::NeedsGpsp),
+        "a cart gpSP can carry was told there is no link support for it"
+    );
+}
+
+#[test]
+fn the_link_shortcut_on_a_game_boy_cart_says_no_link_support() {
+    for core in [Core::Mgba, Core::Gpsp, Core::Gambatte] {
+        let d = common::tmp_root_with_gb_carts(&["Pokemon Red", "Zzz"]);
+        let mut app = seated_on_platform(&d, core, slot_store::Platform::Gb);
+        app.apply(Action::GameMenu);
+        assert!(
+            !app.game_menu_open(),
+            "{core:?} offered a Game Boy cart a link screen"
+        );
+        assert_ne!(
+            app.toast(),
+            Some(Toast::NeedsGpsp),
+            "{core:?} told a Game Boy cart to switch to gpSP, which cannot run it at all"
+        );
+        assert_eq!(
+            app.toast(),
+            Some(Toast::NoLink),
+            "{core:?} answered a Game Boy cart with the wrong banner"
+        );
+        assert!(
+            matches!(app.phase(), Phase::Playing { .. }),
+            "{core:?}: the refusal took the game away: {:?}",
+            app.phase()
+        );
+        assert!(
+            !app.link_active(),
+            "{core:?} started a link session for a Game Boy cart"
+        );
+    }
 }

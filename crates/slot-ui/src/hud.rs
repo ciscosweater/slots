@@ -28,6 +28,21 @@ const ICON_GAP: f32 = 10.0;
 /// The badge sits in the corner the bar never reaches, so the two never have to negotiate.
 const BADGE_MARGIN: f32 = 12.0;
 
+/// Where something of this size goes when it goes in that corner: hard against the right
+/// margin, centred in the plate's own height.
+///
+/// The shelf's platform mark used to take this too, and no longer does — it is `mark_at` now.
+/// The corner is still one corner and still says one thing, since the two can never be on screen
+/// at once: a badge only exists inside a live session and a mark only on the carousel. What came
+/// apart is what each is measured against. A badge is drawn on this plate, over a running game,
+/// and both of these numbers are the plate's own: 12 px in from the edge it shares with the bar,
+/// centred in the 40 px it has to sit in. A mark is drawn where there is no plate, so it is held
+/// off the screen's edges by the case's margin instead — and at the size a mark is now, nothing
+/// centred in 40 px would fit anyway.
+pub fn badge_at(w: f32, h: f32) -> (f32, f32) {
+    (OUT_W as f32 - BADGE_MARGIN - w, (PLATE_H - h) / 2.0)
+}
+
 const BAR_W: f32 = 320.0;
 const BAR_H: f32 = 6.0;
 const BAR_Y: f32 = (PLATE_H - BAR_H) / 2.0;
@@ -314,9 +329,10 @@ impl Hud {
     fn place_badge(&self, tex: TexId, out: &mut Vec<Draw>) {
         let (w, h) = icon_box(HUD_ICON_PX);
         let (w, h) = (w as f32, h as f32);
+        let (x, y) = badge_at(w, h);
         out.push(Draw::Tex {
-            x: OUT_W as f32 - BADGE_MARGIN - w,
-            y: (PLATE_H - h) / 2.0,
+            x,
+            y,
             w,
             h,
             tex,

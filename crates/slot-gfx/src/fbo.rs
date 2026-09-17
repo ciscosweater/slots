@@ -125,6 +125,12 @@ impl Compositor {
         self.game.set_lcd(enabled);
     }
 
+    /// Select the part of the live game's backing texture shown by the panel. Still images keep
+    /// using the whole texture in `GamePass::draw_still`.
+    pub fn set_game_source_rect(&mut self, rect: [f32; 4]) {
+        self.game.set_source_rect(rect);
+    }
+
     /// Pixels, in offscreen space, applied to the whole presented image. On the blit rather
     /// than on the draw list, so game, chrome and HUD move together as one picture. Applied
     /// inside the offscreen target it would shake the chrome against a game that stayed

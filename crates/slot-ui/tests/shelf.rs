@@ -34,6 +34,65 @@ fn face_upload_order_prioritises_both_edges_of_the_ring() {
 }
 
 #[test]
+fn equal_stems_from_different_platforms_keep_separate_faces() {
+    let mut shelf = Shelf::new(vec![
+        Cart {
+            stem: "Same".into(),
+            rom: "Games/GBA/Same.gba".into(),
+            artwork: None,
+            label: None,
+            code: String::new(),
+            title: "GBA".into(),
+            platform: Platform::Gba,
+        },
+        Cart {
+            stem: "Same".into(),
+            rom: "Games/GB/Same.gb".into(),
+            artwork: None,
+            label: None,
+            code: String::new(),
+            title: "GB".into(),
+            platform: Platform::Gb,
+        },
+    ]);
+
+    let order = shelf.face_upload_order();
+    assert_eq!(
+        order.len(),
+        2,
+        "one platform's cart was deduplicated by stem"
+    );
+    assert_eq!(order[0].platform, Platform::Gba);
+    assert_eq!(order[1].platform, Platform::Gb);
+
+    shelf.set_face_for(
+        Platform::Gba,
+        "Same",
+        TexId::from_raw(101),
+        (CART_W, CART_H),
+        false,
+    );
+    shelf.set_face_for(
+        Platform::Gb,
+        "Same",
+        TexId::from_raw(202),
+        (slot_ui::GB_CART_W, slot_ui::GB_CART_H),
+        false,
+    );
+    shelf.set_platform(Some(Platform::Gb));
+    let mut out = Vec::new();
+    shelf.draw_row(None, 0.0, 0.0, 1.0, &mut out);
+    assert!(
+        out.iter()
+            .any(|draw| matches!(draw, Draw::Tex { tex, .. } if *tex == TexId::from_raw(202))),
+        "the GB face was not attached to the GB cart: {out:?}"
+    );
+    assert!(!out
+        .iter()
+        .any(|draw| matches!(draw, Draw::Tex { tex, .. } if *tex == TexId::from_raw(101))));
+}
+
+#[test]
 fn a_missing_face_can_use_a_shape_placeholder_instead_of_a_square() {
     let mut shelf = shelf_with(1);
     shelf.set_placeholder(TexId::from_raw(77));
@@ -317,10 +376,10 @@ fn the_neighbour_of_the_last_cart_is_the_first() {
     assert_eq!(s.cart_at_offset(1), Some(1));
 }
 
-/// Two carts would otherwise appear on both sides of the selection at once.
+/// Three or more carts have one image each on the row. Only a ring of two repeats.
 #[test]
-fn no_cart_is_drawn_twice_in_one_row() {
-    for n in [2usize, 3, 4] {
+fn no_cart_is_drawn_twice_in_a_row_of_three_or_more() {
+    for n in [3usize, 4, 7] {
         let s = shelf_with(n);
         let mut out = Vec::new();
         s.draw_row(None, 0.0, 0.0, 1.0, &mut out);
@@ -329,6 +388,91 @@ fn no_cart_is_drawn_twice_in_one_row() {
         uniq.sort();
         uniq.dedup();
         assert_eq!(drawn.len(), uniq.len(), "{n} carts: one is on screen twice");
+    }
+}
+
+/// Two carts fill all three slots: the cart that is not selected stands on both sides.
+#[test]
+fn two_carts_repeat_around_the_ring() {
+    let mut s = shelf_with(2);
+    settle(&mut s);
+    let mut out = Vec::new();
+    s.draw_row(None, 0.0, 0.0, 1.0, &mut out);
+    assert_eq!(
+        drawn_cart_indices(&out),
+        vec![1, 0, 1],
+        "a row of two is not the other cart, the selection, the other cart again"
+    );
+}
+
+/// Which way the row goes is what says which button was pressed.
+#[test]
+fn a_row_travels_the_way_it_was_pressed() {
+    for n in [2usize, 3, 4, 5, 10] {
+        for (name, press, way) in [
+            ("right", Shelf::right as fn(&mut Shelf), 1.0f32),
+            ("left", Shelf::left as fn(&mut Shelf), -1.0),
+        ] {
+            let mut s = shelf_with(n);
+            s.select(if way > 0.0 { n - 1 } else { 0 });
+            settle(&mut s);
+            let mut aim = s.scroll_target();
+            for tap in 0..2 * n {
+                press(&mut s);
+                let sent = s.scroll_target();
+                assert!(
+                    (sent - aim - way).abs() < 0.01,
+                    "{n} carts, tap {tap} {name}: the row was sent {} from {aim}, not one slot \
+                     {name}",
+                    sent - aim
+                );
+                assert_eq!(
+                    (sent - s.scroll).signum(),
+                    way,
+                    "{n} carts, tap {tap} {name}: the row is travelling the other way"
+                );
+                aim = sent;
+                for _ in 0..4 {
+                    s.update(1.0 / 60.0);
+                }
+                assert_eq!(
+                    s.scroll_target(),
+                    sent,
+                    "{n} carts, tap {tap} {name}: the row changed its mind in mid flight"
+                );
+            }
+        }
+    }
+}
+
+/// A direction held down must never send the row against the button.
+#[test]
+fn a_held_scroll_never_travels_against_the_button() {
+    for n in [2usize, 3, 4, 5, 10] {
+        for (name, hold, way) in [
+            ("right", Shelf::hold_right as fn(&mut Shelf, u64), 1.0f32),
+            ("left", Shelf::hold_left as fn(&mut Shelf, u64), -1.0),
+        ] {
+            let mut s = shelf_with(n);
+            s.select(if way > 0.0 { n - 1 } else { 0 });
+            hold(&mut s, 0);
+            let mut was = s.scroll;
+            for f in 1..120u64 {
+                s.tick(f * 1000 / 60);
+                s.update(1.0 / 60.0);
+                assert!(
+                    (s.scroll - was) * way >= -1e-4,
+                    "{n} carts, held {name}: the row travelled {} at frame {f}",
+                    s.scroll - was
+                );
+                was = s.scroll;
+            }
+            let gone = (s.scroll - (if way > 0.0 { n - 1 } else { 0 }) as f32) * way;
+            assert!(
+                gone > 14.0,
+                "{n} carts, held {name}: two seconds of holding moved the row {gone} pitches"
+            );
+        }
     }
 }
 

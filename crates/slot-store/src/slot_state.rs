@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::atomic::atomic_write;
+use crate::platform::Platform;
 
 pub const BRIGHTNESS_MAX: u8 = 16;
 pub const BLUE_LIGHT_MAX: u8 = 9;
@@ -14,13 +15,18 @@ pub const UTC_OFFSET_MAX: i16 = 840;
 
 /// The fast-forward speeds the quick menu offers, in game frames per screen refresh. Four is
 /// the most an H700 can serve (see `FAST_STEPS` in the emulator), and one is not fast at all.
-pub const FF_SPEED_MIN: u8 = 2;
-pub const FF_SPEED_MAX: u8 = 4;
+pub const FF_SPEEDS: [u8; 4] = [2, 3, 4, 6];
+pub const FF_SPEED_DEFAULT: u8 = 6;
+pub const FF_SPEED_MIN: u8 = FF_SPEEDS[0];
+pub const FF_SPEED_MAX: u8 = FF_SPEEDS[FF_SPEEDS.len() - 1];
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct SlotState {
     /// Filename stem. `None` is an empty slot, which is the shelf.
     pub cart: Option<String>,
+    /// Platform of the cart in the slot. `None` keeps compatibility with older cards whose
+    /// state only stored the stem.
+    pub cart_platform: Option<Platform>,
     pub brightness: u8,
     pub blue_light: u8,
     pub volume: u8,
@@ -39,6 +45,8 @@ pub struct SlotState {
     pub ff_speed: u8,
     /// Whether fast-forward is heard, sped up, rather than dropped.
     pub ff_sound: bool,
+    /// Whether the selected core should apply its console LCD colour correction.
+    pub colour_correction: bool,
 }
 
 /// Not derived. `read_slot_state` falls back here on a first boot, and all zeroes would
@@ -47,6 +55,7 @@ impl Default for SlotState {
     fn default() -> Self {
         SlotState {
             cart: None,
+            cart_platform: None,
             brightness: 5,
             blue_light: 0,
             volume: 60,
@@ -54,8 +63,9 @@ impl Default for SlotState {
             clock_set: false,
             utc_offset_min: 0,
             rumble: true,
-            ff_speed: FF_SPEED_MAX,
+            ff_speed: FF_SPEED_DEFAULT,
             ff_sound: false,
+            colour_correction: false,
         }
     }
 }
@@ -74,8 +84,9 @@ pub fn read_slot_state(root: &Path) -> SlotState {
 
 pub fn write_slot_state(root: &Path, s: &SlotState) -> std::io::Result<()> {
     let text = format!(
-        "version=2\ncart={}\nbrightness={}\nblue_light={}\nvolume={}\nmuted={}\nclock_set={}\nutc_offset_min={}\nrumble={}\nff_speed={}\nff_sound={}\n",
-        s.cart.as_deref().unwrap_or(""),
+        "version=2\ncart={}\ncart_platform={}\nbrightness={}\nblue_light={}\nvolume={}\nmuted={}\nclock_set={}\nutc_offset_min={}\nrumble={}\nff_speed={}\nff_sound={}\ncolour_correction={}\n",
+         s.cart.as_deref().unwrap_or(""),
+         s.cart_platform.map_or(String::new(), platform_key),
         s.brightness,
         s.blue_light,
         s.volume,
@@ -84,7 +95,8 @@ pub fn write_slot_state(root: &Path, s: &SlotState) -> std::io::Result<()> {
         s.utc_offset_min,
         s.rumble as u8,
         s.ff_speed,
-        s.ff_sound as u8
+         s.ff_sound as u8,
+         s.colour_correction as u8
     );
     atomic_write(&state_path(root), text.as_bytes())
 }
@@ -100,6 +112,7 @@ pub fn write_slot_state(root: &Path, s: &SlotState) -> std::io::Result<()> {
 fn parse(text: &str) -> Option<SlotState> {
     let mut version = None;
     let mut cart = None;
+    let mut cart_platform = None;
     let mut brightness = None;
     let mut blue_light = None;
     let mut volume = None;
@@ -109,6 +122,7 @@ fn parse(text: &str) -> Option<SlotState> {
     let mut rumble = None;
     let mut ff_speed = None;
     let mut ff_sound = None;
+    let mut colour_correction = None;
     for line in text.lines().filter(|l| !l.is_empty()) {
         let Some((key, value)) = line.split_once('=') else {
             continue;
@@ -116,6 +130,7 @@ fn parse(text: &str) -> Option<SlotState> {
         match key {
             "version" => version = Some(value.parse::<u8>().ok().filter(|v| *v == 2)?),
             "cart" => cart = Some(value.to_string()),
+            "cart_platform" => cart_platform = platform_value(value),
             // Version 1 had ten positions. Keep their physical brightness on upgrade while
             // version 2 adds intermediate night-time levels between them.
             "brightness" => brightness = Some(value.parse::<u8>().ok()?),
@@ -125,8 +140,9 @@ fn parse(text: &str) -> Option<SlotState> {
             "clock_set" => clock_set = Some(level(value, 1)? == 1),
             "utc_offset_min" => utc_offset_min = Some(offset(value)?),
             "rumble" => rumble = flag(value),
-            "ff_speed" => ff_speed = level(value, FF_SPEED_MAX).filter(|n| *n >= FF_SPEED_MIN),
+            "ff_speed" => ff_speed = value.parse().ok().filter(|n| FF_SPEEDS.contains(n)),
             "ff_sound" => ff_sound = flag(value),
+            "colour_correction" => colour_correction = flag(value),
             _ => {}
         }
     }
@@ -139,6 +155,7 @@ fn parse(text: &str) -> Option<SlotState> {
     let fallback = SlotState::default();
     Some(SlotState {
         cart: (!cart.is_empty()).then_some(cart),
+        cart_platform,
         brightness,
         blue_light: blue_light?,
         volume: volume?,
@@ -148,7 +165,18 @@ fn parse(text: &str) -> Option<SlotState> {
         rumble: rumble.unwrap_or(fallback.rumble),
         ff_speed: ff_speed.unwrap_or(fallback.ff_speed),
         ff_sound: ff_sound.unwrap_or(fallback.ff_sound),
+        colour_correction: colour_correction.unwrap_or(fallback.colour_correction),
     })
+}
+
+fn platform_key(platform: Platform) -> String {
+    platform.dir_name().to_ascii_lowercase()
+}
+
+fn platform_value(value: &str) -> Option<Platform> {
+    Platform::ALL
+        .into_iter()
+        .find(|p| value.eq_ignore_ascii_case(p.dir_name()))
 }
 
 fn offset(value: &str) -> Option<i16> {
