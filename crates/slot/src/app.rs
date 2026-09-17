@@ -6,9 +6,10 @@ use slot_input::{Action, Btn, MUTE_CHORD_MS};
 use slot_power::{Battery, Charge, LedState, LidPolicy, Power};
 use slot_retro::LinkChannel;
 use slot_store::{
-    format_stamp, read_favorites, read_last_shelf, read_lcd, read_pixelify, read_recents,
-    read_slot_state, touch_recent, write_favorites, write_last_shelf, write_lcd, write_pixelify,
-    write_recents, write_slot_state, Cart, Core, FaceButtons, LastShelf, Platform, SlotState,
+    format_stamp, legacy_from_disk, legacy_prefs, read_favorites, read_last_shelf, read_lcd,
+    read_pixelify, read_recents, read_slot_state, resolve_display, touch_recent, write_display_field,
+    write_favorites, write_last_shelf, write_pixelify, write_recents, write_slot_state, Cart, Core,
+    DisplayField, DisplayPrefs, DisplayTarget, FaceButtons, LastShelf, Platform, SlotState,
     StateEntry, StateRing, Theme, BLUE_LIGHT_MAX, BRIGHTNESS_MAX, FF_SPEEDS, RING_MAX, VOLUME_MAX,
 };
 use slot_ui::{
@@ -747,6 +748,7 @@ impl App {
                 if let Some(stem) = self.last_shelf_stem.clone() {
                     self.shelf.select_stem(&stem);
                 }
+                self.apply_shelf_display_prefs();
             }
         }
         self.remember_shelf_selection();
@@ -827,6 +829,81 @@ impl App {
     /// Whether the in-game display settings are up over a paused cart.
     pub fn play_settings_open(&self) -> bool {
         matches!(self.phase, Phase::QuickMenu { resume: Some(_), .. })
+    }
+
+    /// Console tab → platform. ALL and REC have none: display edits there do not write.
+    fn category_platform(category: usize) -> Option<Platform> {
+        match category {
+            2 => Some(Platform::Gba),
+            3 => Some(Platform::Gb),
+            4 => Some(Platform::Gbc),
+            _ => None,
+        }
+    }
+
+    /// Where a display edit should land, if anywhere.
+    fn display_write_target(&self) -> Option<(Platform, Option<String>)> {
+        match &self.phase {
+            Phase::QuickMenu {
+                resume: Some(cart), ..
+            }
+            | Phase::Playing { cart } => {
+                let platform = self.platform.or(self.state.cart_platform)?;
+                Some((platform, Some(cart.clone())))
+            }
+            Phase::QuickMenu { resume: None, .. } | Phase::Shelf => {
+                Self::category_platform(self.shelf.category()).map(|p| (p, None))
+            }
+            _ => None,
+        }
+    }
+
+    fn apply_display_prefs(&mut self, prefs: DisplayPrefs) {
+        if self.state.colour_correction != prefs.colour {
+            self.state.colour_correction = prefs.colour;
+            self.colour_dirty = true;
+        }
+        self.state.gb_overlay = prefs.overlay;
+        self.lcd = prefs.lcd;
+    }
+
+    /// Live fields for the shelf's current console tab, or the card's legacy globals on ALL/REC.
+    fn apply_shelf_display_prefs(&mut self) {
+        let Some(root) = self.root.clone() else {
+            return;
+        };
+        let legacy = legacy_from_disk(&root);
+        match Self::category_platform(self.shelf.category()) {
+            Some(platform) => {
+                self.apply_display_prefs(resolve_display(&root, platform, None, legacy));
+            }
+            None => self.apply_display_prefs(legacy),
+        }
+    }
+
+    /// Resolve and apply display prefs for a seated cart.
+    fn apply_cart_display(&mut self, platform: Platform, stem: &str) {
+        let Some(root) = self.root.clone() else {
+            return;
+        };
+        let legacy = legacy_prefs(&root, &self.state);
+        self.apply_display_prefs(resolve_display(&root, platform, Some(stem), legacy));
+    }
+
+    fn persist_display_field(&self, field: DisplayField, value: bool) {
+        let Some(root) = &self.root else {
+            return;
+        };
+        let Some((platform, stem)) = self.display_write_target() else {
+            return;
+        };
+        let target = match stem.as_deref() {
+            Some(stem) => DisplayTarget::Game { platform, stem },
+            None => DisplayTarget::Platform(platform),
+        };
+        if let Err(e) = write_display_field(root, target, field, value) {
+            eprintln!("slot: display: {e}");
+        }
     }
 
     /// What a row of the quick menu shows. `None` for the two rows that open something: Date &
@@ -1480,12 +1557,11 @@ impl App {
     }
 
     fn toggle_lcd(&mut self) {
-        self.lcd = !self.lcd;
-        if let Some(root) = &self.root {
-            if let Err(e) = write_lcd(root, self.lcd) {
-                eprintln!("slot: lcd: {e}");
-            }
+        if self.display_write_target().is_none() {
+            return;
         }
+        self.lcd = !self.lcd;
+        self.persist_display_field(DisplayField::Lcd, self.lcd);
         let toast = if self.lcd {
             Toast::LcdOn
         } else {
@@ -1500,7 +1576,10 @@ impl App {
 
     /// Whether the GB/GBC overlay should be composited this frame.
     pub fn gb_overlay_visible(&self) -> bool {
-        self.state.gb_overlay
+        // Not over the in-game display menu: the paused frame is what is being adjusted, and
+        // an opaque bezel under the scrim made the menu read as a solid panel.
+        !self.play_settings_open()
+            && self.state.gb_overlay
             && !self.lcd_enabled()
             && self.video_mode != VideoMode::Stretch
             && matches!(
@@ -1518,9 +1597,12 @@ impl App {
     }
 
     fn toggle_colour_correction(&mut self) {
+        if self.display_write_target().is_none() {
+            return;
+        }
         self.state.colour_correction = !self.state.colour_correction;
         self.colour_dirty = true;
-        self.persist();
+        self.persist_display_field(DisplayField::Colour, self.state.colour_correction);
         let toast = if self.state.colour_correction {
             Toast::ColourOn
         } else {
@@ -1684,8 +1766,14 @@ impl App {
                     Action::ShelfRight | Action::GbaDown(Btn::Right) => self.shelf.hold_right(now),
                     Action::GbaDown(Btn::L1) => self.shelf.previous_letter(),
                     Action::GbaDown(Btn::R1) => self.shelf.next_letter(),
-                    Action::RewindStart => self.shelf.previous_category(),
-                    Action::FfStart => self.shelf.next_category(),
+                    Action::RewindStart => {
+                        self.shelf.previous_category();
+                        self.apply_shelf_display_prefs();
+                    }
+                    Action::FfStart => {
+                        self.shelf.next_category();
+                        self.apply_shelf_display_prefs();
+                    }
                     Action::GbaDown(Btn::Select) => self.toggle_font(),
                     Action::GbaDown(Btn::Y) => self.toggle_favorite(),
                     Action::QuickMenu => self.open_quick_menu(),
@@ -1732,6 +1820,9 @@ impl App {
                 Action::FfStart if !self.may_fast_forward() => self.refuse(),
                 _ => {}
             },
+            Phase::QuickMenu {
+                resume: Some(_), ..
+            } if action == Action::Eject => self.eject(),
             Phase::Polaroids { .. } => match action {
                 Action::ShelfLeft | Action::GbaDown(Btn::Left) => self.flick(Polaroids::left),
                 Action::ShelfRight | Action::GbaDown(Btn::Right) => self.flick(Polaroids::right),
@@ -1786,6 +1877,7 @@ impl App {
             } => {
                 let mut rows = QuickRow::PLAYING.to_vec();
                 if matches!(self.platform, Some(Platform::Gb | Platform::Gbc)) {
+                    rows.push(QuickRow::Overlay);
                     rows.push(QuickRow::Picture);
                 }
                 rows
@@ -1830,6 +1922,7 @@ impl App {
 
     /// MENU on the carousel. On the top row every time, however the menu was last left.
     fn open_quick_menu(&mut self) {
+        self.apply_shelf_display_prefs();
         self.phase = Phase::QuickMenu {
             row: QuickRow::ALL[0],
             resume: None,
@@ -1921,35 +2014,43 @@ impl App {
             }
             QuickRow::FastForwardSound => self.state.ff_sound = !self.state.ff_sound,
             QuickRow::ColourCorrection => {
+                if self.display_write_target().is_none() {
+                    return;
+                }
                 self.state.colour_correction = !self.state.colour_correction;
                 self.colour_dirty = true;
+                self.persist_display_field(DisplayField::Colour, self.state.colour_correction);
+                return;
             }
             QuickRow::Rumble => self.state.rumble = !self.state.rumble,
             QuickRow::FaceButtons => {
                 self.state.face_buttons = self.state.face_buttons.next(right);
             }
             QuickRow::Overlay => {
+                if self.display_write_target().is_none() {
+                    return;
+                }
                 let on = !self.state.gb_overlay;
                 self.state.gb_overlay = on;
+                self.persist_display_field(DisplayField::Overlay, on);
                 if on {
                     self.lcd = false;
-                    if let Some(root) = &self.root {
-                        let _ = write_lcd(root, false);
-                    }
+                    self.persist_display_field(DisplayField::Lcd, false);
                     if matches!(self.platform, Some(Platform::Gb | Platform::Gbc))
                         && self.video_mode == VideoMode::Stretch
                     {
                         self.video_mode = VideoMode::Actual;
                     }
                 }
+                return;
             }
             QuickRow::LcdEffect => {
-                self.lcd = !self.lcd;
-                if let Some(root) = &self.root {
-                    if let Err(e) = write_lcd(root, self.lcd) {
-                        eprintln!("slot: lcd: {e}");
-                    }
+                if self.display_write_target().is_none() {
+                    return;
                 }
+                self.lcd = !self.lcd;
+                self.persist_display_field(DisplayField::Lcd, self.lcd);
+                return;
             }
             QuickRow::Picture => {
                 let mode = if right {
@@ -2187,6 +2288,7 @@ impl App {
         if let Some(phase) = next {
             // Ahead of the screen step, so the frame the cart finishes arriving is already
             // the first frame of the power on rather than one more frame of nothing.
+            let back_to_shelf = matches!(phase, Phase::Shelf);
             self.phase = phase;
             // The cart is out. Whatever it was carrying goes with it.
             self.refused_from = None;
@@ -2201,6 +2303,9 @@ impl App {
                 self.record_recent(cart);
             }
             self.record_cart(seated);
+            if back_to_shelf {
+                self.apply_shelf_display_prefs();
+            }
         }
         self.step_screen(dt);
     }
@@ -2548,7 +2653,10 @@ impl App {
             Phase::QuickMenu { row, resume } => {
                 let over_game = resume.is_some();
                 if over_game {
-                    self.push_game(out);
+                    // Always ask for the game layer while settings are up. Gating on
+                    // `game_visible` left only the scrim over a cleared framebuffer, which
+                    // reads as a solid panel even when the GPU still holds the last frame.
+                    out.push(Draw::Game);
                 }
                 let playing_rows;
                 let rows: &[QuickRow] = if over_game {
@@ -3156,6 +3264,7 @@ impl App {
             return;
         };
         self.platform = Some(cart.platform);
+        self.apply_cart_display(cart.platform, &cart.stem);
         self.play_held = None;
         self.refusal = None;
         self.refused_from = None;
@@ -3216,6 +3325,15 @@ impl App {
         if self.single_cart() {
             return self.refuse();
         }
+        // Display settings leave the cart seated under a QuickMenu; treat that as Playing so
+        // MENU-hold still empties the slot instead of eating the hold.
+        if let Phase::QuickMenu {
+            resume: Some(cart), ..
+        } = &self.phase
+        {
+            let cart = cart.clone();
+            self.phase = Phase::Playing { cart };
+        }
         // Inserting as well as Playing, so a slot with no core behind it can still be
         // emptied: that is the only way to watch the travel more than once.
         let platform = self.game_platform().unwrap_or_default();
@@ -3244,6 +3362,10 @@ impl App {
         // An eject asked for is not an eject refused, whatever was refused a moment ago.
         self.refusal = None;
         self.refused_from = None;
+        // The shelf comes back under the eject: settle so a wrap/letter jump left mid-flight
+        // does not become the first motion the user sees on the carousel.
+        self.shelf.settle_here();
+        self.platform = None;
         self.phase = Phase::Ejecting {
             cart,
             t: -EJECT_HOLD_S,

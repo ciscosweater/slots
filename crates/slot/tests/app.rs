@@ -8,8 +8,8 @@ use slot::audio::Sfx;
 use slot::session::Session;
 use slot_input::{Action, Btn, RawEvent};
 use slot_store::{
-    read_favorites, read_last_shelf, read_lcd, read_pixelify, read_recents, read_slot_state,
-    write_slot_state, Cart, Core, SlotState,
+    read_favorites, read_last_shelf, read_lcd, read_pixelify, read_recents, write_slot_state, Cart,
+    Core, SlotState,
 };
 use slot_ui::{
     board_at, grown, lid_at, on_board, opening, shelf_cart, Draw, Placed, Printed, TexId, Toast,
@@ -750,19 +750,33 @@ fn the_recents_category_survives_a_reboot() {
 #[test]
 fn x_toggles_the_persistent_lcd_effect() {
     let (d, mut app) = on_shelf(&["Advance", "Boktai"]);
+    // ALL does not own display writes; the GBA tab does.
+    app.apply(Action::FfStart);
+    app.apply(Action::FfStart);
+    assert_eq!(app.shelf_category(), 2);
     assert!(app.lcd_enabled());
 
     app.apply(Action::GbaDown(Btn::X));
     assert!(!app.lcd_enabled());
     assert_eq!(app.toast(), Some(Toast::LcdOff));
-    assert!(!read_lcd(d.path()));
+    assert!(
+        !slot_store::resolve_display(
+            d.path(),
+            slot_store::Platform::Gba,
+            None,
+            slot_store::DisplayPrefs::built_in(),
+        )
+        .lcd
+    );
+    assert!(read_lcd(d.path()), "legacy lcd.txt stays as the fallback");
 
     let mut rebooted = App::boot(d.path());
+    // Last shelf was the GBA tab, so boot resolves that platform default.
+    assert_eq!(rebooted.shelf_category(), 2);
     assert!(!rebooted.lcd_enabled());
     rebooted.apply(Action::GbaDown(Btn::X));
     assert!(rebooted.lcd_enabled());
     assert_eq!(rebooted.toast(), Some(Toast::LcdOn));
-    assert!(read_lcd(d.path()));
 }
 
 #[test]
@@ -779,12 +793,29 @@ fn y_toggles_colour_correction_with_a_toast_while_playing() {
     app.apply(Action::GbaDown(Btn::Y));
     assert!(app.colour_correction());
     assert_eq!(app.toast(), Some(Toast::ColourOn));
-    assert!(read_slot_state(d.path()).colour_correction);
+    let stem = app.seated_cart().map(|c| c.stem.clone()).unwrap();
+    assert!(
+        slot_store::resolve_display(
+            d.path(),
+            slot_store::Platform::Gba,
+            Some(&stem),
+            slot_store::DisplayPrefs::built_in(),
+        )
+        .colour
+    );
 
     app.apply(Action::GbaDown(Btn::Y));
     assert!(!app.colour_correction());
     assert_eq!(app.toast(), Some(Toast::ColourOff));
-    assert!(!read_slot_state(d.path()).colour_correction);
+    assert!(
+        !slot_store::resolve_display(
+            d.path(),
+            slot_store::Platform::Gba,
+            Some(&stem),
+            slot_store::DisplayPrefs::built_in(),
+        )
+        .colour
+    );
 }
 
 #[test]

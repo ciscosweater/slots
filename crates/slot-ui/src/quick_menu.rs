@@ -49,11 +49,11 @@ impl QuickRow {
         QuickRow::About,
     ];
 
-    /// In-game display settings. Callers append `Picture` for Game Boy carts.
-    pub const PLAYING: [QuickRow; 3] = [
+    /// In-game display settings shared by every platform. Overlay and Picture are appended
+    /// only for Game Boy carts.
+    pub const PLAYING: [QuickRow; 2] = [
         QuickRow::LcdEffect,
         QuickRow::ColourCorrection,
-        QuickRow::Overlay,
     ];
 
     /// Position in `LABELS`, which is the order faces are uploaded in.
@@ -305,9 +305,9 @@ pub struct QuickMenu<'a> {
     pub over_game: bool,
 }
 
-/// How much of the opening colour sits over a paused game. Opaque enough for the type to
-/// read, open enough that the picture behind it is still the thing being adjusted.
-const PLAY_SCRIM: f32 = 0.78;
+/// How much of the opening colour sits over a paused game. Keep this well under opaque —
+/// the near-black opening at high alpha reads as a solid panel, which was the bug.
+const PLAY_SCRIM: f32 = 0.48;
 
 impl QuickMenu<'_> {
     pub fn draw(&self, out: &mut Vec<Draw>) {

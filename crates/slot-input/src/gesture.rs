@@ -160,7 +160,8 @@ impl Gestures {
     }
 
     /// Enable or disable double-tap latching on R2. When disabled (e.g. on the shelf/menu),
-    /// every press is purely momentary and successive taps are never swallowed.
+    /// every press is purely momentary and successive taps are never swallowed. Rewind is
+    /// cleared with it: an L2 held through an eject must not keep blocking R2 on the shelf.
     pub fn set_ff_latch(&mut self, enabled: bool) {
         self.ff_latch_enabled = enabled;
         if !enabled {
@@ -168,6 +169,7 @@ impl Gestures {
             self.ff_latching_press = false;
             self.ff_on = false;
             self.r2_last_release = None;
+            self.rewinding = false;
         }
     }
 

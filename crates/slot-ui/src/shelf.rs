@@ -501,8 +501,15 @@ impl Shelf {
             return;
         }
         self.index = index;
-        self.scroll = index as f32;
-        self.ride = index as f32;
+        self.settle_here();
+    }
+
+    /// Snap the spring onto the selected cart and drop any held direction. Used when the
+    /// shelf comes back into view after a game, so a wrap left mid-flight does not survive
+    /// the eject as a row that jumps the wrong way on the first press.
+    pub fn settle_here(&mut self) {
+        self.scroll = self.index as f32;
+        self.ride = self.index as f32;
         self.vel = 0.0;
         self.held = None;
     }
@@ -514,10 +521,7 @@ impl Shelf {
             return false;
         };
         self.index = index;
-        self.scroll = index as f32;
-        self.ride = index as f32;
-        self.vel = 0.0;
-        self.held = None;
+        self.settle_here();
         true
     }
 

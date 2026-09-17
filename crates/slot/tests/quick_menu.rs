@@ -89,8 +89,7 @@ fn menu_over_a_game_opens_display_settings_and_b_resumes_playing() {
     assert!(a.play_settings_open());
     for want in [
         QuickRow::ColourCorrection,
-        QuickRow::Overlay,
-        QuickRow::Overlay,
+        QuickRow::ColourCorrection,
     ] {
         press(&mut a, Btn::Down);
         assert_eq!(a.quick_menu(), Some(want));
@@ -98,6 +97,36 @@ fn menu_over_a_game_opens_display_settings_and_b_resumes_playing() {
     a.apply(Action::GbaDown(Btn::B));
     assert!(matches!(a.phase(), Phase::Playing { .. }));
     assert_eq!(a.seated_cart().map(|c| c.stem.as_str()), Some("Emerald"));
+}
+
+#[test]
+fn menu_hold_ejects_from_play_settings() {
+    let d = tmp_root_with_carts(&["Emerald", "Fusion"]);
+    let mut a = app_playing_in(d.path(), "Emerald");
+    a.apply(Action::QuickMenu);
+    assert!(a.play_settings_open());
+    a.apply(Action::Eject);
+    assert!(
+        matches!(a.phase(), Phase::Ejecting { .. }),
+        "MENU-hold over display settings did not eject: {:?}",
+        a.phase()
+    );
+}
+
+#[test]
+fn menu_over_a_gba_game_omits_overlay_and_picture() {
+    let d = tmp_root_with_carts(&["Emerald", "Fusion"]);
+    let mut a = app_playing_in(d.path(), "Emerald");
+    a.apply(Action::QuickMenu);
+    assert_eq!(a.quick_menu(), Some(QuickRow::LcdEffect));
+    press(&mut a, Btn::Down);
+    assert_eq!(a.quick_menu(), Some(QuickRow::ColourCorrection));
+    press(&mut a, Btn::Down);
+    assert_eq!(
+        a.quick_menu(),
+        Some(QuickRow::ColourCorrection),
+        "GBA must not grow GB Overlay or Picture rows"
+    );
 }
 
 #[test]
@@ -126,6 +155,14 @@ fn menu_over_a_game_draws_the_paused_frame_under_a_scrim() {
         })
         .expect("the menu drew no translucent ground");
     assert!(scrim > game, "the scrim was not over the game");
+    let Draw::Rect { colour, .. } = out[scrim] else {
+        unreachable!()
+    };
+    assert!(
+        (colour[3] - 0.48).abs() < 0.02,
+        "scrim alpha {} still reads as a solid panel",
+        colour[3]
+    );
 }
 
 #[test]
@@ -357,6 +394,7 @@ fn brightness_and_volume_still_answer_over_the_quick_menu() {
 #[test]
 fn colour_correction_flips_on_either_arrow_and_saves() {
     let (d, mut a, _) = on_carousel();
+    go_to_console_tab(&mut a, 2);
     open_at(&mut a, QuickRow::ColourCorrection);
     assert!(!a.colour_correction());
     assert_eq!(
@@ -371,7 +409,16 @@ fn colour_correction_flips_on_either_arrow_and_saves() {
     ] {
         press(&mut a, btn);
         assert_eq!(a.colour_correction(), want);
-        assert_eq!(read_slot_state(d.path()).colour_correction, want);
+        assert_eq!(
+            slot_store::resolve_display(
+                d.path(),
+                slot_store::Platform::Gba,
+                None,
+                slot_store::DisplayPrefs::built_in(),
+            )
+            .colour,
+            want
+        );
         assert_eq!(
             a.quick_value(QuickRow::ColourCorrection),
             Some(QuickValue::flag(want))
@@ -382,10 +429,19 @@ fn colour_correction_flips_on_either_arrow_and_saves() {
 #[test]
 fn colour_correction_leaves_the_settings_around_it_alone() {
     let (d, mut a, _) = on_carousel();
+    go_to_console_tab(&mut a, 2);
     open_at(&mut a, QuickRow::ColourCorrection);
     press(&mut a, Btn::Right);
     let s = read_slot_state(d.path());
-    assert!(s.colour_correction);
+    assert!(
+        slot_store::resolve_display(
+            d.path(),
+            slot_store::Platform::Gba,
+            None,
+            slot_store::DisplayPrefs::built_in(),
+        )
+        .colour
+    );
     assert_eq!(
         (s.ff_speed, s.ff_sound, s.rumble),
         (
@@ -514,18 +570,98 @@ fn labels_start_and_values_end_thirty_two_pixels_in() {
 }
 
 #[test]
-fn lcd_effect_flips_on_either_arrow_and_writes_lcd_txt() {
+fn lcd_effect_flips_on_console_tab_and_writes_display_ini() {
     let (d, mut a, _) = on_carousel();
+    go_to_console_tab(&mut a, 2);
     open_at(&mut a, QuickRow::LcdEffect);
     assert!(a.lcd_enabled());
-    assert!(slot_store::read_lcd(d.path()));
     press(&mut a, Btn::Right);
     assert!(!a.lcd_enabled());
-    assert!(!slot_store::read_lcd(d.path()));
+    assert_eq!(
+        slot_store::resolve_display(
+            d.path(),
+            slot_store::Platform::Gba,
+            None,
+            slot_store::DisplayPrefs::built_in(),
+        )
+        .lcd,
+        false
+    );
+    assert!(
+        slot_store::read_lcd(d.path()),
+        "legacy lcd.txt must stay untouched"
+    );
     assert_eq!(a.quick_value(QuickRow::LcdEffect), Some(QuickValue::Off));
     press(&mut a, Btn::Left);
     assert!(a.lcd_enabled());
-    assert!(slot_store::read_lcd(d.path()));
+}
+
+#[test]
+fn lcd_effect_on_all_tab_does_not_write() {
+    let (d, mut a, _) = on_carousel();
+    assert_eq!(a.shelf_category(), 0);
+    open_at(&mut a, QuickRow::LcdEffect);
+    let before = a.lcd_enabled();
+    press(&mut a, Btn::Right);
+    assert_eq!(a.lcd_enabled(), before);
+    assert!(
+        !d.path().join(slot_store::DISPLAY_FILE).exists(),
+        "ALL must not create display.ini"
+    );
+}
+
+#[test]
+fn in_game_lcd_writes_per_game_and_beats_platform() {
+    let d = tmp_root_with_carts(&["Emerald", "Fusion"]);
+    slot_store::write_display_platform(
+        d.path(),
+        slot_store::Platform::Gba,
+        slot_store::DisplayField::Lcd,
+        false,
+    )
+    .unwrap();
+    let mut a = app_playing_in(d.path(), "Emerald");
+    assert!(
+        !a.lcd_enabled(),
+        "insert should resolve platform default"
+    );
+    a.apply(Action::QuickMenu);
+    open_play_row(&mut a, QuickRow::LcdEffect);
+    press(&mut a, Btn::Right);
+    assert!(a.lcd_enabled());
+    assert!(
+        slot_store::resolve_display(
+            d.path(),
+            slot_store::Platform::Gba,
+            Some("Emerald"),
+            slot_store::DisplayPrefs::built_in(),
+        )
+        .lcd
+    );
+    assert!(
+        !slot_store::resolve_display(
+            d.path(),
+            slot_store::Platform::Gba,
+            Some("Fusion"),
+            slot_store::DisplayPrefs::built_in(),
+        )
+        .lcd,
+        "Fusion should still follow the platform default"
+    );
+}
+
+/// Walk category tabs until `category` (2=GBA, 3=GB, 4=GBC).
+fn go_to_console_tab(a: &mut App, category: usize) {
+    for _ in 0..8 {
+        if a.shelf_category() == category {
+            return;
+        }
+        a.apply(Action::FfStart);
+    }
+    panic!(
+        "could not reach category {category}, stuck on {}",
+        a.shelf_category()
+    );
 }
 
 #[test]

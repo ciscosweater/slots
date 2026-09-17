@@ -423,3 +423,19 @@ fn disabling_r2_latching_clears_a_latch_in_progress() {
     assert_eq!(g.feed(Down(R2), 200), vec![FfStart]);
     assert_eq!(g.feed(Up(R2), 240), vec![FfStop]);
 }
+
+#[test]
+fn leaving_the_game_clears_rewind_so_r2_is_a_category_key_again() {
+    let mut g = Gestures::new();
+    assert_eq!(g.feed(Down(L2), 0), vec![RewindStart]);
+    // Eject / shelf: latch off while L2 is still physically down.
+    g.set_ff_latch(false);
+    assert_eq!(
+        g.feed(Down(R2), 50),
+        vec![FfStart],
+        "a rewind held through eject still blocked R2"
+    );
+    assert_eq!(g.feed(Up(R2), 90), vec![FfStop]);
+    // Stale L2 up must not explode once rewind was cleared for us.
+    assert!(g.feed(Up(L2), 100).is_empty());
+}
