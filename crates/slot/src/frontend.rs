@@ -237,7 +237,7 @@ impl Frontend {
                 self.gbc_overlay =
                     upload_png(compositor, include_bytes!("../../../jeltron/GB_Color.png"));
                 self.upload_placeholders(compositor);
-                let favorite = word_face("Favorites");
+                let favorite = title_face("no favorite games");
                 let favorite = Printed::new(
                     compositor.create_texture(favorite.w, favorite.h, &favorite.rgba),
                     favorite.w,
@@ -275,11 +275,11 @@ impl Frontend {
                 self.static_upload_stage = 1;
             }
             1 => {
-                let category_faces = (0..5)
+                let category_faces = (0..6)
                     .map(|category| {
                         let face = category_tab_face(category);
                         // Pixel chips need nearest upload; glyphs are fine either way.
-                        let tex = if category >= 2 {
+                        let tex = if (2..=4).contains(&category) {
                             compositor.create_texture_nearest(face.w, face.h, &face.rgba)
                         } else {
                             compositor.create_texture(face.w, face.h, &face.rgba)
@@ -587,6 +587,7 @@ impl Frontend {
         // Set every frame rather than on the edge: the grade is part of the final blit, so
         // it has to be right whether or not anything just changed it.
         compositor.set_blue_light(self.session.app().blue_light());
+        compositor.set_display_brightness(self.session.app().brightness_gain());
         compositor.set_lcd(self.session.app().lcd_enabled());
         compositor.set_shake(self.session.app().screen_shake());
         compositor.set_screen_power(self.session.app().screen_power());

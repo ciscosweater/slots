@@ -11,7 +11,7 @@ use slot_store::{
     resolve_display, touch_recent, write_display_field, write_favorites, write_last_shelf,
     write_pixelify, write_recents, write_slot_state, Cart, Core, DisplayField, DisplayPrefs,
     DisplayTarget, FaceButtons, LastShelf, Platform, SlotState, StateEntry, StateRing, Theme,
-    BLUE_LIGHT_MAX, BRIGHTNESS_MAX, FF_SPEEDS, RING_MAX, VOLUME_MAX,
+    BLUE_LIGHT_MAX, FF_SPEEDS, RING_MAX, VOLUME_MAX,
 };
 use slot_ui::{
     board_at, board_zoom, draw_backdrop, draw_empty_slot, draw_footer, draw_printed, draw_sticker,
@@ -1230,13 +1230,13 @@ impl App {
             tab_x += face.w as f32 + CATEGORY_GAP;
         }
         if self.shelf.carts.is_empty() {
-            let caption = if self.shelf.category() == 1 {
-                self.empty_recents_caption
-            } else {
-                self.empty_caption
+            let caption = match self.shelf.category() {
+                1 => self.empty_recents_caption,
+                5 => self.favorite_caption,
+                _ => self.empty_caption,
             };
             draw_printed((OUT_W as f32 - caption.w as f32) / 2.0, 316.0, caption, out);
-            if self.shelf.category() == 1 {
+            if matches!(self.shelf.category(), 1 | 5) {
                 if let Some((tex, w)) = self.empty_recents_hint {
                     out.push(Draw::Tex {
                         x: ((OUT_W as f32 - w as f32) / 2.0).round(),
@@ -1414,7 +1414,7 @@ impl App {
     /// The panel comes up at the level the card remembers rather than at whatever the
     /// kernel left it at.
     pub fn set_power(&mut self, mut power: Power) {
-        power.set_backlight(self.state.brightness);
+        power.set_backlight(hardware_brightness(self.state.brightness));
         // The device's own clock, which the host's stands in for. Boot has nothing better to
         // seed the picker from, so a device with a live RTC only gets its confirmation here.
         // The first moment the device's own clock can be asked, and so the first moment a
@@ -2137,8 +2137,8 @@ impl App {
         }
         let s = &self.state;
         let (kind, value) = match action {
-            Action::BrightnessUp => (HudKind::Brightness, up(s.brightness, 1, BRIGHTNESS_MAX)),
-            Action::BrightnessDown => (HudKind::Brightness, s.brightness.saturating_sub(1)),
+            Action::BrightnessUp => (HudKind::Brightness, brightness_up(s.brightness)),
+            Action::BrightnessDown => (HudKind::Brightness, brightness_down(s.brightness)),
             Action::BlueLightUp => (HudKind::BlueLight, up(s.blue_light, 1, BLUE_LIGHT_MAX)),
             Action::BlueLightDown => (HudKind::BlueLight, s.blue_light.saturating_sub(1)),
             Action::VolumeUp => (HudKind::Volume, up(s.volume, VOLUME_STEP, VOLUME_MAX)),
@@ -2162,7 +2162,7 @@ impl App {
         let (shown, now) = (self.hud_value(kind, value), self.now());
         self.hud.show(kind, shown, self.state.muted, now);
         if let (HudKind::Brightness, Some(power)) = (kind, &mut self.power) {
-            power.set_backlight(value);
+            power.set_backlight(hardware_brightness(value));
         }
         // A key held against an end would otherwise rewrite the file at the repeat rate.
         if moved || unmuted {
@@ -2207,6 +2207,7 @@ impl App {
     fn hud_value(&self, kind: HudKind, value: u8) -> u8 {
         match kind {
             HudKind::Volume => self.output_volume(),
+            HudKind::Brightness => brightness_hud_value(value),
             _ => value,
         }
     }
@@ -2235,6 +2236,12 @@ impl App {
 
     pub fn blue_light(&self) -> u8 {
         self.state.blue_light
+    }
+
+    /// Gain applied by the final compositor pass. Values below the panel's physical minimum
+    /// keep the backlight at its lowest lit step and dim the already-rendered image instead.
+    pub fn brightness_gain(&self) -> f32 {
+        brightness_gain(self.state.brightness)
     }
 
     /// The level the user chose, which a mute does not touch.
@@ -4361,6 +4368,56 @@ fn trusted_write(
         None
     };
     (state, sav)
+}
+
+/// The existing 0..16 values remain the physical backlight levels. The four values above them
+/// are software-only night levels, ordered so the ordinary up/down gesture can walk continuously
+/// from off to the hardware minimum and then through the rest of the physical range.
+const NIGHT_FIRST: u8 = 17;
+const NIGHT_LAST: u8 = 20;
+
+fn brightness_up(level: u8) -> u8 {
+    match level {
+        0 => NIGHT_FIRST,
+        NIGHT_LAST => 1,
+        NIGHT_FIRST..=19 => level + 1,
+        _ => up(level, 1, 16),
+    }
+}
+
+fn brightness_down(level: u8) -> u8 {
+    match level {
+        1 => NIGHT_LAST,
+        NIGHT_FIRST => 0,
+        18..=NIGHT_LAST => level - 1,
+        _ => level.saturating_sub(1),
+    }
+}
+
+fn hardware_brightness(level: u8) -> u8 {
+    match level {
+        0 => 0,
+        NIGHT_FIRST..=NIGHT_LAST => 1,
+        level => level.min(16),
+    }
+}
+
+fn brightness_gain(level: u8) -> f32 {
+    match level {
+        17 => 0.16,
+        18 => 0.34,
+        19 => 0.54,
+        20 => 0.74,
+        _ => 1.0,
+    }
+}
+
+fn brightness_hud_value(level: u8) -> u8 {
+    match level {
+        0 => 0,
+        NIGHT_FIRST..=NIGHT_LAST => level - NIGHT_FIRST + 1,
+        level => level.saturating_add(NIGHT_LAST - NIGHT_FIRST + 1),
+    }
 }
 
 fn up(level: u8, step: u8, max: u8) -> u8 {

@@ -7,6 +7,7 @@ use common::{boot, tmp_root_with_carts};
 use slot::app::{App, Phase};
 use slot_input::Action;
 use slot_store::{read_slot_state, write_slot_state, Platform, SlotState};
+use slot_ui::Draw;
 
 fn seated(cart: &str) -> SlotState {
     SlotState {
@@ -173,10 +174,14 @@ fn a_resume_draws_no_shelf_but_a_chosen_insert_does() {
 
     let (resume, _d1) = seated();
     let (pick, _d2) = chosen();
-    let (r, p) = (draw_count(&resume), draw_count(&pick));
+    let r = draw_count(&resume);
     assert!(
-        p > r,
-        "a resume drew {r} and a chosen insert {p}: the shelf is on screen for both"
+        !draws_shelf_neighbor(&resume),
+        "a resumed cart drew a shelf neighbor"
+    );
+    assert!(
+        draws_shelf_neighbor(&pick),
+        "a chosen insert did not draw a shelf neighbor"
     );
 
     // And it stays absent for the whole insert, not just the first frame.
@@ -194,6 +199,17 @@ fn draw_count(a: &App) -> usize {
     let mut out = Vec::new();
     a.draw(&mut out);
     out.len()
+}
+
+fn draws_shelf_neighbor(a: &App) -> bool {
+    let mut out = Vec::new();
+    a.draw(&mut out);
+    out.iter().any(|draw| {
+        matches!(
+            draw,
+            Draw::Rect { x, y, h, .. } if *x > 500.0 && *y < 350.0 && *h > 100.0
+        )
+    })
 }
 
 /// `App::boot` is the only caller of `crate::root::migrate`. Every other migration test

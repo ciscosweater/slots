@@ -3,7 +3,9 @@ use std::path::{Path, PathBuf};
 use crate::atomic::atomic_write;
 use crate::platform::Platform;
 
-pub const BRIGHTNESS_MAX: u8 = 16;
+/// Values 0..16 are physical backlight steps. Values 17..20 are software-only night steps,
+/// rendered below the panel's lowest non-zero hardware value.
+pub const BRIGHTNESS_MAX: u8 = 20;
 pub const BLUE_LIGHT_MAX: u8 = 9;
 pub const VOLUME_MAX: u8 = 100;
 
@@ -188,7 +190,8 @@ fn parse(text: &str) -> Option<SlotState> {
             "cart" => cart = Some(value.to_string()),
             "cart_platform" => cart_platform = platform_value(value),
             // Version 1 had ten positions. Keep their physical brightness on upgrade while
-            // version 2 adds intermediate night-time levels between them.
+            // version 2 adds intermediate night-time levels, including software-only levels at
+            // the bottom of the range.
             "brightness" => brightness = Some(value.parse::<u8>().ok()?),
             "blue_light" => blue_light = Some(level(value, BLUE_LIGHT_MAX)?),
             "volume" => volume = Some(level(value, VOLUME_MAX)?),

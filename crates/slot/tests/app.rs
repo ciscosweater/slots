@@ -660,6 +660,26 @@ fn y_toggles_a_persistent_favorite_and_moves_it_to_the_front() {
 }
 
 #[test]
+fn the_favorites_tab_filters_the_shelf_and_removes_a_cart_immediately() {
+    let (d, mut app) = on_shelf(&["Advance", "Boktai", "Crash"]);
+    app.apply(Action::GbaDown(Btn::Y));
+    assert!(read_favorites(d.path()).contains("Advance"));
+
+    // ALL -> REC -> GBA -> FAVORITES. GB and GBC are skipped because this card has none.
+    for _ in 0..3 {
+        app.apply(Action::FfStart);
+    }
+    assert_eq!(app.shelf_category(), 5);
+    assert_eq!(app.shelf_total(), 1);
+    assert_eq!(app.selected_stem(), Some("Advance"));
+
+    app.apply(Action::GbaDown(Btn::Y));
+    assert_eq!(app.shelf_total(), 0);
+    assert_eq!(app.toast(), Some(Toast::Unfavorited));
+    assert!(read_favorites(d.path()).is_empty());
+}
+
+#[test]
 fn the_shelf_selection_survives_a_reboot_and_a_render() {
     let (d, mut app) = on_shelf(&["Advance", "Boktai", "Crash"]);
     app.apply(Action::GbaDown(Btn::Right));
@@ -2132,14 +2152,14 @@ fn r2_rapid_taps_on_shelf_advance_category_without_swallowing() {
     // Tap 2: RECENTS -> GBA
     s.feed([RawEvent::Down(Btn::R2), RawEvent::Up(Btn::R2)], 200);
     assert_eq!(s.app().shelf_category(), 2);
-    // Tap 3: GBA stays put (no wrap); previously a latched FF would have swallowed the next tap
+    // Tap 3: GBA -> FAVORITES. The new tab is available even when it is empty.
     s.feed([RawEvent::Down(Btn::R2), RawEvent::Up(Btn::R2)], 300);
-    assert_eq!(s.app().shelf_category(), 2);
-    // Tap 4 still works after the end-stop: L2 back, then R2 forward again
+    assert_eq!(s.app().shelf_category(), 5);
+    // Tap 4 still works after the new tab: L2 back, then R2 forward again
     s.feed([RawEvent::Down(Btn::L2), RawEvent::Up(Btn::L2)], 400);
-    assert_eq!(s.app().shelf_category(), 1);
-    s.feed([RawEvent::Down(Btn::R2), RawEvent::Up(Btn::R2)], 500);
     assert_eq!(s.app().shelf_category(), 2);
+    s.feed([RawEvent::Down(Btn::R2), RawEvent::Up(Btn::R2)], 500);
+    assert_eq!(s.app().shelf_category(), 5);
 }
 
 #[test]

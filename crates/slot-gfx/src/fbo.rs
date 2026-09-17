@@ -18,6 +18,7 @@ pub struct Compositor {
     blit: gl::types::GLuint,
     u_gain: gl::types::GLint,
     gain: [f32; 3],
+    display_brightness: f32,
     shake: f32,
     quad: Quad,
     game: GamePass,
@@ -59,6 +60,7 @@ impl Compositor {
                 blit,
                 u_gain,
                 gain: blue_light_gain(0),
+                display_brightness: 1.0,
                 shake: 0.0,
                 quad: Quad::new(),
                 game: GamePass::new()?,
@@ -113,6 +115,13 @@ impl Compositor {
 
     pub fn set_blue_light(&mut self, step: u8) {
         self.gain = blue_light_gain(step);
+    }
+
+    /// Gain for the whole presented image. Unlike the game pass' power animation this affects
+    /// the game, shelf, HUD and every overlay together, which makes it suitable for levels below
+    /// the backlight's lowest non-zero hardware step.
+    pub fn set_display_brightness(&mut self, gain: f32) {
+        self.display_brightness = gain.clamp(0.0, 1.0);
     }
 
     /// 0.0 dark, 1.0 fully on. Scales and brightens the game layer, nothing else: the chrome
@@ -184,7 +193,12 @@ impl Compositor {
             gl::UseProgram(self.blit);
             gl::ActiveTexture(gl::TEXTURE0);
             gl::BindTexture(gl::TEXTURE_2D, self.tex);
-            gl::Uniform3f(self.u_gain, self.gain[0], self.gain[1], self.gain[2]);
+            gl::Uniform3f(
+                self.u_gain,
+                self.gain[0] * self.display_brightness,
+                self.gain[1] * self.display_brightness,
+                self.gain[2] * self.display_brightness,
+            );
         }
         self.quad.draw();
     }

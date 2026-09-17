@@ -186,11 +186,11 @@ fn categories_cycle_and_filter_by_platform() {
     shelf.next_category();
     assert_eq!(
         shelf.category(),
-        4,
-        "next category stops at the last available tab"
+        5,
+        "next category reaches the favorites tab"
     );
     shelf.previous_category();
-    assert_eq!(shelf.category(), 3);
+    assert_eq!(shelf.category(), 4);
     while shelf.category() > 0 {
         shelf.previous_category();
     }
@@ -222,6 +222,28 @@ fn favorites_do_not_override_recent_order() {
 }
 
 #[test]
+fn favorites_category_only_shows_favorited_carts_and_rebuilds_on_toggle() {
+    use std::collections::BTreeSet;
+
+    let mut shelf = shelf_with(3);
+    let favorites = BTreeSet::from(["Game 0".to_string(), "Game 2".to_string()]);
+    shelf.sort_by_favorites(&favorites);
+    shelf.set_category(5);
+    assert_eq!(
+        shelf
+            .carts
+            .iter()
+            .map(|cart| cart.stem.as_str())
+            .collect::<Vec<_>>(),
+        ["Game 0", "Game 2"]
+    );
+
+    shelf.sort_by_favorites(&BTreeSet::from(["Game 2".to_string()]));
+    assert_eq!(shelf.carts.len(), 1);
+    assert_eq!(shelf.carts[0].stem, "Game 2");
+}
+
+#[test]
 fn platform_categories_without_roms_are_skipped() {
     let mut shelf = shelf_with(3);
     shelf.next_category();
@@ -231,9 +253,11 @@ fn platform_categories_without_roms_are_skipped() {
     shelf.next_category();
     assert_eq!(
         shelf.category(),
-        2,
-        "empty GB and GBC were skipped and the end does not wrap"
+        5,
+        "empty GB and GBC were skipped and favorites remains available"
     );
+    shelf.previous_category();
+    assert_eq!(shelf.category(), 2);
     shelf.previous_category();
     assert_eq!(shelf.category(), 1);
     shelf.previous_category();

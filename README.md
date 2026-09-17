@@ -182,7 +182,7 @@ Emulator` palette, while GBC uses Gambatte's GBC colour correction.
 |---|---|
 | `L` / `R` | Browse the carousel |
 | `L1` / `R1` | Jump to the previous/next letter |
-| `L2` / `R2` | Previous/next category: `ALL`, `REC`, `GBA`, `GB`, `GBC` |
+| `L2` / `R2` | Previous/next category: `ALL`, `REC`, `GBA`, `GB`, `GBC`, `FAVORITES` |
 | `SELECT` | Toggle Pixelify and the original label font |
 | `Y` | Add or remove the game from favorites |
 | `X` | Toggle the LCD effect |
@@ -191,6 +191,10 @@ Emulator` palette, while GBC uses Gambatte's GBC colour correction.
 | `MENU` | Open the quick menu |
 | Quick menu | `Up` / `Down` select; `Left` / `Right` change values; `B` / `MENU` close; `A` opens `Date & Time` or `About` |
 | `START` | Choose which GBA core runs the cart |
+
+Brightness keeps four additional software-only night levels below the panel's lowest non-zero
+hardware step. These levels dim the final rendered image while leaving level `0` as a true panel
+off state.
 
 ### In game
 

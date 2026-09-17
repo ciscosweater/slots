@@ -135,7 +135,8 @@ pub fn mark_face(platform: Platform) -> CartFace {
     platform_face(platform, MARK_W, MARK_H)
 }
 
-/// Shelf category tabs: ALL / REC as symbols, GBA / GB / GBC as the coloured pixel chips.
+/// Shelf category tabs: ALL / REC / FAVORITES as symbols, GBA / GB / GBC as the coloured pixel
+/// chips.
 pub fn category_tab_face(category: usize) -> UndoFace {
     let face = match category {
         0 => glyph_tab('\u{f00a}'), // th / grid — the whole library
@@ -143,6 +144,7 @@ pub fn category_tab_face(category: usize) -> UndoFace {
         2 => tab_png(TAB_GBA_PNG),
         3 => tab_png(TAB_GB_PNG),
         4 => tab_png(TAB_GBC_PNG),
+        5 => glyph_tab('\u{f005}'), // star — favorites
         _ => CartFace {
             rgba: Vec::new(),
             w: 0,
@@ -302,7 +304,7 @@ mod tests {
 
     #[test]
     fn every_category_tab_has_ink() {
-        for category in 0..5 {
+        for category in 0..6 {
             let face = category_tab_face(category);
             assert!(face.w > 0 && face.h > 0, "category {category} has no box");
             let inked = face.rgba.chunks_exact(4).filter(|px| px[3] > 0).count();

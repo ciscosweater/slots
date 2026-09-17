@@ -21,6 +21,34 @@ fn levels_clamp_and_persist() {
 }
 
 #[test]
+fn brightness_walks_through_software_night_levels_below_the_hardware_floor() {
+    let d = tmp_root_with_carts(&["Emerald"]);
+    let mut a = boot(d.path());
+
+    // The default is 5. Walk down to the physical minimum, then into the four software levels.
+    for _ in 0..4 {
+        a.apply(Action::BrightnessDown);
+    }
+    assert_eq!(read_slot_state(d.path()).brightness, 1);
+    a.apply(Action::BrightnessDown);
+    assert_eq!(read_slot_state(d.path()).brightness, 20);
+    assert!(a.brightness_gain() < 1.0);
+
+    // The dimmest software level still keeps the panel physically lit; the next step is off.
+    for _ in 0..3 {
+        a.apply(Action::BrightnessDown);
+    }
+    assert_eq!(read_slot_state(d.path()).brightness, 17);
+    a.apply(Action::BrightnessDown);
+    assert_eq!(read_slot_state(d.path()).brightness, 0);
+    assert_eq!(a.brightness_gain(), 1.0);
+
+    a.apply(Action::BrightnessUp);
+    assert_eq!(read_slot_state(d.path()).brightness, 17);
+    assert!(a.brightness_gain() < 1.0);
+}
+
+#[test]
 fn volume_moves_five_per_press() {
     let d = tmp_root_with_carts(&["Emerald"]);
     let mut a = boot(d.path());

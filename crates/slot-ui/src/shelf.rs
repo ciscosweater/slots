@@ -41,7 +41,8 @@ const REPEAT_DELAY_MS: Millis = 400;
 /// Between repeats after that. Fast enough to cross a thirty cart library, slow enough to
 /// stop on one.
 const REPEAT_MS: Millis = 110;
-const CATEGORY_COUNT: usize = 5;
+const CATEGORY_COUNT: usize = 6;
+const FAVORITES_CATEGORY: usize = 5;
 
 fn cart_size(cart: &Cart) -> (u32, u32) {
     match cart.platform {
@@ -262,7 +263,7 @@ impl Shelf {
 
     pub fn category_available(&self, category: usize) -> bool {
         match category {
-            0 | 1 => true,
+            0 | 1 | FAVORITES_CATEGORY => true,
             2 => self
                 .all_carts
                 .iter()
@@ -468,7 +469,11 @@ impl Shelf {
     pub fn sort_by_favorites(&mut self, favorites: &BTreeSet<String>) {
         let selected = self.carts.get(self.index).cloned();
         self.favorites = favorites.clone();
-        self.sort_visible();
+        if self.category == FAVORITES_CATEGORY {
+            self.rebuild_visible();
+        } else {
+            self.sort_visible();
+        }
         self.restore_selection(selected.as_ref());
         self.settle_here();
     }
@@ -792,6 +797,7 @@ impl Shelf {
                     2 => cart.platform == slot_store::Platform::Gba,
                     3 => cart.platform == slot_store::Platform::Gb,
                     4 => cart.platform == slot_store::Platform::Gbc,
+                    FAVORITES_CATEGORY => self.favorites.contains(&cart.stem),
                     _ => false,
                 })
     }
@@ -860,9 +866,14 @@ impl Shelf {
                     .then_with(|| a.stem.cmp(&b.stem))
                     .then_with(|| (a.platform as u8).cmp(&(b.platform as u8)))
             } else {
-                self.favorites
-                    .contains(&b.stem)
-                    .cmp(&self.favorites.contains(&a.stem))
+                let favorite_order = if self.category == FAVORITES_CATEGORY {
+                    std::cmp::Ordering::Equal
+                } else {
+                    self.favorites
+                        .contains(&b.stem)
+                        .cmp(&self.favorites.contains(&a.stem))
+                };
+                favorite_order
                     .then_with(|| a.stem.cmp(&b.stem))
                     .then_with(|| (a.platform as u8).cmp(&(b.platform as u8)))
             }
