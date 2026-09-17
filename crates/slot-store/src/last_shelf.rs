@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::atomic_write;
+use crate::platform::Platform;
 
 /// The cart highlighted the last time the shelf was used. This is deliberately separate from
 /// `slot.state`'s `cart`: that field describes the cart physically seated in the slot, while this
@@ -13,6 +14,9 @@ pub struct LastShelf {
     /// Shelf category tab index (ALL / REC / GBA / GB / GBC). `None` means the file did not
     /// say, which is every card written before categories were persisted.
     pub category: Option<usize>,
+    /// Platform of the highlighted cart. `None` on files written before the highlight stored
+    /// one, in which case the first matching stem is used.
+    pub platform: Option<Platform>,
 }
 
 fn path(root: &Path) -> PathBuf {
@@ -20,7 +24,7 @@ fn path(root: &Path) -> PathBuf {
 }
 
 /// Read the last shelf highlight. A one-line file is the historical stem-only form; a
-/// `version=1` file also carries the category tab.
+/// `version=1` file also carries the category tab, and may carry a platform.
 pub fn read_last_shelf(root: &Path) -> LastShelf {
     let Ok(text) = std::fs::read_to_string(path(root)) else {
         return LastShelf::default();
@@ -32,6 +36,7 @@ fn parse(text: &str) -> LastShelf {
     let mut version = None;
     let mut stem = None;
     let mut category = None;
+    let mut platform = None;
     for line in text.lines() {
         let line = line.trim();
         if line.is_empty() {
@@ -46,6 +51,7 @@ fn parse(text: &str) -> LastShelf {
                     }
                 }
                 "category" => category = value.parse::<usize>().ok(),
+                "platform" => platform = Platform::from_dir_name(value),
                 _ => {}
             }
             continue;
@@ -57,8 +63,13 @@ fn parse(text: &str) -> LastShelf {
     }
     if version.is_none() {
         category = None;
+        platform = None;
     }
-    LastShelf { stem, category }
+    LastShelf {
+        stem,
+        category,
+        platform,
+    }
 }
 
 pub fn write_last_shelf(root: &Path, shelf: &LastShelf) -> std::io::Result<()> {
@@ -70,7 +81,10 @@ pub fn write_last_shelf(root: &Path, shelf: &LastShelf) -> std::io::Result<()> {
         std::fs::create_dir_all(parent)?;
     }
     let category = shelf.category.unwrap_or(0);
-    let text = format!("version=1\nstem={stem}\ncategory={category}\n");
+    let mut text = format!("version=1\nstem={stem}\ncategory={category}\n");
+    if let Some(platform) = shelf.platform {
+        text.push_str(&format!("platform={}\n", platform.dir_name()));
+    }
     atomic_write(&path, text.as_bytes())
 }
 
@@ -81,6 +95,7 @@ pub fn write_last_shelf_stem(root: &Path, stem: &str) -> std::io::Result<()> {
         &LastShelf {
             stem: Some(stem.to_owned()),
             category: None,
+            platform: None,
         },
     )
 }

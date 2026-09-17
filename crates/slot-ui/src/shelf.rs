@@ -32,7 +32,7 @@ const OMEGA: f32 = 20.0;
 /// to clear the frame from where it stands.
 const PART: f32 = 130.0;
 
-/// Slots considered either side of the selection. Two reach the edges of a 720 row, the
+/// Slots considered either side of the camera. Two reach the edges of a 720 row, the
 /// third covers the lag while the spring is still catching up with a flick.
 const SLOTS: i32 = 3;
 
@@ -52,6 +52,10 @@ fn cart_size(cart: &Cart) -> (u32, u32) {
 
 fn same_cart(a: &Cart, b: &Cart) -> bool {
     a.platform == b.platform && a.stem == b.stem
+}
+
+fn cart_initial(cart: &Cart) -> Option<char> {
+    cart.stem.chars().next().map(|c| c.to_ascii_uppercase())
 }
 
 /// Printed on the case when `Games/` is empty. Same type as a cart title, not a dialog.
@@ -79,13 +83,9 @@ pub struct Shelf {
     shadow: Option<TexId>,
     gb_shadow: Option<TexId>,
     /// Platform-shaped placeholders used while the real face is being built off-thread. They
-    /// are silhouettes rather than rectangles, so the ring remains legible while it hydrates.
+    /// are silhouettes rather than rectangles, so the row remains legible while it hydrates.
     placeholder: Option<TexId>,
     gb_placeholder: Option<TexId>,
-    /// The presses added up, in the same continuous coordinate `scroll` lives in, so it counts
-    /// laps rather than wrapping. This is what the spring aims at — see `scroll_target` — because
-    /// it is the only thing that remembers which button was pressed once the row has wrapped.
-    ride: f32,
     vel: f32,
     /// The direction being held, when it next repeats, and the repeat count for acceleration.
     held: Option<(i32, Millis, u32)>,
@@ -115,7 +115,6 @@ impl Shelf {
             gb_shadow: None,
             placeholder: None,
             gb_placeholder: None,
-            ride: 0.0,
             vel: 0.0,
             held: None,
             favorites: BTreeSet::new(),
@@ -148,13 +147,12 @@ impl Shelf {
 
     pub fn set_faces(&mut self, faces: Vec<TexId>) {
         let faces = faces.into_iter().map(Some).collect::<Vec<_>>();
-        self.all_faces = faces.clone();
+        self.all_faces = faces;
         self.all_face_sizes = self.all_carts.iter().map(cart_size).collect();
         self.all_complete_artwork = vec![false; self.all_carts.len()];
-        self.faces = faces;
-        self.face_sizes = self.all_face_sizes.clone();
-        self.complete_artwork = vec![false; self.carts.len()];
-        self.set_category(self.category);
+        // Attach faces to the already-filtered row. Rebuilding the category would snap the
+        // spring and cancel a held direction while the user is already browsing.
+        self.sync_visible_assets();
     }
 
     /// Publish one library face while the rest of the shelf still uses cheap colour
@@ -224,19 +222,10 @@ impl Shelf {
         self.all_face_sizes[all_index] = size;
         self.all_complete_artwork[all_index] = complete_artwork;
 
-        // Face building happens asynchronously while the user can already browse. Do not
-        // rebuild the category here: set_category also snaps the spring, clears its velocity,
-        // and cancels button-repeat. A late texture upload must only replace the face at the
-        // matching slot, never restart the motion currently visible on screen.
-        if self.faces.len() < self.carts.len() {
-            self.faces.resize(self.carts.len(), None);
-        }
-        if self.face_sizes.len() < self.carts.len() {
-            self.face_sizes = self.carts.iter().map(cart_size).collect();
-        }
-        if self.complete_artwork.len() < self.carts.len() {
-            self.complete_artwork = vec![false; self.carts.len()];
-        }
+        // Face building happens asynchronously while the user can already browse. A late
+        // texture upload must only replace the face at the matching slot, never restart the
+        // motion currently visible on screen.
+        self.ensure_visible_asset_slots();
         if let Some(current_index) = self
             .carts
             .iter()
@@ -269,10 +258,6 @@ impl Shelf {
 
     pub fn category(&self) -> usize {
         self.category
-    }
-
-    pub fn is_linear(&self) -> bool {
-        self.category == 1
     }
 
     pub fn category_available(&self, category: usize) -> bool {
@@ -312,71 +297,25 @@ impl Shelf {
         }
     }
 
-    /// Filename stems in most-recent-first order. Rebuild the current category because a
-    /// game can become recent while its cart is still away from the shelf.
+    /// Filename stems in most-recent-first order. Only the recents tab is rebuilt: becoming
+    /// recent while a game is away from ALL or a platform shelf must not reorder that row
+    /// under the user's feet.
     pub fn set_recents(&mut self, mut recents: Vec<String>) {
         recents.truncate(slot_store::RECENTS_MAX);
         self.recents = recents;
-        self.set_category(self.category);
+        if self.category == 1 {
+            self.set_category(1);
+        }
     }
 
     /// Rebuild the visible row for a category index. Used by boot restore and by the
     /// shoulder category controls.
     pub fn set_category(&mut self, category: usize) {
-        let selected = self.carts.get(self.index).map(|c| c.stem.clone());
+        let selected = self.carts.get(self.index).cloned();
         self.category = category;
-        let wanted = |cart: &Cart| {
-            self.platform_filter
-                .is_none_or(|platform| cart.platform == platform)
-                && (category == 0
-                    || match category {
-                        1 => self.recents.contains(&cart.stem),
-                        2 => cart.platform == slot_store::Platform::Gba,
-                        3 => cart.platform == slot_store::Platform::Gb,
-                        4 => cart.platform == slot_store::Platform::Gbc,
-                        _ => false,
-                    })
-        };
-        self.carts = self
-            .all_carts
-            .iter()
-            .filter(|cart| wanted(cart))
-            .cloned()
-            .collect();
-        self.faces = self
-            .all_carts
-            .iter()
-            .enumerate()
-            .filter(|(_, cart)| wanted(cart))
-            .map(|(i, _)| self.all_faces.get(i).copied().flatten())
-            .collect();
-        self.face_sizes = self
-            .all_carts
-            .iter()
-            .enumerate()
-            .filter(|(_, cart)| wanted(cart))
-            .map(|(i, cart)| {
-                self.all_face_sizes
-                    .get(i)
-                    .copied()
-                    .unwrap_or_else(|| cart_size(cart))
-            })
-            .collect();
-        self.complete_artwork = self
-            .all_carts
-            .iter()
-            .enumerate()
-            .filter(|(_, cart)| wanted(cart))
-            .map(|(i, _)| self.all_complete_artwork.get(i).copied().unwrap_or(false))
-            .collect();
-        self.sort_by_favorites(&self.favorites.clone());
-        self.index = selected
-            .and_then(|stem| self.carts.iter().position(|cart| cart.stem == stem))
-            .unwrap_or(0);
-        self.scroll = self.index as f32;
-        self.ride = self.index as f32;
-        self.vel = 0.0;
-        self.held = None;
+        self.rebuild_visible();
+        self.restore_selection(selected.as_ref());
+        self.settle_here();
     }
 
     /// In `hints` order.
@@ -387,38 +326,26 @@ impl Shelf {
 
     /// Finds a cart and reports the dimensions of the texture that will be drawn for it. A
     /// complete artwork face can have a different height after being fitted to slot width.
+    /// When two platforms share a stem, the highlighted cart wins.
     pub fn find_with_size(&self, stem: &str) -> Option<(&Cart, Option<TexId>, (u32, u32))> {
-        let i = self.carts.iter().position(|c| c.stem == stem)?;
-        let cart = &self.carts[i];
-        let uploaded = self.faces.get(i).copied().flatten();
-        let face = uploaded.or_else(|| {
-            Some(match cart.platform {
-                slot_store::Platform::Gba => self.placeholder?,
-                slot_store::Platform::Gb | slot_store::Platform::Gbc => self.gb_placeholder?,
-            })
-        });
-        let size = if uploaded.is_some() {
-            self.face_sizes
-                .get(i)
-                .copied()
-                .unwrap_or_else(|| cart_size(cart))
-        } else {
-            cart_size(cart)
-        };
-        Some((cart, face, size))
+        let i = self
+            .carts
+            .get(self.index)
+            .filter(|cart| cart.stem == stem)
+            .map(|_| self.index)
+            .or_else(|| self.carts.iter().position(|c| c.stem == stem))?;
+        self.face_at(i)
     }
 
-    /// Carts nearest the current selection first, then the rest of the library. The shelf is a
-    /// ring: the visible tail when index zero is selected is the last cart, so a plain FIFO
-    /// leaves exactly the end of the row as rectangles during boot.
+    /// Carts nearest the current selection first, then the rest of the library. The row is a
+    /// strip: hydrate what is actually on screen before the far end of the queue.
     pub fn face_upload_order(&self) -> Vec<Cart> {
         let mut carts = Vec::with_capacity(self.all_carts.len());
         if !self.carts.is_empty() {
             let n = self.carts.len() as i32;
             let mut offsets = Vec::with_capacity(self.carts.len());
             offsets.push(0);
-            let max_dist = if self.is_linear() { n } else { n / 2 };
-            for distance in 1..=max_dist {
+            for distance in 1..=n {
                 offsets.push(-distance);
                 offsets.push(distance);
             }
@@ -440,8 +367,8 @@ impl Shelf {
         carts
     }
 
-    /// Priority order for asset hydration: visible carts in the ring around the current
-    /// selection first (alternating left/right), followed by off-screen carts. Zero-alloc.
+    /// Priority order for asset hydration: visible carts around the current selection first
+    /// (alternating left/right), followed by off-screen carts. Zero-alloc.
     pub fn cart_upload_priority(&self, stem: &str) -> usize {
         self.cart_upload_priority_for(None, stem)
     }
@@ -462,19 +389,8 @@ impl Shelf {
             if n <= 1 {
                 return 0;
             }
-            if self.is_linear() {
-                let diff = (pos as i32 - self.index as i32).abs();
-                return (diff * 2) as usize;
-            }
-            let diff = (pos as i32 - self.index as i32).rem_euclid(n);
-            let signed = if diff * 2 > n { diff - n } else { diff };
-            if signed == 0 {
-                0
-            } else if signed < 0 {
-                (-signed * 2 - 1) as usize
-            } else {
-                (signed * 2) as usize
-            }
+            let diff = (pos as i32 - self.index as i32).abs();
+            (diff * 2) as usize
         } else if let Some(all_pos) = self
             .all_carts
             .iter()
@@ -495,7 +411,7 @@ impl Shelf {
     }
 
     /// Select by current cart index. This is useful to deterministic callers that already own
-    /// the shelf order; application code should prefer `select_stem` because filters reorder it.
+    /// the shelf order; application code should prefer `select_cart` because filters reorder it.
     pub fn select(&mut self, index: usize) {
         if index >= self.carts.len() {
             return;
@@ -505,19 +421,29 @@ impl Shelf {
     }
 
     /// Snap the spring onto the selected cart and drop any held direction. Used when the
-    /// shelf comes back into view after a game, so a wrap left mid-flight does not survive
-    /// the eject as a row that jumps the wrong way on the first press.
+    /// shelf comes back into view after a game, so a flick mid-flight does not survive the
+    /// eject as a row that jumps the wrong way on the first press.
     pub fn settle_here(&mut self) {
         self.scroll = self.index as f32;
-        self.ride = self.index as f32;
         self.vel = 0.0;
         self.held = None;
     }
 
-    /// Select a cart by its stable filename stem. Indices can change when a category or the
-    /// favourite order is rebuilt, so callers restoring the shelf must use the stem instead.
+    /// Select a cart by its filename stem. Indices can change when a category or the
+    /// favourite order is rebuilt. Equal stems across platforms resolve to the first match;
+    /// callers that know the platform should use `select_cart`.
     pub fn select_stem(&mut self, stem: &str) -> bool {
-        let Some(index) = self.carts.iter().position(|cart| cart.stem == stem) else {
+        self.select_cart(None, stem)
+    }
+
+    /// Select a cart by stem, and platform when it is known. A missing platform falls back to
+    /// the first stem match, which is every card written before the highlight stored one.
+    pub fn select_cart(&mut self, platform: Option<slot_store::Platform>, stem: &str) -> bool {
+        let Some(index) = self
+            .carts
+            .iter()
+            .position(|cart| cart.stem == stem && platform.is_none_or(|p| cart.platform == p))
+        else {
             return false;
         };
         self.index = index;
@@ -525,10 +451,9 @@ impl Shelf {
         true
     }
 
-    /// Move to the first cart whose initial differs from the selected cart's. Carts are
-    /// sorted by stem, so this skips the rest of the current letter in one press. The row is
-    /// circular just like ordinary browsing: right from the last letter reaches the first,
-    /// and left from the first reaches the last.
+    /// Move to the first cart whose initial differs from the selected cart's, staying inside
+    /// the list. Right skips the rest of the current letter. Left lands on the start of the
+    /// current letter, or the previous letter if it is already there. The ends hold.
     pub fn next_letter(&mut self) {
         self.jump_letter(1);
     }
@@ -541,64 +466,11 @@ impl Shelf {
     /// which cart is selected. The jump is immediate because the row itself was reordered;
     /// animating through every cart between the old and new indices would imply browsing.
     pub fn sort_by_favorites(&mut self, favorites: &BTreeSet<String>) {
-        let selected = self.carts.get(self.index).map(|cart| cart.stem.clone());
-        let have_faces = self.faces.len() == self.carts.len();
-        let faces = have_faces.then(|| std::mem::take(&mut self.faces));
-        let sizes = std::mem::take(&mut self.face_sizes);
-        let complete_artwork = std::mem::take(&mut self.complete_artwork);
-        let mut paired: Vec<_> = std::mem::take(&mut self.carts)
-            .into_iter()
-            .enumerate()
-            .map(|(i, cart)| {
-                let size = sizes.get(i).copied().unwrap_or_else(|| cart_size(&cart));
-                let complete_artwork = complete_artwork.get(i).copied().unwrap_or(false);
-                (
-                    cart,
-                    faces
-                        .as_ref()
-                        .and_then(|faces| faces.get(i).copied())
-                        .flatten(),
-                    size,
-                    complete_artwork,
-                )
-            })
-            .collect();
-        paired.sort_by(|(a, _, _, _), (b, _, _, _)| {
-            if self.category == 1 {
-                let rank = |stem: &str| {
-                    self.recents
-                        .iter()
-                        .position(|recent| recent == stem)
-                        .unwrap_or(usize::MAX)
-                };
-                rank(&a.stem).cmp(&rank(&b.stem))
-            } else {
-                favorites
-                    .contains(&b.stem)
-                    .cmp(&favorites.contains(&a.stem))
-                    .then_with(|| a.stem.cmp(&b.stem))
-            }
-        });
-        if self.category == 1 {
-            paired.truncate(slot_store::RECENTS_MAX);
-        }
-        self.carts = paired.iter().map(|(cart, _, _, _)| cart.clone()).collect();
-        if have_faces {
-            self.faces = paired.iter().map(|(_, face, _, _)| *face).collect();
-        }
-        self.face_sizes = paired.iter().map(|(_, _, size, _)| *size).collect();
-        self.complete_artwork = paired
-            .iter()
-            .map(|(_, _, _, complete_artwork)| *complete_artwork)
-            .collect();
-        self.index = selected
-            .and_then(|stem| self.carts.iter().position(|cart| cart.stem == stem))
-            .unwrap_or(0);
-        self.scroll = self.index as f32;
-        self.ride = self.index as f32;
-        self.vel = 0.0;
-        self.held = None;
+        let selected = self.carts.get(self.index).cloned();
         self.favorites = favorites.clone();
+        self.sort_visible();
+        self.restore_selection(selected.as_ref());
+        self.settle_here();
     }
 
     pub fn hold_left(&mut self, now: Millis) {
@@ -662,14 +534,8 @@ impl Shelf {
         if n == 0 {
             return;
         }
-        if self.is_linear() {
-            let next = (self.index as i32 + by).clamp(0, n as i32 - 1);
-            self.index = next as usize;
-            self.ride = self.index as f32;
-        } else {
-            self.index = (self.index as i32 + by).rem_euclid(n as i32) as usize;
-            self.ride += by as f32;
-        }
+        let next = (self.index as i32 + by).clamp(0, n as i32 - 1);
+        self.index = next as usize;
     }
 
     fn jump_letter(&mut self, by: i32) {
@@ -677,92 +543,53 @@ impl Shelf {
         if n < 2 {
             return;
         }
-        if self.is_linear() {
-            let target = if by < 0 { 0 } else { n - 1 };
-            self.index = target;
-            self.ride = target as f32;
+        let initial = |i: usize| cart_initial(&self.carts[i]);
+        let current = initial(self.index);
+        if by > 0 {
+            for i in (self.index + 1)..n {
+                if initial(i) != current {
+                    self.index = i;
+                    self.held = None;
+                    return;
+                }
+            }
+            return;
+        }
+        let mut start = self.index;
+        while start > 0 && initial(start - 1) == current {
+            start -= 1;
+        }
+        if start < self.index {
+            self.index = start;
             self.held = None;
             return;
         }
-        let initial = |i: usize| {
-            self.carts[i]
-                .stem
-                .chars()
-                .next()
-                .map(|c| c.to_ascii_uppercase())
-        };
-        let current = initial(self.index);
-        for distance in 1..n {
-            let mut candidate =
-                (self.index as i32 + by * distance as i32).rem_euclid(n as i32) as usize;
-            if initial(candidate) != current {
-                // Going left first encounters the end of the previous letter's run. Land on
-                // its beginning, matching the first cart R1 reaches when travelling right.
-                if by < 0 {
-                    let letter = initial(candidate);
-                    loop {
-                        let before = (candidate + n - 1) % n;
-                        if before == self.index || initial(before) != letter {
-                            break;
-                        }
-                        candidate = before;
-                    }
-                }
-                self.index = candidate;
-                self.held = None;
-                // Keep `ride` on the short arc after D-pad wraps have carried it off the
-                // bare index, or L1/R1 would send the spring the long way round the row.
-                let from = self.ride;
-                let n_f = n as f32;
-                let shortest = (candidate as f32 - from + n_f / 2.0).rem_euclid(n_f) - n_f / 2.0;
-                self.ride = from + shortest;
-                return;
-            }
+        if start == 0 {
+            return;
         }
+        let letter = initial(start - 1);
+        let mut candidate = start - 1;
+        while candidate > 0 && initial(candidate - 1) == letter {
+            candidate -= 1;
+        }
+        self.index = candidate;
+        self.held = None;
     }
 
-    /// Where the spring is heading, in the continuous coordinate `scroll` lives in. The row is a
-    /// ring, so the selected cart has an image every `n` slots, and the one to head for is the
-    /// one a single press away in the direction that press asked for — never a lap of the row.
-    ///
-    /// Adding the presses up answers it for every length at once. `ride` counts laps instead of
-    /// wrapping, so one press is one slot the way it was pressed whatever the row is doing at the
-    /// time, and the row still never unwinds: a single step round a ring *is* the short way round.
+    /// Where the spring is heading. The row is a strip, so that is always the selected index.
     pub fn scroll_target(&self) -> f32 {
-        let n = self.carts.len();
-        if n == 0 {
-            return 0.0;
-        }
-        if self.is_linear() {
-            return self.index as f32;
-        }
-        let from = self.ride;
-        let n = n as f32;
-        from + (self.index as f32 - from + n / 2.0).rem_euclid(n) - n / 2.0
+        self.index as f32
     }
 
     /// The cart `off` slots right of the selection, or `None` when the row is empty or when this
-    /// slot falls off the end of a row too short to reach it.
-    ///
-    /// A ring of two fills every slot, which means one of the two carts is drawn twice at once.
-    /// One cart stays alone in the middle — repeating it would put three identical faces across a
-    /// row that cannot scroll.
+    /// slot falls off the end of the strip.
     pub fn cart_at_offset(&self, off: i32) -> Option<usize> {
         let n = self.carts.len() as i32;
         if n == 0 {
             return None;
         }
-        if self.is_linear() {
-            let target = self.index as i32 + off;
-            return (target >= 0 && target < n).then_some(target as usize);
-        }
-        let at = |off: i32| (self.index as i32 + off).rem_euclid(n) as usize;
-        if n == 2 {
-            return Some(at(off));
-        }
-        let r = off.rem_euclid(n);
-        let nearest = if r * 2 > n { r - n } else { r };
-        (nearest == off).then(|| at(off))
+        let target = self.index as i32 + off;
+        (target >= 0 && target < n).then_some(target as usize)
     }
 
     pub fn update(&mut self, dt: f32) {
@@ -824,16 +651,21 @@ impl Shelf {
     ) {
         let recede = recede.clamp(0.0, 1.0);
         let dim = dim.clamp(0.0, 1.0);
-        let target = self.scroll_target();
-        for slot in -SLOTS..=SLOTS {
-            let Some(i) = self.cart_at_offset(slot) else {
+        let n = self.carts.len() as i32;
+        if n == 0 {
+            return;
+        }
+        let center = self.scroll.round() as i32;
+        for slot in (center - SLOTS)..=(center + SLOTS) {
+            if slot < 0 || slot >= n {
                 continue;
-            };
+            }
+            let i = slot as usize;
             let cart = &self.carts[i];
             if hidden == Some(cart.stem.as_str()) {
                 continue;
             }
-            let offset = target + slot as f32 - self.scroll;
+            let offset = slot as f32 - self.scroll;
             let t = offset.abs().min(1.0);
             let scale = 1.0 + (SIDE_SCALE - 1.0) * t;
             let alpha = (1.0 + (SIDE_ALPHA - 1.0) * t) * (1.0 - recede);
@@ -856,7 +688,7 @@ impl Shelf {
             }
             let x = x + shake;
             let foot_y = (OUT_H + base_h) as f32 / 2.0;
-            let dip = if slot == 0 {
+            let dip = if i == self.index {
                 (hold_progress * 6.0).round()
             } else {
                 0.0
@@ -949,6 +781,172 @@ impl Shelf {
                 }
             }
         }
+    }
+
+    fn wanted(&self, cart: &Cart) -> bool {
+        self.platform_filter
+            .is_none_or(|platform| cart.platform == platform)
+            && (self.category == 0
+                || match self.category {
+                    1 => self.recents.contains(&cart.stem),
+                    2 => cart.platform == slot_store::Platform::Gba,
+                    3 => cart.platform == slot_store::Platform::Gb,
+                    4 => cart.platform == slot_store::Platform::Gbc,
+                    _ => false,
+                })
+    }
+
+    fn rebuild_visible(&mut self) {
+        let wanted: Vec<usize> = self
+            .all_carts
+            .iter()
+            .enumerate()
+            .filter(|(_, cart)| self.wanted(cart))
+            .map(|(i, _)| i)
+            .collect();
+        self.carts = wanted.iter().map(|&i| self.all_carts[i].clone()).collect();
+        self.faces = wanted
+            .iter()
+            .map(|&i| self.all_faces.get(i).copied().flatten())
+            .collect();
+        self.face_sizes = wanted
+            .iter()
+            .map(|&i| {
+                self.all_face_sizes
+                    .get(i)
+                    .copied()
+                    .unwrap_or_else(|| cart_size(&self.all_carts[i]))
+            })
+            .collect();
+        self.complete_artwork = wanted
+            .iter()
+            .map(|&i| self.all_complete_artwork.get(i).copied().unwrap_or(false))
+            .collect();
+        self.sort_visible();
+    }
+
+    fn sort_visible(&mut self) {
+        let have_faces = self.faces.len() == self.carts.len();
+        let faces = have_faces.then(|| std::mem::take(&mut self.faces));
+        let sizes = std::mem::take(&mut self.face_sizes);
+        let complete_artwork = std::mem::take(&mut self.complete_artwork);
+        let mut paired: Vec<_> = std::mem::take(&mut self.carts)
+            .into_iter()
+            .enumerate()
+            .map(|(i, cart)| {
+                let size = sizes.get(i).copied().unwrap_or_else(|| cart_size(&cart));
+                let complete_artwork = complete_artwork.get(i).copied().unwrap_or(false);
+                (
+                    cart,
+                    faces
+                        .as_ref()
+                        .and_then(|faces| faces.get(i).copied())
+                        .flatten(),
+                    size,
+                    complete_artwork,
+                )
+            })
+            .collect();
+        paired.sort_by(|(a, _, _, _), (b, _, _, _)| {
+            if self.category == 1 {
+                let rank = |stem: &str| {
+                    self.recents
+                        .iter()
+                        .position(|recent| recent == stem)
+                        .unwrap_or(usize::MAX)
+                };
+                rank(&a.stem)
+                    .cmp(&rank(&b.stem))
+                    .then_with(|| a.stem.cmp(&b.stem))
+                    .then_with(|| (a.platform as u8).cmp(&(b.platform as u8)))
+            } else {
+                self.favorites
+                    .contains(&b.stem)
+                    .cmp(&self.favorites.contains(&a.stem))
+                    .then_with(|| a.stem.cmp(&b.stem))
+                    .then_with(|| (a.platform as u8).cmp(&(b.platform as u8)))
+            }
+        });
+        if self.category == 1 {
+            paired.truncate(slot_store::RECENTS_MAX);
+        }
+        self.carts = paired.iter().map(|(cart, _, _, _)| cart.clone()).collect();
+        if have_faces {
+            self.faces = paired.iter().map(|(_, face, _, _)| *face).collect();
+        }
+        self.face_sizes = paired.iter().map(|(_, _, size, _)| *size).collect();
+        self.complete_artwork = paired
+            .iter()
+            .map(|(_, _, _, complete_artwork)| *complete_artwork)
+            .collect();
+    }
+
+    fn restore_selection(&mut self, selected: Option<&Cart>) {
+        self.index = selected
+            .and_then(|want| self.carts.iter().position(|cart| same_cart(cart, want)))
+            .or_else(|| {
+                selected.and_then(|want| self.carts.iter().position(|cart| cart.stem == want.stem))
+            })
+            .unwrap_or(0);
+        if !self.carts.is_empty() {
+            self.index = self.index.min(self.carts.len() - 1);
+        }
+    }
+
+    fn all_index_of(&self, cart: &Cart) -> Option<usize> {
+        self.all_carts.iter().position(|c| same_cart(c, cart))
+    }
+
+    fn sync_visible_assets(&mut self) {
+        self.ensure_visible_asset_slots();
+        for (i, cart) in self.carts.iter().enumerate() {
+            let Some(all_index) = self.all_index_of(cart) else {
+                continue;
+            };
+            self.faces[i] = self.all_faces.get(all_index).copied().flatten();
+            self.face_sizes[i] = self
+                .all_face_sizes
+                .get(all_index)
+                .copied()
+                .unwrap_or_else(|| cart_size(cart));
+            self.complete_artwork[i] = self
+                .all_complete_artwork
+                .get(all_index)
+                .copied()
+                .unwrap_or(false);
+        }
+    }
+
+    fn ensure_visible_asset_slots(&mut self) {
+        if self.faces.len() < self.carts.len() {
+            self.faces.resize(self.carts.len(), None);
+        }
+        if self.face_sizes.len() < self.carts.len() {
+            self.face_sizes = self.carts.iter().map(cart_size).collect();
+        }
+        if self.complete_artwork.len() < self.carts.len() {
+            self.complete_artwork = vec![false; self.carts.len()];
+        }
+    }
+
+    fn face_at(&self, i: usize) -> Option<(&Cart, Option<TexId>, (u32, u32))> {
+        let cart = self.carts.get(i)?;
+        let uploaded = self.faces.get(i).copied().flatten();
+        let face = uploaded.or_else(|| {
+            Some(match cart.platform {
+                slot_store::Platform::Gba => self.placeholder?,
+                slot_store::Platform::Gb | slot_store::Platform::Gbc => self.gb_placeholder?,
+            })
+        });
+        let size = if uploaded.is_some() {
+            self.face_sizes
+                .get(i)
+                .copied()
+                .unwrap_or_else(|| cart_size(cart))
+        } else {
+            cart_size(cart)
+        };
+        Some((cart, face, size))
     }
 }
 

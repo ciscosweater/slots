@@ -449,6 +449,7 @@ pub struct App {
     /// cart physically seated in the slot and is cleared as soon as it is ejected.
     last_shelf_stem: Option<String>,
     last_shelf_category: Option<usize>,
+    last_shelf_platform: Option<Platform>,
     shelf_captions: BTreeMap<String, (Printed, Printed)>,
     favorite_caption: Printed,
     empty_caption: Printed,
@@ -612,6 +613,7 @@ impl App {
             recents: Vec::new(),
             last_shelf_stem: None,
             last_shelf_category: None,
+            last_shelf_platform: None,
             shelf_captions: BTreeMap::new(),
             favorite_caption: Printed::default(),
             empty_caption: Printed::default(),
@@ -684,6 +686,7 @@ impl App {
         let last = read_last_shelf(root);
         app.last_shelf_stem = last.stem;
         app.last_shelf_category = last.category;
+        app.last_shelf_platform = last.platform;
         app.lcd = read_lcd(root);
         app.pixelify = read_pixelify(root);
         slot_ui::text::set_pixelify(app.pixelify);
@@ -747,7 +750,7 @@ impl App {
                     self.shelf.set_category(category);
                 }
                 if let Some(stem) = self.last_shelf_stem.clone() {
-                    self.shelf.select_stem(&stem);
+                    self.shelf.select_cart(self.last_shelf_platform, &stem);
                 }
                 self.apply_shelf_display_prefs();
             }
@@ -961,8 +964,8 @@ impl App {
         self.shelf.set_gb_placeholder(face);
     }
 
-    /// Initial asset order for the shelf. Visible carts come first, including the wrapped tail
-    /// at the opposite edge, so the first presented row has no square loading gaps.
+    /// Initial asset order for the shelf. Visible carts come first, then the rest of the
+    /// strip, so the first presented row has no square loading gaps.
     pub fn shelf_face_upload_order(&self) -> Vec<Cart> {
         self.shelf.face_upload_order()
     }
@@ -2532,17 +2535,21 @@ impl App {
     /// Keep the shelf position durable without doing any card I/O from `draw`, which runs every
     /// frame. Empty filtered categories do not replace the last real selection.
     fn remember_shelf_selection(&mut self) {
-        let Some(stem) = self.selected_stem().map(str::to_owned) else {
+        let Some(cart) = self.shelf.carts.get(self.shelf.index) else {
             return;
         };
+        let stem = cart.stem.clone();
+        let platform = Some(cart.platform);
         let category = self.shelf.category();
         if self.last_shelf_stem.as_deref() == Some(stem.as_str())
             && self.last_shelf_category == Some(category)
+            && self.last_shelf_platform == platform
         {
             return;
         }
         self.last_shelf_stem = Some(stem.clone());
         self.last_shelf_category = Some(category);
+        self.last_shelf_platform = platform;
         let Some(root) = &self.root else {
             return;
         };
@@ -2551,6 +2558,7 @@ impl App {
             &LastShelf {
                 stem: Some(stem),
                 category: Some(category),
+                platform,
             },
         ) {
             eprintln!("slot: last shelf: {e}");
@@ -3415,8 +3423,8 @@ impl App {
         // An eject asked for is not an eject refused, whatever was refused a moment ago.
         self.refusal = None;
         self.refused_from = None;
-        // The shelf comes back under the eject: settle so a wrap/letter jump left mid-flight
-        // does not become the first motion the user sees on the carousel.
+        // The shelf comes back under the eject: settle so a flick left mid-flight
+        // does not become the first motion the user sees on the row.
         self.shelf.settle_here();
         self.platform = None;
         self.phase = Phase::Ejecting {

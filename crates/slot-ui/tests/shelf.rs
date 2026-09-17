@@ -19,7 +19,7 @@ fn shelf_with(n: usize) -> Shelf {
 }
 
 #[test]
-fn face_upload_order_prioritises_both_edges_of_the_ring() {
+fn face_upload_order_prioritises_neighbours_of_the_selection() {
     let shelf = shelf_with(8);
     let order = shelf
         .face_upload_order()
@@ -28,8 +28,8 @@ fn face_upload_order_prioritises_both_edges_of_the_ring() {
         .collect::<Vec<_>>();
     assert_eq!(
         &order[..5],
-        ["Game 0", "Game 7", "Game 1", "Game 6", "Game 2"],
-        "the wrapped neighbour must be hydrated before the far end of the queue"
+        ["Game 0", "Game 1", "Game 2", "Game 3", "Game 4"],
+        "the on-screen neighbours must be hydrated before the far end of the queue"
     );
 }
 
@@ -303,22 +303,23 @@ fn three_carts_fit_across_the_shelf() {
 }
 
 #[test]
-fn the_shelf_wraps_at_both_ends() {
+fn the_shelf_clamps_at_both_ends() {
     let mut s = shelf_with(4);
     s.left();
     assert_eq!(
-        s.index, 3,
-        "going left from the first cart should reach the last"
+        s.index, 0,
+        "going left from the first cart should stay there"
     );
+    s.select(3);
     s.right();
     assert_eq!(
-        s.index, 0,
-        "going right from the last cart should reach the first"
+        s.index, 3,
+        "going right from the last cart should stay there"
     );
 }
 
 #[test]
-fn shoulders_jump_between_initial_letters_and_wrap() {
+fn shoulders_jump_between_initial_letters_without_wrapping() {
     let carts = ["Advance", "Astro", "Boktai", "Castlevania", "Crash"]
         .into_iter()
         .map(|stem| Cart {
@@ -338,11 +339,16 @@ fn shoulders_jump_between_initial_letters_and_wrap() {
     s.next_letter();
     assert_eq!(s.index, 3);
     s.next_letter();
-    assert_eq!(s.index, 0, "R1 did not wrap from C to A");
-    s.previous_letter();
-    assert_eq!(s.index, 3, "L1 did not wrap to the beginning of C");
+    assert_eq!(
+        s.index, 3,
+        "R1 should not skip Crash, which shares C with Castlevania"
+    );
     s.previous_letter();
     assert_eq!(s.index, 2);
+    s.previous_letter();
+    assert_eq!(s.index, 0, "L1 did not land on the beginning of A");
+    s.previous_letter();
+    assert_eq!(s.index, 0, "L1 wrapped from A to Z");
 }
 
 #[test]
@@ -353,13 +359,10 @@ fn shoulders_are_inert_when_every_cart_has_the_same_initial() {
     assert_eq!(s.index, 0);
 }
 
-/// The spring chases `scroll`. If wrapping is a bare index change it unwinds the whole row.
+/// The spring chases `scroll`. One press is one slot, including at the far end of the row.
 #[test]
-fn wrapping_animates_one_step_not_the_long_way_back() {
+fn a_step_animates_one_slot() {
     let mut s = shelf_with(8);
-    for _ in 0..7 {
-        s.right();
-    }
     settle(&mut s);
     let before = s.scroll;
     s.right();
@@ -371,25 +374,25 @@ fn wrapping_animates_one_step_not_the_long_way_back() {
 }
 
 #[test]
-fn a_settled_wrap_still_lands_on_the_selected_cart() {
+fn left_at_the_first_cart_does_not_move() {
     let mut s = shelf_with(5);
     s.left();
     settle(&mut s);
-    assert_eq!(s.index, 4);
+    assert_eq!(s.index, 0);
     assert!(
-        (s.scroll.rem_euclid(5.0) - 4.0).abs() < 0.01,
+        (s.scroll - 0.0).abs() < 0.01,
         "scroll {} did not settle",
         s.scroll
     );
 }
 
 #[test]
-fn the_neighbour_of_the_last_cart_is_the_first() {
+fn the_neighbour_left_of_the_first_cart_is_empty() {
     let s = shelf_with(4);
     assert_eq!(
         s.cart_at_offset(-1),
-        Some(3),
-        "left of the first is the last"
+        None,
+        "left of the first should be empty"
     );
     assert_eq!(s.cart_at_offset(1), Some(1));
 }
@@ -409,21 +412,22 @@ fn no_cart_is_drawn_twice_in_a_row_of_three_or_more() {
     }
 }
 
-/// Two carts fill all three slots: the cart that is not selected stands on both sides.
+/// Two carts stand side by side. Repeating the other cart around the selection belonged to
+/// the ring; a strip leaves the empty side empty.
 #[test]
-fn two_carts_repeat_around_the_ring() {
+fn two_carts_do_not_repeat_at_the_ends() {
     let mut s = shelf_with(2);
     settle(&mut s);
     let mut out = Vec::new();
     s.draw_row(None, 0.0, 0.0, 1.0, &mut out);
     assert_eq!(
         drawn_cart_indices(&out),
-        vec![1, 0, 1],
-        "a row of two is not the other cart, the selection, the other cart again"
+        vec![0, 1],
+        "a row of two is not the selection and its neighbour"
     );
 }
 
-/// Which way the row goes is what says which button was pressed.
+/// Which way the row goes is what says which button was pressed. The ends hold.
 #[test]
 fn a_row_travels_the_way_it_was_pressed() {
     for n in [2usize, 3, 4, 5, 10] {
@@ -432,23 +436,28 @@ fn a_row_travels_the_way_it_was_pressed() {
             ("left", Shelf::left as fn(&mut Shelf), -1.0),
         ] {
             let mut s = shelf_with(n);
-            s.select(if way > 0.0 { n - 1 } else { 0 });
+            s.select(if way > 0.0 { 0 } else { n - 1 });
             settle(&mut s);
             let mut aim = s.scroll_target();
-            for tap in 0..2 * n {
+            for tap in 0..n + 2 {
                 press(&mut s);
                 let sent = s.scroll_target();
+                let expected = if way > 0.0 {
+                    ((tap + 1).min(n - 1)) as f32
+                } else {
+                    ((n - 1).saturating_sub(tap + 1)) as f32
+                };
                 assert!(
-                    (sent - aim - way).abs() < 0.01,
-                    "{n} carts, tap {tap} {name}: the row was sent {} from {aim}, not one slot \
-                     {name}",
-                    sent - aim
+                    (sent - expected).abs() < 0.01,
+                    "{n} carts, tap {tap} {name}: the row was sent to {sent}, not {expected}"
                 );
-                assert_eq!(
-                    (sent - s.scroll).signum(),
-                    way,
-                    "{n} carts, tap {tap} {name}: the row is travelling the other way"
-                );
+                if (sent - aim).abs() > 1e-4 {
+                    assert_eq!(
+                        (sent - s.scroll).signum(),
+                        way,
+                        "{n} carts, tap {tap} {name}: the row is travelling the other way"
+                    );
+                }
                 aim = sent;
                 for _ in 0..4 {
                     s.update(1.0 / 60.0);
@@ -472,7 +481,7 @@ fn a_held_scroll_never_travels_against_the_button() {
             ("left", Shelf::hold_left as fn(&mut Shelf, u64), -1.0),
         ] {
             let mut s = shelf_with(n);
-            s.select(if way > 0.0 { n - 1 } else { 0 });
+            s.select(if way > 0.0 { 0 } else { n - 1 });
             hold(&mut s, 0);
             let mut was = s.scroll;
             for f in 1..120u64 {
@@ -485,10 +494,11 @@ fn a_held_scroll_never_travels_against_the_button() {
                 );
                 was = s.scroll;
             }
-            let gone = (s.scroll - (if way > 0.0 { n - 1 } else { 0 }) as f32) * way;
+            let dest = if way > 0.0 { n - 1 } else { 0 };
             assert!(
-                gone > 14.0,
-                "{n} carts, held {name}: two seconds of holding moved the row {gone} pitches"
+                (s.scroll - dest as f32).abs() < 0.05,
+                "{n} carts, held {name}: two seconds of holding landed at {}, not {dest}",
+                s.scroll
             );
         }
     }
@@ -793,7 +803,8 @@ fn carts_past_the_edges_of_the_row_are_not_drawn() {
 /// 24px off each edge, so the row read as two and a bit rather than three.
 #[test]
 fn all_three_carts_fit_on_screen() {
-    let s = shelf_with(5);
+    let mut s = shelf_with(5);
+    s.select(2);
     let mut out = Vec::new();
     s.draw(0.0, &mut out);
     let spans = cart_spans(&out);
@@ -816,7 +827,8 @@ fn all_three_carts_fit_on_screen() {
 /// crowded on one axis and loose on the other.
 #[test]
 fn the_row_is_evenly_spaced() {
-    let s = shelf_with(5);
+    let mut s = shelf_with(5);
+    s.select(2);
     let mut out = Vec::new();
     s.draw(0.0, &mut out);
     let mut spans = cart_spans(&out);
@@ -1000,19 +1012,19 @@ fn recents_navigation_does_not_wrap_and_clamps_at_edges() {
     );
     assert_eq!(s.cart_at_offset(-1), Some(3));
 
-    // Jump letter in recents goes to extremes without wrapping
+    // Every recent starts with G, so L1 walks to the start of that run and R1 stays put.
     s.previous_letter();
-    assert_eq!(
-        s.index, 0,
-        "previous letter should jump to the start of recents"
-    );
+    assert_eq!(s.index, 0, "previous letter should land on the start of G");
     assert_eq!(
         s.cart_at_offset(-1),
         None,
         "no cart should wrap to the left of the first cart"
     );
     s.next_letter();
-    assert_eq!(s.index, 4, "next letter should jump to the end of recents");
+    assert_eq!(
+        s.index, 0,
+        "next letter should not jump when every cart shares an initial"
+    );
 }
 
 #[test]
@@ -1026,5 +1038,78 @@ fn recents_is_capped_at_ten_items() {
         s.carts.len(),
         10,
         "recents shelf should contain at most 10 items"
+    );
+}
+
+#[test]
+fn a_lagged_scroll_still_draws_the_visual_centre_in_order() {
+    let mut s = shelf_with(10);
+    s.select(5);
+    s.scroll = 1.0;
+    let mut out = Vec::new();
+    s.draw_row(None, 0.0, 0.0, 1.0, &mut out);
+    let drawn = drawn_cart_indices(&out);
+    assert!(
+        drawn.contains(&1),
+        "the cart under the camera was missing: {drawn:?}"
+    );
+    let mut increasing = drawn.clone();
+    increasing.sort();
+    assert_eq!(
+        drawn, increasing,
+        "carts were drawn out of sequence: {drawn:?}"
+    );
+}
+
+#[test]
+fn set_recents_does_not_rebuild_all() {
+    let mut s = shelf_with(5);
+    s.right();
+    s.right();
+    s.update(0.02);
+    let index = s.index;
+    let scroll = s.scroll;
+    s.set_recents(vec!["Game 4".into(), "Game 0".into()]);
+    assert_eq!(s.category(), 0);
+    assert_eq!(s.index, index);
+    assert_eq!(s.scroll, scroll);
+    assert_eq!(s.carts.len(), 5);
+}
+
+#[test]
+fn equal_stems_restore_the_matching_platform() {
+    let mut s = Shelf::new(vec![
+        Cart {
+            stem: "Same".into(),
+            rom: "Games/GBA/Same.gba".into(),
+            artwork: None,
+            label: None,
+            code: String::new(),
+            title: "GBA".into(),
+            platform: Platform::Gba,
+        },
+        Cart {
+            stem: "Same".into(),
+            rom: "Games/GB/Same.gb".into(),
+            artwork: None,
+            label: None,
+            code: String::new(),
+            title: "GB".into(),
+            platform: Platform::Gb,
+        },
+    ]);
+    assert!(s.select_cart(Some(Platform::Gb), "Same"));
+    assert_eq!(s.carts[s.index].platform, Platform::Gb);
+    s.set_category(0);
+    assert_eq!(
+        s.carts[s.index].platform,
+        Platform::Gb,
+        "rebuilding ALL snapped to the GBA twin"
+    );
+    assert!(s.select_stem("Same"));
+    assert_eq!(
+        s.carts[s.index].platform,
+        Platform::Gba,
+        "a stem-only restore should keep the first match"
     );
 }

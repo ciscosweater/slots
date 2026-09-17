@@ -30,12 +30,32 @@ fn the_last_shelf_selection_round_trips_separately_from_slot_state() {
         &LastShelf {
             stem: Some("Pokemon = Emerald".into()),
             category: Some(2),
+            platform: None,
         },
     )
     .unwrap();
     let got = read_last_shelf(d.path());
     assert_eq!(got.stem.as_deref(), Some("Pokemon = Emerald"));
     assert_eq!(got.category, Some(2));
+    assert_eq!(got.platform, None);
+}
+
+#[test]
+fn the_last_shelf_selection_round_trips_with_a_platform() {
+    let d = tmp_root();
+    write_last_shelf(
+        d.path(),
+        &LastShelf {
+            stem: Some("Same".into()),
+            category: Some(0),
+            platform: Some(slot_store::Platform::Gb),
+        },
+    )
+    .unwrap();
+    let got = read_last_shelf(d.path());
+    assert_eq!(got.stem.as_deref(), Some("Same"));
+    assert_eq!(got.category, Some(0));
+    assert_eq!(got.platform, Some(slot_store::Platform::Gb));
 }
 
 #[test]

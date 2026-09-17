@@ -252,7 +252,8 @@ fn sort_carts(root: &Path, carts: &mut [Cart]) {
         favorites
             .contains(&b.stem)
             .cmp(&favorites.contains(&a.stem))
-            .then_with(|| (a.platform as u8, &a.stem).cmp(&(b.platform as u8, &b.stem)))
+            .then_with(|| a.stem.cmp(&b.stem))
+            .then_with(|| (a.platform as u8).cmp(&(b.platform as u8)))
     });
 }
 

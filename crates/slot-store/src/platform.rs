@@ -34,6 +34,15 @@ impl Platform {
         }
     }
 
+    pub fn from_dir_name(name: &str) -> Option<Self> {
+        match name {
+            "GBA" => Some(Platform::Gba),
+            "GB" => Some(Platform::Gb),
+            "GBC" => Some(Platform::Gbc),
+            _ => None,
+        }
+    }
+
     /// The ROM extensions this folder holds. A `.gba` sitting in `GB/` is not a Game Boy cart
     /// and is not scanned as one: the folder says where a cart's files go, but it cannot make
     /// a GBA ROM into a Game Boy game.

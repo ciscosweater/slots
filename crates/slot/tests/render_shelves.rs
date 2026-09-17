@@ -314,12 +314,8 @@ fn a_cart_going_in_from_a_repeated_row_takes_both_copies_of_its_neighbour_with_i
 /// same measurements come back unchanged for a row that was never in question.
 ///
 /// How many carts are on screen is where the two shelves genuinely differ, and the counts below
-/// are what they are on purpose. A row of three has exactly three images to give: the moment the
-/// press lands, the one that was on the left belongs three slots along instead, which is off the
-/// right hand edge, so for a few frames the row is two carts and a space until it comes back in.
-/// A row of two has an image in every slot, so nothing is ever missing from it — which is the
-/// other half of why the repeat is the layout that scrolls best, and not a thing to tidy into
-/// one number for both.
+/// are what they are on purpose. A row of three has exactly three images to give. A row of two
+/// has two: the empty side of the strip stays empty rather than repeating the other cart.
 #[test]
 fn a_scrolled_row_slides_by_a_pitch_rather_than_swapping_its_carts() {
     let Ok(surface) = HeadlessSurface::new() else {
@@ -329,7 +325,7 @@ fn a_scrolled_row_slides_by_a_pitch_rather_than_swapping_its_carts() {
         return;
     };
     for (carts, stems, least) in [
-        (2, &["Emerald", "Fusion", ""][..2], 3),
+        (2, &["Emerald", "Fusion", ""][..2], 2),
         (3, &["Emerald", "Fusion", "Sapphire"][..], 2),
     ] {
         let d = tmp_root_with_carts(stems);

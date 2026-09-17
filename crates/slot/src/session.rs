@@ -350,10 +350,10 @@ impl Session {
             match self.app.face_buttons() {
                 FaceButtons::Shoulders => {
                     if self.xy_held.0 {
-                        mask |= ButtonMask::L;
+                        mask |= ButtonMask::R;
                     }
                     if self.xy_held.1 {
-                        mask |= ButtonMask::R;
+                        mask |= ButtonMask::L;
                     }
                 }
                 FaceButtons::Turbo => {

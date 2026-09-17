@@ -59,7 +59,7 @@ pub enum FaceButtons {
     /// X toggles the LCD mask; Y toggles colour correction.
     #[default]
     Shortcuts,
-    /// X is L; Y is R.
+    /// Y is L; X is R. Matches the Nintendo layout of the RG SP (Y on the left).
     Shoulders,
     /// X is turbo A; Y is turbo B.
     Turbo,

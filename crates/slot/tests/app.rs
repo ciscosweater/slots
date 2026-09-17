@@ -7,9 +7,10 @@ use slot::app::{App, Phase, EJECT_S, INSERT_S, SEATED_AT};
 use slot::audio::Sfx;
 use slot::session::Session;
 use slot_input::{Action, Btn, RawEvent};
+use slot_retro::ButtonMask;
 use slot_store::{
     read_favorites, read_last_shelf, read_lcd, read_pixelify, read_recents, write_slot_state, Cart,
-    Core, SlotState,
+    Core, FaceButtons, SlotState,
 };
 use slot_ui::{
     board_at, grown, lid_at, on_board, opening, shelf_cart, Draw, Placed, Printed, TexId, Toast,
@@ -2139,4 +2140,38 @@ fn r2_rapid_taps_on_shelf_advance_category_without_swallowing() {
     assert_eq!(s.app().shelf_category(), 1);
     s.feed([RawEvent::Down(Btn::R2), RawEvent::Up(Btn::R2)], 500);
     assert_eq!(s.app().shelf_category(), 2);
+}
+
+#[test]
+fn xy_shoulders_map_y_to_l_and_x_to_r() {
+    let d = common::tmp_root_with_carts(&["Emerald", "Fusion"]);
+    common::clocked(d.path());
+    let mut state = slot_store::read_slot_state(d.path());
+    state.face_buttons = FaceButtons::Shoulders;
+    write_slot_state(d.path(), &state).unwrap();
+    let mut s = Session::boot(d.path().to_path_buf());
+    s.feed([RawEvent::Down(Btn::A)], 16);
+    s.feed([RawEvent::Up(Btn::A)], 32);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while !matches!(s.app().phase(), Phase::Playing { .. }) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the cart never reached the game"
+        );
+        s.update(1.0 / 60.0);
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+
+    s.feed([RawEvent::Down(Btn::Y)], 100);
+    s.update(1.0 / 60.0);
+    let mask = s.emu().unwrap().input().0;
+    assert_ne!(mask & ButtonMask::L, 0, "Y did not send L");
+    assert_eq!(mask & ButtonMask::R, 0, "Y also sent R");
+    s.feed([RawEvent::Up(Btn::Y)], 110);
+
+    s.feed([RawEvent::Down(Btn::X)], 120);
+    s.update(1.0 / 60.0);
+    let mask = s.emu().unwrap().input().0;
+    assert_ne!(mask & ButtonMask::R, 0, "X did not send R");
+    assert_eq!(mask & ButtonMask::L, 0, "X also sent L");
 }
