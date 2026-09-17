@@ -19,6 +19,18 @@ fn lcd_changes_say_which_way_the_toggle_went() {
 }
 
 #[test]
+fn colour_correction_changes_say_which_way_the_toggle_went() {
+    assert_eq!(Toast::ColourOn.text(), "Colour Correction On");
+    assert_eq!(Toast::ColourOff.text(), "Colour Correction Off");
+}
+
+#[test]
+fn picture_mode_changes_name_the_size() {
+    assert_eq!(Toast::FillScreen.text(), "Fill Screen");
+    assert_eq!(Toast::ActualSize.text(), "Actual Size");
+}
+
+#[test]
 fn font_changes_name_the_selected_face() {
     assert_eq!(Toast::FontPixelify.text(), "Font: Pixelify");
     assert_eq!(Toast::FontOriginal.text(), "Font: Original");

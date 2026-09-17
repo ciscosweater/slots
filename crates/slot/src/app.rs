@@ -1456,18 +1456,6 @@ impl App {
 
     fn toggle_lcd(&mut self) {
         self.lcd = !self.lcd;
-        // LCD, overlay, and Stretch are mutually exclusive on the picture.
-        if self.lcd && self.video_mode == VideoMode::Stretch {
-            if let Phase::Playing { cart } = &self.phase {
-                let cart = cart.clone();
-                self.video_mode = VideoMode::Actual;
-                if let Some(root) = &self.root {
-                    let _ = video_mode::write_video_mode(root, &cart, VideoMode::Actual);
-                }
-            } else {
-                self.video_mode = VideoMode::Actual;
-            }
-        }
         if let Some(root) = &self.root {
             if let Err(e) = write_lcd(root, self.lcd) {
                 eprintln!("slot: lcd: {e}");
@@ -1508,6 +1496,12 @@ impl App {
         self.state.colour_correction = !self.state.colour_correction;
         self.colour_dirty = true;
         self.persist();
+        let toast = if self.state.colour_correction {
+            Toast::ColourOn
+        } else {
+            Toast::ColourOff
+        };
+        self.hud.toast(toast, self.now());
     }
 
     fn toggle_font(&mut self) {
@@ -1763,13 +1757,13 @@ impl App {
             return;
         }
         self.video_mode = mode;
-        // Stretch and LCD cannot share the picture; overlay draw already refuses Stretch.
-        if mode == VideoMode::Stretch && self.lcd {
-            self.lcd = false;
-            if let Some(root) = &self.root {
-                let _ = write_lcd(root, false);
-            }
-        }
+        self.hud.toast(
+            match mode {
+                VideoMode::Stretch => Toast::FillScreen,
+                VideoMode::Actual => Toast::ActualSize,
+            },
+            self.now(),
+        );
         let (Some(root), Phase::Playing { cart }) = (self.root.clone(), &self.phase) else {
             return;
         };

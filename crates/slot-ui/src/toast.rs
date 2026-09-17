@@ -19,13 +19,17 @@ pub enum Toast {
     Unfavorited,
     LcdOn,
     LcdOff,
+    ColourOn,
+    ColourOff,
+    FillScreen,
+    ActualSize,
     FontPixelify,
     FontOriginal,
     PeerEnded,
 }
 
 impl Toast {
-    pub const ALL: [Toast; 11] = [
+    pub const ALL: [Toast; 15] = [
         Toast::StateSaved,
         Toast::StateLoaded,
         Toast::NeedsGpsp,
@@ -34,6 +38,10 @@ impl Toast {
         Toast::Unfavorited,
         Toast::LcdOn,
         Toast::LcdOff,
+        Toast::ColourOn,
+        Toast::ColourOff,
+        Toast::FillScreen,
+        Toast::ActualSize,
         Toast::FontPixelify,
         Toast::FontOriginal,
         Toast::PeerEnded,
@@ -54,6 +62,10 @@ impl Toast {
             Toast::Unfavorited => "Removed from Favorites",
             Toast::LcdOn => "LCD Effect On",
             Toast::LcdOff => "LCD Effect Off",
+            Toast::ColourOn => "Colour Correction On",
+            Toast::ColourOff => "Colour Correction Off",
+            Toast::FillScreen => "Fill Screen",
+            Toast::ActualSize => "Actual Size",
             Toast::FontPixelify => "Font: Pixelify",
             Toast::FontOriginal => "Font: Original",
             Toast::PeerEnded => "Link was ended",

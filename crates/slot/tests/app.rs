@@ -8,8 +8,8 @@ use slot::audio::Sfx;
 use slot::session::Session;
 use slot_input::{Action, Btn, RawEvent};
 use slot_store::{
-    read_favorites, read_last_shelf, read_lcd, read_pixelify, read_recents, write_slot_state, Cart,
-    Core, SlotState,
+    read_favorites, read_last_shelf, read_lcd, read_pixelify, read_recents, read_slot_state,
+    write_slot_state, Cart, Core, SlotState,
 };
 use slot_ui::{
     board_at, grown, lid_at, on_board, opening, shelf_cart, Draw, Placed, Printed, TexId, Toast,
@@ -769,7 +769,67 @@ fn x_toggles_the_persistent_lcd_effect() {
 }
 
 #[test]
-fn gb_and_gbc_can_toggle_lcd_and_that_hides_the_overlay() {
+fn y_toggles_colour_correction_with_a_toast_while_playing() {
+    let (d, mut app) = on_shelf(&["Advance", "Boktai"]);
+    play(&mut app);
+    app.on_core_ready();
+    for _ in 0..120 {
+        app.update(1.0 / 60.0);
+    }
+    assert!(matches!(app.phase(), Phase::Playing { .. }));
+    assert!(!app.colour_correction());
+
+    app.apply(Action::GbaDown(Btn::Y));
+    assert!(app.colour_correction());
+    assert_eq!(app.toast(), Some(Toast::ColourOn));
+    assert!(read_slot_state(d.path()).colour_correction);
+
+    app.apply(Action::GbaDown(Btn::Y));
+    assert!(!app.colour_correction());
+    assert_eq!(app.toast(), Some(Toast::ColourOff));
+    assert!(!read_slot_state(d.path()).colour_correction);
+}
+
+#[test]
+fn lcd_effect_stays_on_when_the_picture_is_stretched() {
+    let mut app = App::new(vec![
+        Cart {
+            stem: "Tetris".into(),
+            rom: "Games/Tetris.gb".into(),
+            artwork: None,
+            label: None,
+            code: String::new(),
+            title: "TETRIS".into(),
+            platform: slot_store::Platform::Gb,
+        },
+        Cart {
+            stem: "Zzz".into(),
+            rom: "Games/Zzz.gba".into(),
+            artwork: None,
+            label: None,
+            code: String::new(),
+            title: "ZZZ".into(),
+            platform: slot_store::Platform::Gba,
+        },
+    ]);
+    play(&mut app);
+    app.on_core_ready();
+    for _ in 0..120 {
+        app.update(1.0 / 60.0);
+    }
+    assert!(app.lcd_enabled());
+    app.apply(Action::GbaDown(Btn::L1));
+    assert_eq!(app.video_mode(), slot::video_mode::VideoMode::Stretch);
+    assert!(app.lcd_enabled(), "stretch cleared the LCD effect");
+    assert_eq!(app.toast(), Some(Toast::FillScreen));
+    app.apply(Action::GbaDown(Btn::X));
+    assert!(!app.lcd_enabled());
+    assert_eq!(app.toast(), Some(Toast::LcdOff));
+    app.apply(Action::GbaDown(Btn::X));
+    assert!(app.lcd_enabled(), "LCD could not come back over stretch");
+    assert_eq!(app.video_mode(), slot::video_mode::VideoMode::Stretch);
+    assert_eq!(app.toast(), Some(Toast::LcdOn));
+}
     for platform in [slot_store::Platform::Gb, slot_store::Platform::Gbc] {
         let mut app = App::new(vec![
             Cart {

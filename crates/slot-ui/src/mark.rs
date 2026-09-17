@@ -31,11 +31,15 @@ const GBC_SVG: &str = include_str!("../assets/platform_gbc.svg");
 /// a height that leaves `MARK_H * 5 / 8` with a remainder squeezes every drawing by the rounding.
 pub const MARK_H: u32 = 48;
 
-/// Category tab icons in the top-right: small enough to sit as a row, large enough to read as
-/// the platform marks they reuse. Multiple of 8 for the same 5:8 box reason as `MARK_H`.
-pub const TAB_MARK_H: u32 = 24;
-pub const TAB_MARK_W: u32 = TAB_MARK_H * 5 / 8;
-const TAB_GLYPH_PX: f32 = 22.0;
+/// Category tab chips in the top-right. Console tabs are the hand-pixel 21×16 icons; ALL / REC
+/// stay as Nerd Font glyphs sized to that same height.
+pub const TAB_MARK_H: u32 = 16;
+pub const TAB_MARK_W: u32 = 21;
+const TAB_GLYPH_PX: f32 = 16.0;
+
+const TAB_GBA_PNG: &[u8] = include_bytes!("../assets/tab_gba.png");
+const TAB_GB_PNG: &[u8] = include_bytes!("../assets/tab_gb.png");
+const TAB_GBC_PNG: &[u8] = include_bytes!("../assets/tab_gbc.png");
 
 /// How far the mark's box is held off the right edge and the top of the screen.
 ///
@@ -128,14 +132,14 @@ pub fn mark_face(platform: Platform) -> CartFace {
     platform_face(platform, MARK_W, MARK_H)
 }
 
-/// Shelf category tabs: ALL / REC as symbols, GBA / GB / GBC as the platform drawings at tab size.
+/// Shelf category tabs: ALL / REC as symbols, GBA / GB / GBC as the coloured pixel chips.
 pub fn category_tab_face(category: usize) -> UndoFace {
     let face = match category {
         0 => glyph_tab('\u{f00a}'), // th / grid — the whole library
         1 => glyph_tab('\u{f1da}'), // history — recents
-        2 => platform_face(Platform::Gba, TAB_MARK_W, TAB_MARK_H),
-        3 => platform_face(Platform::Gb, TAB_MARK_W, TAB_MARK_H),
-        4 => platform_face(Platform::Gbc, TAB_MARK_W, TAB_MARK_H),
+        2 => tab_png(TAB_GBA_PNG),
+        3 => tab_png(TAB_GB_PNG),
+        4 => tab_png(TAB_GBC_PNG),
         _ => CartFace {
             rgba: Vec::new(),
             w: 0,
@@ -146,6 +150,52 @@ pub fn category_tab_face(category: usize) -> UndoFace {
         rgba: face.rgba,
         w: face.w,
         h: face.h,
+    }
+}
+
+/// Decode a tab chip at its native size and keep the artist's colours. These are not the
+/// monochrome shelf marks — they only live in the category row.
+fn tab_png(bytes: &[u8]) -> CartFace {
+    let mut dec = png::Decoder::new(std::io::Cursor::new(bytes));
+    dec.set_transformations(png::Transformations::normalize_to_color8());
+    let Ok(mut reader) = dec.read_info() else {
+        return CartFace {
+            rgba: Vec::new(),
+            w: 0,
+            h: 0,
+        };
+    };
+    let mut buf = vec![0u8; reader.output_buffer_size()];
+    let Ok(info) = reader.next_frame(&mut buf) else {
+        return CartFace {
+            rgba: Vec::new(),
+            w: 0,
+            h: 0,
+        };
+    };
+    let src = &buf[..info.buffer_size()];
+    let n = (info.width * info.height) as usize;
+    let mut rgba = vec![0u8; n * 4];
+    match info.color_type {
+        png::ColorType::Rgba => rgba.copy_from_slice(src),
+        png::ColorType::Rgb => {
+            for i in 0..n {
+                rgba[i * 4..i * 4 + 3].copy_from_slice(&src[i * 3..i * 3 + 3]);
+                rgba[i * 4 + 3] = 255;
+            }
+        }
+        _ => {
+            return CartFace {
+                rgba: Vec::new(),
+                w: 0,
+                h: 0,
+            }
+        }
+    }
+    CartFace {
+        rgba,
+        w: info.width,
+        h: info.height,
     }
 }
 
@@ -240,10 +290,22 @@ mod tests {
             "a {MARK_W}x{MARK_H} mark is not 5:8: pick a height that is a multiple of 8"
         );
         assert_eq!(
-            TAB_MARK_W * 8,
-            TAB_MARK_H * 5,
-            "a {TAB_MARK_W}x{TAB_MARK_H} tab mark is not 5:8"
+            (TAB_MARK_W, TAB_MARK_H),
+            (21, 16),
+            "console tab chips are the 21×16 pixel icons"
         );
+        for category in 2..=4 {
+            let face = category_tab_face(category);
+            assert_eq!(
+                (face.w, face.h),
+                (TAB_MARK_W, TAB_MARK_H),
+                "category {category} is not the chip size"
+            );
+        }
+        let chips: Vec<_> = (2..=4).map(category_tab_face).collect();
+        assert_ne!(chips[0].rgba, chips[1].rgba);
+        assert_ne!(chips[0].rgba, chips[2].rgba);
+        assert_ne!(chips[1].rgba, chips[2].rgba);
     }
 
     /// The three are different pictures. Cheap to get wrong — the three files are one paste

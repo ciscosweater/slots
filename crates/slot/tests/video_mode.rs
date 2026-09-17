@@ -39,11 +39,13 @@ fn game_boy_shoulders_change_picture_mode_without_reaching_the_core() {
     assert_eq!(session.app().source_rect(), WHOLE_TEXTURE);
     session.feed([RawEvent::Down(Btn::L1)], 100);
     assert_eq!(session.app().video_mode(), VideoMode::Stretch);
+    assert_eq!(session.app().toast(), Some(slot_ui::Toast::FillScreen));
     assert_eq!(session.app().source_rect(), stretched);
     assert_eq!(session.emu().unwrap().input().0 & ButtonMask::L, 0);
 
     session.feed([RawEvent::Down(Btn::R1)], 120);
     assert_eq!(session.app().video_mode(), VideoMode::Actual);
+    assert_eq!(session.app().toast(), Some(slot_ui::Toast::ActualSize));
     assert_eq!(session.app().source_rect(), WHOLE_TEXTURE);
     assert_eq!(session.emu().unwrap().input().0 & ButtonMask::R, 0);
 }
