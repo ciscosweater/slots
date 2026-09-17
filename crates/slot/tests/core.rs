@@ -130,3 +130,33 @@ fn a_missing_core_comes_back_out_of_the_slot() {
         s.app().phase()
     );
 }
+
+/// A missing dylib must refuse on the first present and stay refused. Re-entering Inserting
+/// (or reopening the same absent path every frame) thrashes the card and floods the log.
+#[test]
+fn a_missing_core_is_refused_once_not_every_frame() {
+    let _g = core_lock();
+    std::env::set_var("SLOT_CORE", "no/such/core.dylib");
+    let d = common::tmp_root_with_carts(&["Emerald", "Fusion"]);
+    common::clocked(d.path());
+    let mut s = Session::boot(d.path().to_path_buf());
+    s.feed([RawEvent::Down(Btn::A)], 16);
+    s.feed([RawEvent::Up(Btn::A)], 32);
+    let mut now = 32u64;
+    for _ in 0..30 {
+        now += 16;
+        s.feed([], now);
+        s.update(1.0 / 60.0);
+        assert!(
+            !matches!(s.app().phase(), Phase::Inserting { .. }),
+            "missing core kept retrying the insert: {:?}",
+            s.app().phase()
+        );
+    }
+    std::env::remove_var("SLOT_CORE");
+    assert!(
+        matches!(s.app().phase(), Phase::Ejecting { .. } | Phase::Shelf),
+        "a missing core seated: {:?}",
+        s.app().phase()
+    );
+}

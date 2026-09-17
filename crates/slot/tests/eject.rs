@@ -477,3 +477,36 @@ fn the_core_stops_before_the_cart_moves() {
         "the core kept running while the picture was out"
     );
 }
+
+/// A wedged emulator worker must not freeze the eject on the UI thread. The flush budget
+/// gives up, the cart stays recorded as seated (so the next boot can retry), and the travel
+/// still starts.
+#[test]
+fn a_silent_emulator_does_not_block_eject() {
+    use slot::emu::{with_flush_wait_ms_for_tests, EmuSnapshot};
+
+    // Two carts so eject is allowed — a lone cart only refuses.
+    let d = tmp_root_with_carts(&["Emerald", "Fusion"]);
+    let mut a = app_playing_in(d.path(), "Emerald");
+    a.set_snapshot(Box::new(EmuSnapshot::silent_for_tests()));
+
+    let started = Instant::now();
+    with_flush_wait_ms_for_tests(50, || {
+        a.apply(Action::Eject);
+    });
+    assert!(
+        started.elapsed() < Duration::from_millis(500),
+        "eject blocked on a silent worker for {:?}",
+        started.elapsed()
+    );
+    assert!(
+        matches!(a.phase(), Phase::Ejecting { .. }),
+        "eject never left Playing: {:?}",
+        a.phase()
+    );
+    assert_eq!(
+        read_slot_state(d.path()).cart.as_deref(),
+        Some("Emerald"),
+        "a timed-out flush must leave the cart seated for the next boot"
+    );
+}

@@ -11,6 +11,37 @@ The original GBA-focused frontend remains the foundation; this fork adds:
 - BaseOS v1.1.0 installation support for both one-card and two-card setups.
 - A quick menu for fast-forward speed and sound, rumble, Date & Time and About.
 
+### Display
+
+- Platform defaults and per-game LCD, colour correction, and overlay prefs, with reset for the
+  current scope.
+- In-game display quick menu over a translucent game scrim; shelf LCD row and clamp on category
+  tabs.
+- Wallpaper draws at full strength (no dark scrim).
+
+### Shelf
+
+- Pixel console tab icons, display toasts, and X/Y face-button mapping.
+- GBA migrate repair when porting prefs across layouts.
+
+### Device / build
+
+- H700 toolchain helper for cross builds (`scripts/with-h700-toolchain.sh`).
+
+### Stability
+
+- Missing-core insert refuses once (no per-frame dylib reopen).
+- Eject flush times out if the emulator worker stalls, so the cart can still leave the slot.
+- One-shot toast when the audio device fails to open.
+- MENU double-tap still opens the state switcher after the first tap opens play settings.
+
+### Device smoke checklist
+
+- Lid close / standby / resume and power-off resume.
+- Display prefs: platform defaults, per-game override, reset current scope.
+- In-game display menu and scrim; shelf tabs ALL / REC / GBA / GB / GBC; wallpaper.
+- Eject and save trust; link + doze if you use link.
+
 ## 1.0.0
 
 A focused GBA, Game Boy and Game Boy Color frontend for the Anbernic RG SP.

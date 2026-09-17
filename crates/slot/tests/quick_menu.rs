@@ -87,10 +87,7 @@ fn menu_over_a_game_opens_display_settings_and_b_resumes_playing() {
     ));
     assert_eq!(a.quick_menu(), Some(QuickRow::LcdEffect));
     assert!(a.play_settings_open());
-    for want in [
-        QuickRow::ColourCorrection,
-        QuickRow::ResetDisplay,
-    ] {
+    for want in [QuickRow::ColourCorrection, QuickRow::ResetDisplay] {
         press(&mut a, Btn::Down);
         assert_eq!(a.quick_menu(), Some(want));
     }
@@ -659,15 +656,14 @@ fn lcd_effect_flips_on_console_tab_and_writes_display_ini() {
     assert!(a.lcd_enabled());
     press(&mut a, Btn::Right);
     assert!(!a.lcd_enabled());
-    assert_eq!(
-        slot_store::resolve_display(
+    assert!(
+        !slot_store::resolve_display(
             d.path(),
             slot_store::Platform::Gba,
             None,
             slot_store::DisplayPrefs::built_in(),
         )
-        .lcd,
-        false
+        .lcd
     );
     assert!(
         slot_store::read_lcd(d.path()),
@@ -703,10 +699,7 @@ fn in_game_lcd_writes_per_game_and_beats_platform() {
     )
     .unwrap();
     let mut a = app_playing_in(d.path(), "Emerald");
-    assert!(
-        !a.lcd_enabled(),
-        "insert should resolve platform default"
-    );
+    assert!(!a.lcd_enabled(), "insert should resolve platform default");
     a.apply(Action::QuickMenu);
     open_play_row(&mut a, QuickRow::LcdEffect);
     press(&mut a, Btn::Right);
@@ -752,7 +745,10 @@ fn picture_in_play_settings_cycles_and_persists() {
     let mut a = app_playing_in(d.path(), "Tetris");
     a.apply(Action::QuickMenu);
     open_play_row(&mut a, QuickRow::Picture);
-    assert_eq!(a.quick_value(QuickRow::Picture), Some(QuickValue::ActualSize));
+    assert_eq!(
+        a.quick_value(QuickRow::Picture),
+        Some(QuickValue::ActualSize)
+    );
     press(&mut a, Btn::Right);
     assert_eq!(a.video_mode(), slot::video_mode::VideoMode::Stretch);
     assert_eq!(

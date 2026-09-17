@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, AtomicU64, AtomicU8, Ordering};
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -46,6 +46,35 @@ const SNAPSHOT_EVERY: u32 = 2;
 
 /// Frames between traced pacing lines, about five seconds.
 const TRACE_EVERY: u64 = 300;
+
+/// How long a flush may wait on the emulator worker. A wedged core must not freeze the eject
+/// animation (or lid/power flush) forever; the durable write is skipped and the cart stays
+/// seated so the next boot can try again.
+const FLUSH_WAIT_MS: u64 = 2_000;
+
+thread_local! {
+    /// Test seam: shortens the flush wait on this thread only, so parallel tests keep the
+    /// production budget.
+    static FLUSH_WAIT_OVERRIDE_MS: std::cell::Cell<Option<u64>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// Runs `f` with a shortened flush budget on this thread.
+pub fn with_flush_wait_ms_for_tests<R>(ms: u64, f: impl FnOnce() -> R) -> R {
+    FLUSH_WAIT_OVERRIDE_MS.with(|c| {
+        let prev = c.replace(Some(ms));
+        let out = f();
+        c.set(prev);
+        out
+    })
+}
+
+fn flush_wait() -> Duration {
+    let ms = FLUSH_WAIT_OVERRIDE_MS
+        .with(|c| c.get())
+        .unwrap_or(FLUSH_WAIT_MS);
+    Duration::from_millis(ms)
+}
 
 /// A per-present cap on how many packets the worker will move from the transport into the
 /// core's inbound queue. Real GBA serial hardware never comes close to this in a present's
@@ -419,23 +448,81 @@ pub struct EmuSnapshot {
     shared: Arc<Shared>,
 }
 
+impl EmuSnapshot {
+    /// A snapshot whose worker never answers. Integration tests use this with a shortened
+    /// `with_flush_wait_ms_for_tests` budget to prove eject/flush return instead of hanging.
+    pub fn silent_for_tests() -> Self {
+        let (tx, rx) = channel();
+        // Keep the receiver alive so `send` succeeds, then never read — that is the hung-worker
+        // shape. Dropping it would make `send` fail instantly and skip the timeout path.
+        std::thread::spawn(move || {
+            let _rx = rx;
+            loop {
+                std::thread::park();
+            }
+        });
+        EmuSnapshot {
+            cmds: tx,
+            shared: Arc::new(Shared {
+                input: AtomicU16::new(0),
+                speed: AtomicU8::new(Speed::Paused as u8),
+                observed: AtomicU8::new(Speed::Paused as u8),
+                state: AtomicU8::new(CoreState::Ready as u8),
+                rewind: AtomicBool::new(false),
+                rewind_fill: AtomicU8::new(0),
+                stop: AtomicBool::new(false),
+                volume: AtomicU8::new(100),
+                fast_steps: AtomicU32::new(FAST_STEPS),
+                ff_sound: AtomicBool::new(false),
+                published: AtomicU64::new(0),
+                resume_refused: AtomicBool::new(false),
+                sav_refused: AtomicBool::new(false),
+                link_lost: AtomicBool::new(false),
+                peer_ended: AtomicBool::new(false),
+                presents: AtomicU64::new(0),
+            }),
+        }
+    }
+}
+
 impl Snapshot for EmuSnapshot {
     fn state(&self) -> Option<Vec<u8>> {
         let (tx, rx) = channel();
         self.cmds.send(Cmd::Save(tx)).ok()?;
-        rx.recv().ok().flatten()
+        match rx.recv_timeout(flush_wait()) {
+            Ok(v) => v,
+            Err(RecvTimeoutError::Timeout) => {
+                eprintln!("slot: flush: save state timed out");
+                None
+            }
+            Err(RecvTimeoutError::Disconnected) => None,
+        }
     }
 
     fn save_ram(&self) -> Option<Vec<u8>> {
         let (tx, rx) = channel();
         self.cmds.send(Cmd::Sav(tx)).ok()?;
-        rx.recv().ok().flatten()
+        match rx.recv_timeout(flush_wait()) {
+            Ok(v) => v,
+            Err(RecvTimeoutError::Timeout) => {
+                eprintln!("slot: flush: save ram timed out");
+                None
+            }
+            Err(RecvTimeoutError::Disconnected) => None,
+        }
     }
 
     fn thumb(&self) -> Option<Vec<u8>> {
         let (tx, rx) = channel();
         self.cmds.send(Cmd::Thumb(tx)).ok()?;
-        rx.recv().ok().flatten()
+        match rx.recv_timeout(flush_wait()) {
+            Ok(v) => v,
+            Err(RecvTimeoutError::Timeout) => {
+                eprintln!("slot: flush: thumbnail timed out");
+                None
+            }
+            Err(RecvTimeoutError::Disconnected) => None,
+        }
     }
 
     fn load(&self, state: Vec<u8>) -> bool {
@@ -443,7 +530,14 @@ impl Snapshot for EmuSnapshot {
         if self.cmds.send(Cmd::Load(state, tx)).is_err() {
             return false;
         }
-        rx.recv().ok().unwrap_or(false)
+        match rx.recv_timeout(flush_wait()) {
+            Ok(ok) => ok,
+            Err(RecvTimeoutError::Timeout) => {
+                eprintln!("slot: flush: load state timed out");
+                false
+            }
+            Err(RecvTimeoutError::Disconnected) => false,
+        }
     }
 
     /// `false` exactly when `Worker::run` handed this core a resume it went on to refuse.

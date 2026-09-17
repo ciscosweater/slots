@@ -101,11 +101,7 @@ fn the_rows_and_values_match_the_menu() {
             .into_iter()
             .filter(|row| row.opens())
             .collect::<Vec<_>>(),
-        vec![
-            QuickRow::ResetDisplay,
-            QuickRow::DateTime,
-            QuickRow::About
-        ]
+        vec![QuickRow::ResetDisplay, QuickRow::DateTime, QuickRow::About]
     );
 }
 

@@ -518,10 +518,7 @@ fn list_stem_dirs(dir: &Path) -> Vec<String> {
 
 fn read_entries(dir: &Path) -> Option<Vec<std::fs::DirEntry>> {
     match std::fs::read_dir(dir) {
-        Ok(d) => match d.collect::<Result<Vec<_>, _>>() {
-            Ok(entries) => Some(entries),
-            Err(_) => None,
-        },
+        Ok(d) => d.collect::<Result<Vec<_>, _>>().ok(),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Some(Vec::new()),
         Err(_) => None,
     }

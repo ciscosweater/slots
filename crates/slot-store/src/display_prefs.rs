@@ -171,15 +171,14 @@ pub fn write_game(
     field: DisplayField,
     value: bool,
 ) -> std::io::Result<()> {
-    write_field(
-        root,
-        DisplayTarget::Game { platform, stem },
-        field,
-        value,
-    )
+    write_field(root, DisplayTarget::Game { platform, stem }, field, value)
 }
 
-const FIELDS: [DisplayField; 3] = [DisplayField::Lcd, DisplayField::Colour, DisplayField::Overlay];
+const FIELDS: [DisplayField; 3] = [
+    DisplayField::Lcd,
+    DisplayField::Colour,
+    DisplayField::Overlay,
+];
 
 /// Drop every display.ini key for this target so resolve falls through to the next layer.
 pub fn clear_target(root: &Path, target: DisplayTarget<'_>) -> std::io::Result<()> {
@@ -219,9 +218,11 @@ mod tests {
     fn resolve_falls_back_to_legacy_when_display_ini_is_empty() {
         let d = root();
         write_lcd(d.path(), false).unwrap();
-        let mut state = SlotState::default();
-        state.colour_correction = true;
-        state.gb_overlay = false;
+        let state = SlotState {
+            colour_correction: true,
+            gb_overlay: false,
+            ..Default::default()
+        };
         write_slot_state(d.path(), &state).unwrap();
 
         let prefs = resolve_display(
@@ -282,20 +283,24 @@ mod tests {
             },
         )
         .unwrap();
-        assert!(!resolve_display(
-            d.path(),
-            Platform::Gba,
-            Some("Emerald"),
-            DisplayPrefs::built_in(),
-        )
-        .lcd);
+        assert!(
+            !resolve_display(
+                d.path(),
+                Platform::Gba,
+                Some("Emerald"),
+                DisplayPrefs::built_in(),
+            )
+            .lcd
+        );
         clear_target(d.path(), DisplayTarget::Platform(Platform::Gba)).unwrap();
-        assert!(resolve_display(
-            d.path(),
-            Platform::Gba,
-            Some("Emerald"),
-            DisplayPrefs::built_in(),
-        )
-        .lcd);
+        assert!(
+            resolve_display(
+                d.path(),
+                Platform::Gba,
+                Some("Emerald"),
+                DisplayPrefs::built_in(),
+            )
+            .lcd
+        );
     }
 }

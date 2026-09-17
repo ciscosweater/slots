@@ -42,3 +42,12 @@ fn a_toast_goes_away_on_its_own() {
     a.tick_ms(1_000 + HUD_MS);
     assert_eq!(a.toast(), None);
 }
+
+/// A dead codec used to leave the machine silently muted.
+#[test]
+fn audio_unavailable_says_so() {
+    let d = tmp_root_with_carts(&["Emerald"]);
+    let mut a = app_playing_in(d.path(), "Emerald");
+    a.note_audio_unavailable();
+    assert_eq!(a.toast(), Some(Toast::AudioUnavailable));
+}

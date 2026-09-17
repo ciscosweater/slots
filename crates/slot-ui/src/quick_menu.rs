@@ -54,10 +54,7 @@ impl QuickRow {
 
     /// In-game display settings shared by every platform. Overlay and Picture are appended
     /// only for Game Boy carts; Reset Display is always last.
-    pub const PLAYING: [QuickRow; 2] = [
-        QuickRow::LcdEffect,
-        QuickRow::ColourCorrection,
-    ];
+    pub const PLAYING: [QuickRow; 2] = [QuickRow::LcdEffect, QuickRow::ColourCorrection];
 
     /// Position in `LABELS`, which is the order faces are uploaded in.
     pub fn label_index(self) -> usize {

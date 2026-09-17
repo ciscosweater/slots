@@ -714,8 +714,7 @@ impl Shelf {
                 // bare index, or L1/R1 would send the spring the long way round the row.
                 let from = self.ride;
                 let n_f = n as f32;
-                let shortest =
-                    (candidate as f32 - from + n_f / 2.0).rem_euclid(n_f) - n_f / 2.0;
+                let shortest = (candidate as f32 - from + n_f / 2.0).rem_euclid(n_f) - n_f / 2.0;
                 self.ride = from + shortest;
                 return;
             }

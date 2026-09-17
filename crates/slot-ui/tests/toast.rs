@@ -36,6 +36,11 @@ fn font_changes_name_the_selected_face() {
     assert_eq!(Toast::FontOriginal.text(), "Font: Original");
 }
 
+#[test]
+fn a_dead_codec_says_audio_unavailable() {
+    assert_eq!(Toast::AudioUnavailable.text(), "Audio unavailable");
+}
+
 /// The link shortcut on a core that cannot link says which one can, in the same banner.
 #[test]
 fn the_link_shortcut_on_the_wrong_core_says_to_switch() {

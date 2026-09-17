@@ -33,6 +33,8 @@ pub struct Session {
     /// frame a failed open leaves the device silent — ALSA `snd_pcm_open` on a dead host
     /// blocks, and retrying it from `update` drowned the rewind tests in the same error.
     sink_wanted: bool,
+    /// One-shot: a failed codec open already toasted once this session.
+    audio_warned: bool,
     gestures: Gestures,
     pad: Pad,
     /// Physical X/Y held while playing. Those buttons have no GBA bits, so remapping them to
@@ -59,7 +61,7 @@ impl Session {
                 (false, false)
             }
         };
-        Session {
+        let mut session = Session {
             app: App::boot(&root),
             root,
             emu: None,
@@ -67,6 +69,7 @@ impl Session {
             sink_open,
             sink_pending,
             sink_wanted: true,
+            audio_warned: false,
             gestures: Gestures::new(),
             pad: Pad::default(),
             xy_held: (false, false),
@@ -74,7 +77,11 @@ impl Session {
             rewinding: false,
             fast: false,
             motor: 0,
+        };
+        if !sink_open && !sink_pending {
+            session.note_audio_unavailable();
         }
+        session
     }
 
     /// Mixed in over whatever the game is already playing, so it lands with the thing on
@@ -483,6 +490,7 @@ impl Session {
                     Err(e) => {
                         eprintln!("slot: audio: {e}");
                         self.sink_open = false;
+                        self.note_audio_unavailable();
                     }
                 }
             }
@@ -500,6 +508,7 @@ impl Session {
                 Err(e) => {
                     eprintln!("slot: audio: {e}");
                     self.sink_open = false;
+                    self.note_audio_unavailable();
                 }
             }
         } else if self.sink_open {
@@ -510,6 +519,16 @@ impl Session {
             self.sink_pending = false;
         }
         self.sink_wanted = want;
+    }
+
+    /// One toast per session when the codec will not open. Silent mute is otherwise
+    /// indistinguishable from a game that just happens to be quiet.
+    fn note_audio_unavailable(&mut self) {
+        if self.audio_warned {
+            return;
+        }
+        self.audio_warned = true;
+        self.app.note_audio_unavailable();
     }
 
     /// Drop the PCM before `poweroff`/`restart` block on init. Those calls do not return, so
@@ -601,14 +620,24 @@ impl Session {
         };
         if self.emu.is_none() {
             self.spawn_core(&stem);
+            // A missing dylib refuses inside `spawn_core`. Stay out of the Failed/None arm so
+            // we do not reopen the same absent path every frame the insert is still on screen.
+            if !matches!(self.app.phase(), Phase::Inserting { .. }) {
+                return;
+            }
         }
         match self.emu.as_ref().map(EmuHandle::state) {
             Some(CoreState::Loading) => {}
             Some(CoreState::Ready) => self.app.on_core_ready(),
             // A refused cart leaves a dead worker behind. Dropping it here is what frees the
             // core for the next insert, since libretro allows only one.
-            Some(CoreState::Failed) | None => {
+            Some(CoreState::Failed) => {
                 self.emu = None;
+                self.app.on_core_failed();
+            }
+            None => {
+                // Spawn returned without a handle and without refusing (no seated cart). Refuse
+                // once rather than spinning `open_core` on every present.
                 self.app.on_core_failed();
             }
         }
@@ -650,6 +679,9 @@ impl Session {
         );
         self.app.set_named_core(opened.is_some());
         let Some(opened) = opened else {
+            // Refuse here, once: falling through to `sync_core`'s None arm used to look like a
+            // retry opportunity and re-ran the candidate search every present.
+            self.app.on_core_failed();
             return;
         };
         let emu = EmuHandle::spawn(

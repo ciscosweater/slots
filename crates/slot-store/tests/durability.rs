@@ -2,8 +2,8 @@ mod common;
 
 use common::tmp_root;
 use slot_store::{
-    atomic_write, read_last_shelf, read_slot_state, write_last_shelf, write_slot_state, FaceButtons,
-    LastShelf, SlotState, FF_SPEED_DEFAULT,
+    atomic_write, read_last_shelf, read_slot_state, write_last_shelf, write_slot_state,
+    FaceButtons, LastShelf, SlotState, FF_SPEED_DEFAULT,
 };
 use tempfile::tempdir;
 

@@ -541,11 +541,7 @@ fn a_gb_rom_stuck_in_games_gba_is_repaired() {
 #[test]
 fn a_save_stuck_in_saves_gba_follows_its_gbc_rom() {
     let d = tempdir().unwrap();
-    write_gb_rom(
-        &d.path()
-            .join("Games/GBC/Shantae (USA).gbc"),
-        0xc0,
-    );
+    write_gb_rom(&d.path().join("Games/GBC/Shantae (USA).gbc"), 0xc0);
     std::fs::create_dir_all(d.path().join("Saves/GBA")).unwrap();
     std::fs::write(d.path().join("Saves/GBA/Shantae (USA).sav"), b"progress").unwrap();
 
@@ -562,9 +558,7 @@ fn a_save_stuck_in_saves_gba_follows_its_gbc_rom() {
 fn gambatte_states_under_gba_follow_the_rom() {
     let d = tempdir().unwrap();
     write_gb_rom(&d.path().join("Games/GB/Tetris.gb"), 0x00);
-    let state = d
-        .path()
-        .join("States/GBA/gambatte/Tetris/resume.state");
+    let state = d.path().join("States/GBA/gambatte/Tetris/resume.state");
     std::fs::create_dir_all(state.parent().unwrap()).unwrap();
     std::fs::write(&state, b"resume").unwrap();
 
@@ -580,11 +574,7 @@ fn gambatte_states_under_gba_follow_the_rom() {
 #[test]
 fn duplicated_gambatte_states_keep_only_the_roms_platform() {
     let d = tempdir().unwrap();
-    write_gb_rom(
-        &d.path()
-            .join("Games/GBC/Shantae (USA).gbc"),
-        0xc0,
-    );
+    write_gb_rom(&d.path().join("Games/GBC/Shantae (USA).gbc"), 0xc0);
     for plat in ["GB", "GBC"] {
         let dir = d
             .path()
@@ -599,8 +589,5 @@ fn duplicated_gambatte_states_keep_only_the_roms_platform() {
         .path()
         .join("States/GBC/gambatte/Shantae (USA)/resume.state")
         .is_file());
-    assert!(!d
-        .path()
-        .join("States/GB/gambatte/Shantae (USA)")
-        .exists());
+    assert!(!d.path().join("States/GB/gambatte/Shantae (USA)").exists());
 }

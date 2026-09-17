@@ -2,7 +2,11 @@ use slot_power::{Battery, Charge};
 use slot_ui::{draw_gauge, Draw, Printed, TexId, GAUGE_W, WALL};
 
 fn percent_face() -> Printed {
-    Printed { face: None, w: 30, h: 0 }
+    Printed {
+        face: None,
+        w: 30,
+        h: 0,
+    }
 }
 
 fn quads(out: &[Draw]) -> Vec<(f32, f32, f32, f32)> {

@@ -628,9 +628,17 @@ fn the_gauge_sits_where_the_wordmark_did() {
             percent: 68,
             charge: Charge::Charging,
         }),
-        Printed { face: None, w: 30, h: 0 },
+        Printed {
+            face: None,
+            w: 30,
+            h: 0,
+        },
         Some(TexId::from_raw(1)),
-        Printed { face: None, w: 40, h: 0 },
+        Printed {
+            face: None,
+            w: 40,
+            h: 0,
+        },
         &mut out,
     );
     let leftmost = out
@@ -656,9 +664,17 @@ fn the_footer_does_not_move_the_gauge_when_the_charge_state_changes() {
             percent: 68,
             charge: Charge::Discharging,
         }),
-        Printed { face: None, w: 30, h: 0 },
+        Printed {
+            face: None,
+            w: 30,
+            h: 0,
+        },
         None,
-        Printed { face: None, w: 40, h: 0 },
+        Printed {
+            face: None,
+            w: 40,
+            h: 0,
+        },
         &mut idle,
     );
     let mut charging = Vec::new();
@@ -667,9 +683,17 @@ fn the_footer_does_not_move_the_gauge_when_the_charge_state_changes() {
             percent: 68,
             charge: Charge::Charging,
         }),
-        Printed { face: None, w: 30, h: 0 },
+        Printed {
+            face: None,
+            w: 30,
+            h: 0,
+        },
         Some(TexId::from_raw(2)),
-        Printed { face: None, w: 40, h: 0 },
+        Printed {
+            face: None,
+            w: 40,
+            h: 0,
+        },
         &mut charging,
     );
     for d in &idle {
@@ -688,7 +712,11 @@ fn the_clock_stays_at_the_right_margin() {
         None,
         Printed::default(),
         None,
-        Printed { face: None, w: 40, h: 0 },
+        Printed {
+            face: None,
+            w: 40,
+            h: 0,
+        },
         &mut out,
     );
     let rightmost = out
@@ -709,7 +737,11 @@ fn a_band_with_no_gauge_still_draws_its_clock() {
         None,
         Printed::default(),
         None,
-        Printed { face: None, w: 40, h: 0 },
+        Printed {
+            face: None,
+            w: 40,
+            h: 0,
+        },
         &mut out,
     );
     assert_eq!(out.len(), 1);

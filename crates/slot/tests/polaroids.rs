@@ -95,6 +95,23 @@ fn a_saved_state_opens_the_switcher_and_a_loads_it_back() {
     );
 }
 
+/// MENU tap opens play settings first; the double-tap's second press still has to land the
+/// switcher rather than vanish into the overlay.
+#[test]
+fn polaroids_opens_from_play_settings_after_a_menu_double_tap() {
+    let d = tmp_root_with_carts(&["Emerald"]);
+    let mut a = app_playing_in(d.path(), "Emerald");
+    a.apply(Action::SaveState);
+    a.apply(Action::QuickMenu);
+    assert!(a.play_settings_open());
+    a.apply(Action::Polaroids);
+    assert!(
+        matches!(a.phase(), Phase::Polaroids { .. }),
+        "double-tap MENU over play settings did not open the switcher: {:?}",
+        a.phase()
+    );
+}
+
 /// B is the way out, not a second load button.
 #[test]
 fn b_dismisses_the_switcher_without_loading() {

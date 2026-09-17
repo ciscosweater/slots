@@ -16,10 +16,10 @@ use slot_store::{
 use slot_ui::{
     board_at, board_zoom, draw_backdrop, draw_empty_slot, draw_footer, draw_printed, draw_sticker,
     ease, grown, lid_at, lift_of, on_board, ClockPicker, Draw, FfState, Hud, HudKind, Icon,
-    LinkBadge, Millis, Placed, Polaroids, PowerChoice, Printed, QuickMenu, QuickMenuFaces, QuickRow,
-    QuickValue, Refusal, Shelf, SlotChrome, StickerPage, TexId, Toast, BOARD_W, BOARD_X, CART_W,
-    CHIP_H, CHIP_U, CHIP_V, CHIP_W, HINT_EDGE, HINT_H, HOP_LIFT, MARK_MARGIN, SHADOW_H, SHADOW_W,
-    SOCKET_H, SOCKET_U, SOCKET_V, SOCKET_W, TURN_PAD,
+    LinkBadge, Millis, Placed, Polaroids, PowerChoice, Printed, QuickMenu, QuickMenuFaces,
+    QuickRow, QuickValue, Refusal, Shelf, SlotChrome, StickerPage, TexId, Toast, BOARD_W, BOARD_X,
+    CART_W, CHIP_H, CHIP_U, CHIP_V, CHIP_W, HINT_EDGE, HINT_H, HOP_LIFT, MARK_MARGIN, SHADOW_H,
+    SHADOW_W, SOCKET_H, SOCKET_U, SOCKET_V, SOCKET_W, TURN_PAD,
 };
 
 use crate::audio::Sfx;
@@ -829,7 +829,13 @@ impl App {
 
     /// Whether the in-game display settings are up over a paused cart.
     pub fn play_settings_open(&self) -> bool {
-        matches!(self.phase, Phase::QuickMenu { resume: Some(_), .. })
+        matches!(
+            self.phase,
+            Phase::QuickMenu {
+                resume: Some(_),
+                ..
+            }
+        )
     }
 
     /// Console tab → platform. ALL and REC have none: display edits there do not write.
@@ -1583,10 +1589,7 @@ impl App {
             && self.state.gb_overlay
             && !self.lcd_enabled()
             && self.video_mode != VideoMode::Stretch
-            && matches!(
-                self.game_platform(),
-                Some(Platform::Gb | Platform::Gbc)
-            )
+            && matches!(self.game_platform(), Some(Platform::Gb | Platform::Gbc))
     }
 
     pub fn face_buttons(&self) -> FaceButtons {
@@ -1824,6 +1827,11 @@ impl App {
             Phase::QuickMenu {
                 resume: Some(_), ..
             } if action == Action::Eject => self.eject(),
+            // Double-tap MENU fires Polaroids on the second press, after the first tap already
+            // opened play settings. Land the switcher from here rather than dropping the gesture.
+            Phase::QuickMenu {
+                resume: Some(_), ..
+            } if action == Action::Polaroids => self.open_polaroids(),
             Phase::Polaroids { .. } => match action {
                 Action::ShelfLeft | Action::GbaDown(Btn::Left) => self.flick(Polaroids::left),
                 Action::ShelfRight | Action::GbaDown(Btn::Right) => self.flick(Polaroids::right),
@@ -2006,9 +2014,13 @@ impl App {
         };
         match self.display_write_target() {
             Some((platform, Some(stem))) => {
-                if let Err(e) =
-                    clear_display_target(&root, DisplayTarget::Game { platform, stem: &stem })
-                {
+                if let Err(e) = clear_display_target(
+                    &root,
+                    DisplayTarget::Game {
+                        platform,
+                        stem: &stem,
+                    },
+                ) {
                     eprintln!("slot: display: {e}");
                 }
                 // Picture is per-cart only; clearing its line restores Actual.
@@ -3992,10 +4004,14 @@ impl App {
         if entries.is_empty() {
             return self.refuse();
         }
-        let Phase::Playing { cart } = &mut self.phase else {
-            return;
+        // Playing, or play settings still covering the cart (first half of a MENU double-tap).
+        let cart = match &mut self.phase {
+            Phase::Playing { cart } => std::mem::take(cart),
+            Phase::QuickMenu {
+                resume: Some(cart), ..
+            } => std::mem::take(cart),
+            _ => return,
         };
-        let cart = std::mem::take(cart);
         let mut p = Polaroids::new(entries);
         p.set_undo(self.undo_label());
         self.polaroids = Some(p);
@@ -4206,6 +4222,12 @@ impl App {
     /// happened: a refusal shakes instead.
     pub fn toast(&self) -> Option<Toast> {
         self.hud.said(self.now())
+    }
+
+    /// The codec will not open. One shot from the session so a dead ALSA host does not stay
+    /// silently muted with no word on the panel.
+    pub fn note_audio_unavailable(&mut self) {
+        self.hud.toast(Toast::AudioUnavailable, self.now());
     }
 
     /// One shot, and it hands the game back the way loading does. Undoing an undo would be a
