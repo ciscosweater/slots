@@ -1,11 +1,13 @@
 use std::path::PathBuf;
 
-use slot_input::{Action, Gestures, Millis, RawEvent};
-use slot_retro::Rumble;
+use slot_input::{Action, Btn, Gestures, Millis, RawEvent};
+use slot_retro::{ButtonMask, Rumble};
+use slot_store::FaceButtons;
 use slot_ui::FfState;
 
 use crate::app::{App, Phase};
 use crate::audio::{open_sink, AudioSink, Ring, Sfx, GBA_HZ};
+use crate::core::colour_correction_option;
 use crate::emu::{CoreState, EmuHandle, Speed};
 use crate::frames::FrameRef;
 use crate::input::Pad;
@@ -33,6 +35,11 @@ pub struct Session {
     sink_wanted: bool,
     gestures: Gestures,
     pad: Pad,
+    /// Physical X/Y held while playing. Those buttons have no GBA bits, so remapping them to
+    /// L/R or turbo A/B needs level state of its own.
+    xy_held: (bool, bool),
+    /// Alternates each UI update while a game is live so turbo A/B can pulse.
+    turbo_fire: bool,
     rewinding: bool,
     fast: bool,
     /// What the motor was last set to. On the device that setting is a write to hardware and
@@ -62,6 +69,8 @@ impl Session {
             sink_wanted: true,
             gestures: Gestures::new(),
             pad: Pad::default(),
+            xy_held: (false, false),
+            turbo_fire: false,
             rewinding: false,
             fast: false,
             motor: 0,
@@ -188,6 +197,7 @@ impl Session {
             // a menu, insertion or ejection and revive it when another game becomes visible.
             self.fast = false;
             self.rewinding = false;
+            self.xy_held = (false, false);
         }
         self.gestures.set_ff_latch(in_game);
         let mut actions = Vec::new();
@@ -240,6 +250,10 @@ impl Session {
             Action::RewindStop => self.rewinding = false,
             Action::FfStart if in_game => self.fast = true,
             Action::FfStop => self.fast = false,
+            Action::GbaDown(Btn::X) if in_game => self.xy_held.0 = true,
+            Action::GbaUp(Btn::X) => self.xy_held.0 = false,
+            Action::GbaDown(Btn::Y) if in_game => self.xy_held.1 = true,
+            Action::GbaUp(Btn::Y) => self.xy_held.1 = false,
             _ => {}
         }
         // A button a menu used is not the game's, on either edge of it: the press that opens
@@ -312,6 +326,9 @@ impl Session {
         self.sync_rewind_hud();
         self.sync_ff_hud();
         self.sync_rumble();
+        if self.playing() {
+            self.turbo_fire = !self.turbo_fire;
+        }
         self.sync_pad();
     }
 
@@ -321,8 +338,39 @@ impl Session {
         for btn in self.app.taken_buttons() {
             self.pad.apply(Action::GbaUp(*btn));
         }
+        let mut mask = self.pad.mask().0;
+        if self.playing() {
+            match self.app.face_buttons() {
+                FaceButtons::Shoulders => {
+                    if self.xy_held.0 {
+                        mask |= ButtonMask::L;
+                    }
+                    if self.xy_held.1 {
+                        mask |= ButtonMask::R;
+                    }
+                }
+                FaceButtons::Turbo => {
+                    if self.turbo_fire {
+                        if self.xy_held.0 {
+                            mask |= ButtonMask::A;
+                        }
+                        if self.xy_held.1 {
+                            mask |= ButtonMask::B;
+                        }
+                    }
+                }
+                FaceButtons::Shortcuts => {}
+            }
+        }
         if let Some(emu) = &self.emu {
-            emu.set_input(self.pad.mask());
+            emu.set_input(ButtonMask(mask));
+        }
+        if self.app.take_colour_dirty() {
+            if let Some(emu) = &self.emu {
+                let (key, value) =
+                    colour_correction_option(self.app.core(), self.app.colour_correction());
+                emu.set_option(key, value);
+            }
         }
     }
 

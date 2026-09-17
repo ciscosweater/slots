@@ -13,16 +13,20 @@ pub enum QuickRow {
     FastForwardSound,
     ColourCorrection,
     Rumble,
+    FaceButtons,
+    Overlay,
     DateTime,
     About,
 }
 
 impl QuickRow {
-    pub const ALL: [QuickRow; 6] = [
+    pub const ALL: [QuickRow; 8] = [
         QuickRow::FastForward,
         QuickRow::FastForwardSound,
         QuickRow::ColourCorrection,
         QuickRow::Rumble,
+        QuickRow::FaceButtons,
+        QuickRow::Overlay,
         QuickRow::DateTime,
         QuickRow::About,
     ];
@@ -38,6 +42,8 @@ impl QuickRow {
             QuickRow::FastForwardSound => "Fast Forward Sound",
             QuickRow::ColourCorrection => "Colour Correction",
             QuickRow::Rumble => "Rumble",
+            QuickRow::FaceButtons => "X / Y Buttons",
+            QuickRow::Overlay => "GB Overlay",
             QuickRow::DateTime => "Date & Time",
             QuickRow::About => "About",
         }
@@ -68,16 +74,22 @@ pub enum QuickValue {
     Speed6,
     On,
     Off,
+    Shortcuts,
+    Shoulders,
+    Turbo,
 }
 
 impl QuickValue {
-    pub const ALL: [QuickValue; 6] = [
+    pub const ALL: [QuickValue; 9] = [
         QuickValue::Speed2,
         QuickValue::Speed3,
         QuickValue::Speed4,
         QuickValue::Speed6,
         QuickValue::On,
         QuickValue::Off,
+        QuickValue::Shortcuts,
+        QuickValue::Shoulders,
+        QuickValue::Turbo,
     ];
 
     /// Position in `ALL`, which is the order in which faces are uploaded.
@@ -93,6 +105,9 @@ impl QuickValue {
             QuickValue::Speed6 => "6×",
             QuickValue::On => "On",
             QuickValue::Off => "Off",
+            QuickValue::Shortcuts => "Shortcuts",
+            QuickValue::Shoulders => "L / R",
+            QuickValue::Turbo => "A / B Turbo",
         }
     }
 
@@ -114,12 +129,19 @@ impl QuickValue {
             QuickValue::Off
         }
     }
+
+    pub fn face_buttons(mode: slot_store::FaceButtons) -> QuickValue {
+        match mode {
+            slot_store::FaceButtons::Shortcuts => QuickValue::Shortcuts,
+            slot_store::FaceButtons::Shoulders => QuickValue::Shoulders,
+            slot_store::FaceButtons::Turbo => QuickValue::Turbo,
+        }
+    }
 }
 
-/// A size up from the power menu's rows: 30 px type on 52 px rows, which the full width has room
-/// for.
-pub const QUICK_PITCH: f32 = 52.0;
-/// The first row's top, with all five centred on the panel.
+/// A size up from the power menu's rows. Eight rows at 44 px leave room for the legend.
+pub const QUICK_PITCH: f32 = 44.0;
+/// The first row's top, with all rows centred on the panel.
 pub const QUICK_TOP: f32 = (OUT_H as f32 - QUICK_PITCH * QuickRow::ALL.len() as f32) / 2.0;
 /// Labels start this far in from the left, and values end this far in from the right.
 pub const QUICK_EDGE: f32 = 32.0;
@@ -127,7 +149,7 @@ const BAR_INSET: f32 = 4.0;
 const TYPE_DROP: f32 = 4.0;
 const CARET_GAP: f32 = 14.0;
 const CARET_PX: f32 = 24.0;
-const LEGEND_Y: f32 = 427.0;
+const LEGEND_Y: f32 = 440.0;
 const DIM_INK: [u8; 3] = [0x9a, 0x9a, 0xa4];
 
 pub fn quick_label_face(row: QuickRow) -> UndoFace {

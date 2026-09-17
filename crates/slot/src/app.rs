@@ -8,16 +8,16 @@ use slot_retro::LinkChannel;
 use slot_store::{
     format_stamp, read_favorites, read_last_shelf, read_lcd, read_pixelify, read_recents,
     read_slot_state, touch_recent, write_favorites, write_last_shelf, write_lcd, write_pixelify,
-    write_recents, write_slot_state, Cart, Core, Platform, SlotState, StateEntry, StateRing, Theme,
-    BLUE_LIGHT_MAX, BRIGHTNESS_MAX, FF_SPEEDS, RING_MAX, VOLUME_MAX,
+    write_recents, write_slot_state, Cart, Core, FaceButtons, LastShelf, Platform, SlotState,
+    StateEntry, StateRing, Theme, BLUE_LIGHT_MAX, BRIGHTNESS_MAX, FF_SPEEDS, RING_MAX, VOLUME_MAX,
 };
 use slot_ui::{
     board_at, board_zoom, draw_backdrop, draw_empty_slot, draw_footer, draw_printed, draw_sticker,
-    ease, grown, lid_at, lift_of, mark_at, mark_box, on_board, ClockPicker, Draw, FfState, Hud,
-    HudKind, Icon, LinkBadge, Millis, Placed, Polaroids, PowerChoice, Printed, QuickMenu,
-    QuickMenuFaces, QuickRow, QuickValue, Refusal, Shelf, SlotChrome, StickerPage, TexId, Toast,
-    BOARD_W, BOARD_X, CART_W, CHIP_H, CHIP_U, CHIP_V, CHIP_W, HINT_EDGE, HINT_H, HOP_LIFT,
-    SHADOW_H, SHADOW_W, SOCKET_H, SOCKET_U, SOCKET_V, SOCKET_W, TURN_PAD,
+    ease, grown, lid_at, lift_of, on_board, ClockPicker, Draw, FfState, Hud, HudKind, Icon,
+    LinkBadge, Millis, Placed, Polaroids, PowerChoice, Printed, QuickMenu, QuickMenuFaces, QuickRow,
+    QuickValue, Refusal, Shelf, SlotChrome, StickerPage, TexId, Toast, BOARD_W, BOARD_X, CART_W,
+    CHIP_H, CHIP_U, CHIP_V, CHIP_W, HINT_EDGE, HINT_H, HOP_LIFT, MARK_MARGIN, SHADOW_H, SHADOW_W,
+    SOCKET_H, SOCKET_U, SOCKET_V, SOCKET_W, TURN_PAD,
 };
 
 use crate::audio::Sfx;
@@ -125,7 +125,7 @@ const CORE_PICKER_DIM: f32 = 0.614;
 const CORE_LEGEND_Y: f32 = 386.0;
 /// Separate tabs stay at the label font's full size. The old single string was fitted as one
 /// face, which made the whole row tiny and eventually clipped GBC off the right edge.
-const CATEGORY_GAP: f32 = 24.0;
+const CATEGORY_GAP: f32 = 16.0;
 const CATEGORY_Y: f32 = 8.0;
 const CATEGORY_IDLE_ALPHA: f32 = 0.35;
 /// Top of the link screen's one line of text: its baseline lands near y 74.
@@ -446,9 +446,7 @@ pub struct App {
     /// The last highlighted cart on the shelf. Kept separately from `state.cart`, which is the
     /// cart physically seated in the slot and is cleared as soon as it is ejected.
     last_shelf_stem: Option<String>,
-    /// Platform shelf currently shown. `None` is used by standalone App tests that supply a
-    /// single-platform library; boot selects the first available platform on a real card.
-    shelf_platform: Option<slot_store::Platform>,
+    last_shelf_category: Option<usize>,
     shelf_captions: BTreeMap<String, (Printed, Printed)>,
     favorite_caption: Printed,
     empty_caption: Printed,
@@ -468,6 +466,9 @@ pub struct App {
     pixelify: bool,
     font_revision: u64,
     state: SlotState,
+    /// Set when colour correction changes while a core is live, so the session can push the
+    /// new option without waiting for the next insert.
+    colour_dirty: bool,
     /// The volume and the silence as they stood before each of the last two volume presses,
     /// oldest first. The mute chord is delivered behind the two presses that make it, so
     /// toggling has to give back what they already moved.
@@ -529,8 +530,6 @@ pub struct App {
     /// The charging glyph, uploaded once at boot with the other icons rather than whenever
     /// the percent changes: unlike the percent, its face never varies.
     bolt: Option<TexId>,
-    /// One platform mark per `Platform::ALL`, uploaded once with the other static shelf art.
-    mark_faces: Vec<TexId>,
     shelf_clock: slot_ui::Printed,
     hud: Hud,
     /// How far up the game layer's own screen is. Not a phase: it outlives the insert, since
@@ -610,7 +609,7 @@ impl App {
             favorites: BTreeSet::new(),
             recents: Vec::new(),
             last_shelf_stem: None,
-            shelf_platform: None,
+            last_shelf_category: None,
             shelf_captions: BTreeMap::new(),
             favorite_caption: Printed::default(),
             empty_caption: Printed::default(),
@@ -628,6 +627,7 @@ impl App {
             pixelify: true,
             font_revision: 0,
             state: SlotState::default(),
+            colour_dirty: false,
             vol_before: Vec::new(),
             snapshot: None,
             core: Core::default(),
@@ -647,7 +647,6 @@ impl App {
             wallpaper: None,
             battery_percent: slot_ui::Printed::default(),
             bolt: None,
-            mark_faces: Vec::new(),
             shelf_clock: slot_ui::Printed::default(),
             hud: Hud::new(),
             screen: 0.0,
@@ -680,21 +679,14 @@ impl App {
         app.shelf.sort_by_favorites(&app.favorites);
         app.recents = read_recents(root);
         app.shelf.set_recents(app.recents.clone());
-        app.last_shelf_stem = read_last_shelf(root);
+        let last = read_last_shelf(root);
+        app.last_shelf_stem = last.stem;
+        app.last_shelf_category = last.category;
         app.lcd = read_lcd(root);
         app.pixelify = read_pixelify(root);
         slot_ui::text::set_pixelify(app.pixelify);
         app.state = read_slot_state(root);
-        let shelf_platform = app
-            .state
-            .cart_platform
-            .filter(|platform| app.shelf.has_platform(*platform))
-            .or_else(|| {
-                slot_store::Platform::ALL
-                    .into_iter()
-                    .find(|platform| app.shelf.has_platform(*platform))
-            });
-        app.set_shelf_platform(shelf_platform);
+        // Unified shelf: category tabs filter the full library. L1/R1 are letter jumps only.
         if app.state.clock_set {
             app.start();
         } else {
@@ -731,9 +723,9 @@ impl App {
         match seated {
             Some(i) => {
                 // The shelf sits on the resumed cart so ejecting it lands where it left.
-                let stem = self.shelf.carts[i].stem.clone();
-                self.platform = Some(self.shelf.carts[i].platform);
-                self.shelf.select_stem(&stem);
+                // Select by index, not stem: duplicate stems across platforms would otherwise
+                // snap to the first match and seat the wrong ROM.
+                self.shelf.select(i);
                 // Never clean: a resume is the whole point of the cart still being in there.
                 self.insert(false);
                 if let Phase::Inserting { resumed, t, .. } = &mut self.phase {
@@ -749,6 +741,9 @@ impl App {
                 self.state.cart = None;
                 self.state.cart_platform = None;
                 self.platform = None;
+                if let Some(category) = self.last_shelf_category {
+                    self.shelf.set_category(category);
+                }
                 if let Some(stem) = self.last_shelf_stem.clone() {
                     self.shelf.select_stem(&stem);
                 }
@@ -836,6 +831,8 @@ impl App {
             QuickRow::FastForwardSound => Some(QuickValue::flag(self.state.ff_sound)),
             QuickRow::ColourCorrection => Some(QuickValue::flag(self.state.colour_correction)),
             QuickRow::Rumble => Some(QuickValue::flag(self.state.rumble)),
+            QuickRow::FaceButtons => Some(QuickValue::face_buttons(self.state.face_buttons)),
+            QuickRow::Overlay => Some(QuickValue::flag(self.state.gb_overlay)),
             QuickRow::DateTime | QuickRow::About => None,
         }
     }
@@ -879,39 +876,6 @@ impl App {
         self.shelf.category()
     }
 
-    pub fn shelf_platform(&self) -> Option<slot_store::Platform> {
-        self.shelf_platform
-    }
-
-    fn set_shelf_platform(&mut self, platform: Option<slot_store::Platform>) {
-        self.shelf_platform = platform;
-        self.shelf.set_platform(platform);
-    }
-
-    fn switch_shelf_platform(&mut self, right: bool) {
-        let current = self
-            .shelf_platform
-            .and_then(|platform| {
-                slot_store::Platform::ALL
-                    .iter()
-                    .position(|p| *p == platform)
-            })
-            .unwrap_or(0);
-        for distance in 1..=slot_store::Platform::ALL.len() {
-            let offset = if right {
-                distance
-            } else {
-                slot_store::Platform::ALL.len() - distance
-            };
-            let platform =
-                slot_store::Platform::ALL[(current + offset) % slot_store::Platform::ALL.len()];
-            if self.shelf.has_platform(platform) {
-                self.set_shelf_platform(Some(platform));
-                return;
-            }
-        }
-    }
-
     pub fn cart_upload_priority(&self, stem: &str) -> usize {
         self.shelf.cart_upload_priority(stem)
     }
@@ -927,21 +891,6 @@ impl App {
 
     pub fn set_bolt_face(&mut self, bolt: TexId) {
         self.bolt = Some(bolt);
-    }
-
-    pub fn set_mark_faces(&mut self, faces: Vec<TexId>) {
-        self.mark_faces = faces;
-    }
-
-    /// The active platform icon is useful when the card contains more than one platform. A
-    /// single-platform card keeps the corner quiet, as there is no platform choice to explain.
-    fn shelf_mark(&self) -> Option<TexId> {
-        if !self.has_multiple_platforms() {
-            return None;
-        }
-        let platform = self.shelf_platform?;
-        let index = Platform::ALL.iter().position(|p| *p == platform)?;
-        self.mark_faces.get(index).copied()
     }
 
     /// The source rectangle used by the live game pass. The stored mode is only meaningful for
@@ -976,15 +925,22 @@ impl App {
         }
     }
 
-    /// Shoulders taken by slot itself while a Game Boy-family game is live. Those consoles have
-    /// no L/R buttons; the same physical inputs select the picture mode instead.
+    /// Buttons slot itself owns while a game is live. Game Boy L/R select the picture mode;
+    /// X/Y are taken when remapped so they never reach the core as face buttons.
     pub fn taken_buttons(&self) -> &'static [Btn] {
-        if matches!(self.phase, Phase::Playing { .. })
-            && matches!(self.platform, Some(Platform::Gb | Platform::Gbc))
-        {
-            &[Btn::L1, Btn::R1]
-        } else {
-            &[]
+        if !matches!(self.phase, Phase::Playing { .. }) {
+            return &[];
+        }
+        let gb = matches!(self.platform, Some(Platform::Gb | Platform::Gbc));
+        let remap = matches!(
+            self.state.face_buttons,
+            FaceButtons::Shoulders | FaceButtons::Turbo
+        );
+        match (gb, remap) {
+            (true, true) => &[Btn::L1, Btn::R1, Btn::X, Btn::Y],
+            (true, false) => &[Btn::L1, Btn::R1],
+            (false, true) => &[Btn::X, Btn::Y],
+            (false, false) => &[],
         }
     }
 
@@ -1136,33 +1092,25 @@ impl App {
     }
 
     fn draw_shelf_captions(&self, out: &mut Vec<Draw>) {
-        let tabs_w = self
+        let tabs: Vec<(usize, Printed)> = self
             .shelf_category_faces
             .iter()
+            .copied()
             .enumerate()
             .filter(|(i, _)| self.shelf.category_available(*i))
-            .map(|(_, face)| face.w as f32)
-            .sum::<f32>()
-            + CATEGORY_GAP
-                * self
-                    .shelf_category_faces
-                    .iter()
-                    .enumerate()
-                    .filter(|(i, _)| self.shelf.category_available(*i))
-                    .count()
-                    .saturating_sub(1) as f32;
-        let mut tab_x = ((OUT_W as f32 - tabs_w) / 2.0).round();
-        for (i, face) in self.shelf_category_faces.iter().copied().enumerate() {
-            if !self.shelf.category_available(i) {
-                continue;
-            }
+            .collect();
+        let tabs_w = tabs.iter().map(|(_, face)| face.w as f32).sum::<f32>()
+            + CATEGORY_GAP * tabs.len().saturating_sub(1) as f32;
+        let mut tab_x = (OUT_W as f32 - MARK_MARGIN - tabs_w).round();
+        for (i, face) in tabs {
             let selected = i == self.shelf.category();
+            let h = if face.h == 0 { HINT_H } else { face.h };
             if let Some(tex) = face.face {
                 out.push(Draw::Tex {
                     x: tab_x,
                     y: CATEGORY_Y,
                     w: face.w as f32,
-                    h: HINT_H as f32,
+                    h: h as f32,
                     tex,
                     alpha: if selected { 1.0 } else { CATEGORY_IDLE_ALPHA },
                 });
@@ -1507,16 +1455,19 @@ impl App {
     }
 
     fn toggle_lcd(&mut self) {
-        // Gambatte already supplies the handheld-specific image treatment for GB/GBC.
-        // Keep the compositor's GBA LCD mask out of that path and leave the persisted GBA
-        // preference untouched if X is pressed while either platform is seated.
-        if matches!(
-            self.game_platform(),
-            Some(slot_store::Platform::Gb | slot_store::Platform::Gbc)
-        ) {
-            return;
-        }
         self.lcd = !self.lcd;
+        // LCD, overlay, and Stretch are mutually exclusive on the picture.
+        if self.lcd && self.video_mode == VideoMode::Stretch {
+            if let Phase::Playing { cart } = &self.phase {
+                let cart = cart.clone();
+                self.video_mode = VideoMode::Actual;
+                if let Some(root) = &self.root {
+                    let _ = video_mode::write_video_mode(root, &cart, VideoMode::Actual);
+                }
+            } else {
+                self.video_mode = VideoMode::Actual;
+            }
+        }
         if let Some(root) = &self.root {
             if let Err(e) = write_lcd(root, self.lcd) {
                 eprintln!("slot: lcd: {e}");
@@ -1532,10 +1483,31 @@ impl App {
 
     pub fn lcd_enabled(&self) -> bool {
         self.lcd
-            && !matches!(
+    }
+
+    /// Whether the GB/GBC overlay should be composited this frame.
+    pub fn gb_overlay_visible(&self) -> bool {
+        self.state.gb_overlay
+            && !self.lcd_enabled()
+            && self.video_mode != VideoMode::Stretch
+            && matches!(
                 self.game_platform(),
-                Some(slot_store::Platform::Gb | slot_store::Platform::Gbc)
+                Some(Platform::Gb | Platform::Gbc)
             )
+    }
+
+    pub fn face_buttons(&self) -> FaceButtons {
+        self.state.face_buttons
+    }
+
+    pub fn take_colour_dirty(&mut self) -> bool {
+        std::mem::take(&mut self.colour_dirty)
+    }
+
+    fn toggle_colour_correction(&mut self) {
+        self.state.colour_correction = !self.state.colour_correction;
+        self.colour_dirty = true;
+        self.persist();
     }
 
     fn toggle_font(&mut self) {
@@ -1640,10 +1612,20 @@ impl App {
         if action == Action::GbaDown(Btn::X)
             && matches!(self.phase, Phase::Shelf | Phase::Playing { .. })
         {
-            if matches!(self.phase, Phase::Shelf) {
-                self.bump_shelf_idle();
+            let shortcuts = matches!(self.phase, Phase::Shelf)
+                || self.state.face_buttons == FaceButtons::Shortcuts;
+            if shortcuts {
+                if matches!(self.phase, Phase::Shelf) {
+                    self.bump_shelf_idle();
+                }
+                return self.toggle_lcd();
             }
-            return self.toggle_lcd();
+        }
+        if action == Action::GbaDown(Btn::Y)
+            && matches!(self.phase, Phase::Playing { .. })
+            && self.state.face_buttons == FaceButtons::Shortcuts
+        {
+            return self.toggle_colour_correction();
         }
         // The release reaches the shelf whatever is on screen. A direction let go of during
         // an insert would otherwise still be held when the cart comes back out.
@@ -1680,12 +1662,6 @@ impl App {
                     _ if self.core_picker.is_some() => self.core_picker_input(action),
                     Action::ShelfLeft | Action::GbaDown(Btn::Left) => self.shelf.hold_left(now),
                     Action::ShelfRight | Action::GbaDown(Btn::Right) => self.shelf.hold_right(now),
-                    Action::GbaDown(Btn::L1) if self.has_multiple_platforms() => {
-                        self.switch_shelf_platform(false)
-                    }
-                    Action::GbaDown(Btn::R1) if self.has_multiple_platforms() => {
-                        self.switch_shelf_platform(true)
-                    }
                     Action::GbaDown(Btn::L1) => self.shelf.previous_letter(),
                     Action::GbaDown(Btn::R1) => self.shelf.next_letter(),
                     Action::RewindStart => self.shelf.previous_category(),
@@ -1787,20 +1763,19 @@ impl App {
             return;
         }
         self.video_mode = mode;
+        // Stretch and LCD cannot share the picture; overlay draw already refuses Stretch.
+        if mode == VideoMode::Stretch && self.lcd {
+            self.lcd = false;
+            if let Some(root) = &self.root {
+                let _ = write_lcd(root, false);
+            }
+        }
         let (Some(root), Phase::Playing { cart }) = (self.root.clone(), &self.phase) else {
             return;
         };
         if let Err(e) = video_mode::write_video_mode(&root, cart, mode) {
             eprintln!("slot: video: could not write video_mode.ini: {e}");
         }
-    }
-
-    fn has_multiple_platforms(&self) -> bool {
-        slot_store::Platform::ALL
-            .into_iter()
-            .filter(|platform| self.shelf.has_platform(*platform))
-            .count()
-            > 1
     }
 
     /// MENU on the carousel. On the top row every time, however the menu was last left.
@@ -1840,7 +1815,9 @@ impl App {
             QuickRow::FastForward
             | QuickRow::FastForwardSound
             | QuickRow::ColourCorrection
-            | QuickRow::Rumble => {}
+            | QuickRow::Rumble
+            | QuickRow::FaceButtons
+            | QuickRow::Overlay => {}
         }
     }
 
@@ -1848,23 +1825,42 @@ impl App {
     /// the way brightness does, with no save step to forget. A press against an end changes
     /// nothing and writes nothing.
     fn change_setting(&mut self, row: QuickRow, right: bool) {
-        let s = &mut self.state;
         match row {
             QuickRow::FastForward => {
                 let to = if right {
-                    ff_next(s.ff_speed, true)
+                    ff_next(self.state.ff_speed, true)
                 } else {
-                    ff_next(s.ff_speed, false)
+                    ff_next(self.state.ff_speed, false)
                 };
-                if to == s.ff_speed {
+                if to == self.state.ff_speed {
                     return;
                 }
-                s.ff_speed = to;
+                self.state.ff_speed = to;
             }
-            // Two values each, so either arrow is the other one.
-            QuickRow::FastForwardSound => s.ff_sound = !s.ff_sound,
-            QuickRow::ColourCorrection => s.colour_correction = !s.colour_correction,
-            QuickRow::Rumble => s.rumble = !s.rumble,
+            QuickRow::FastForwardSound => self.state.ff_sound = !self.state.ff_sound,
+            QuickRow::ColourCorrection => {
+                self.state.colour_correction = !self.state.colour_correction;
+                self.colour_dirty = true;
+            }
+            QuickRow::Rumble => self.state.rumble = !self.state.rumble,
+            QuickRow::FaceButtons => {
+                self.state.face_buttons = self.state.face_buttons.next(right);
+            }
+            QuickRow::Overlay => {
+                let on = !self.state.gb_overlay;
+                self.state.gb_overlay = on;
+                if on {
+                    self.lcd = false;
+                    if let Some(root) = &self.root {
+                        let _ = write_lcd(root, false);
+                    }
+                    if matches!(self.platform, Some(Platform::Gb | Platform::Gbc))
+                        && self.video_mode == VideoMode::Stretch
+                    {
+                        self.video_mode = VideoMode::Actual;
+                    }
+                }
+            }
             QuickRow::DateTime | QuickRow::About => return,
         }
         self.persist();
@@ -2281,14 +2277,24 @@ impl App {
         let Some(stem) = self.selected_stem().map(str::to_owned) else {
             return;
         };
-        if self.last_shelf_stem.as_deref() == Some(stem.as_str()) {
+        let category = self.shelf.category();
+        if self.last_shelf_stem.as_deref() == Some(stem.as_str())
+            && self.last_shelf_category == Some(category)
+        {
             return;
         }
         self.last_shelf_stem = Some(stem.clone());
+        self.last_shelf_category = Some(category);
         let Some(root) = &self.root else {
             return;
         };
-        if let Err(e) = write_last_shelf(root, &stem) {
+        if let Err(e) = write_last_shelf(
+            root,
+            &LastShelf {
+                stem: Some(stem),
+                category: Some(category),
+            },
+        ) {
             eprintln!("slot: last shelf: {e}");
         }
     }
@@ -2567,22 +2573,6 @@ impl App {
         }
         // Over everything, in every phase. The bar is never what the user is looking at.
         self.hud.draw(self.now(), out);
-        // The platform mark belongs to the shelf, not to a seated cart or its switcher. Draw it
-        // after the HUD so it keeps the same undimmed ink as the link badge it replaces.
-        if matches!(self.phase, Phase::Shelf) {
-            if let Some(tex) = self.shelf_mark() {
-                let (w, h) = mark_box();
-                let (x, y) = mark_at(w as f32);
-                out.push(Draw::Tex {
-                    x,
-                    y,
-                    w: w as f32,
-                    h: h as f32,
-                    tex,
-                    alpha: 1.0,
-                });
-            }
-        }
     }
 
     pub fn screen_shake(&self) -> f32 {

@@ -92,6 +92,8 @@ fn up_and_down_move_the_bar_and_stop_at_the_ends() {
         QuickRow::FastForwardSound,
         QuickRow::ColourCorrection,
         QuickRow::Rumble,
+        QuickRow::FaceButtons,
+        QuickRow::Overlay,
         QuickRow::DateTime,
         QuickRow::About,
         QuickRow::About,

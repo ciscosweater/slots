@@ -316,8 +316,8 @@ fn loose_card() -> tempfile::TempDir {
     d
 }
 
-/// Every card in existence is entirely loose and entirely GBA, so the sweep needs no per-file
-/// classification. Contents must survive untouched: this moves a player's saves.
+/// Every pre-Game-Boy card is entirely loose GBA content. ROMs and their companions move
+/// together into `GBA/`; contents must survive untouched.
 #[test]
 fn a_loose_card_is_swept_into_gba() {
     let d = loose_card();
@@ -486,4 +486,121 @@ fn migrate_states_then_migrate_platforms_lands_a_pre_namespacing_state_under_its
         std::fs::read(d.path().join("States/GBA/mgba/Emerald/resume.state")).unwrap(),
         b"resume"
     );
+}
+
+fn write_gb_rom(path: &std::path::Path, cgb_flag: u8) {
+    let mut bytes = vec![0u8; 0x150];
+    bytes[0x143] = cgb_flag;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).unwrap();
+    }
+    std::fs::write(path, bytes).unwrap();
+}
+
+#[test]
+fn a_loose_gb_rom_goes_to_gb_not_gba() {
+    let d = tempdir().unwrap();
+    std::fs::create_dir_all(d.path().join("Games")).unwrap();
+    std::fs::create_dir_all(d.path().join("Saves")).unwrap();
+    write_gb_rom(&d.path().join("Games/Tetris.gb"), 0x00);
+    std::fs::write(d.path().join("Saves/Tetris.sav"), b"save").unwrap();
+
+    migrate_platforms(d.path()).unwrap();
+
+    assert!(d.path().join("Games/GB/Tetris.gb").is_file());
+    assert!(!d.path().join("Games/GBA/Tetris.gb").exists());
+    assert_eq!(
+        std::fs::read(d.path().join("Saves/GB/Tetris.sav")).unwrap(),
+        b"save"
+    );
+}
+
+#[test]
+fn a_loose_colour_only_rom_goes_to_gbc() {
+    let d = tempdir().unwrap();
+    std::fs::create_dir_all(d.path().join("Games")).unwrap();
+    write_gb_rom(&d.path().join("Games/Crystal.gbc"), 0xc0);
+
+    migrate_platforms(d.path()).unwrap();
+
+    assert!(d.path().join("Games/GBC/Crystal.gbc").is_file());
+    assert!(!d.path().join("Games/GBA/Crystal.gbc").exists());
+}
+
+#[test]
+fn a_gb_rom_stuck_in_games_gba_is_repaired() {
+    let d = tempdir().unwrap();
+    write_gb_rom(&d.path().join("Games/GBA/Tetris.gb"), 0x00);
+
+    migrate_platforms(d.path()).unwrap();
+
+    assert!(d.path().join("Games/GB/Tetris.gb").is_file());
+    assert!(!d.path().join("Games/GBA/Tetris.gb").exists());
+}
+
+#[test]
+fn a_save_stuck_in_saves_gba_follows_its_gbc_rom() {
+    let d = tempdir().unwrap();
+    write_gb_rom(
+        &d.path()
+            .join("Games/GBC/Shantae (USA).gbc"),
+        0xc0,
+    );
+    std::fs::create_dir_all(d.path().join("Saves/GBA")).unwrap();
+    std::fs::write(d.path().join("Saves/GBA/Shantae (USA).sav"), b"progress").unwrap();
+
+    migrate_platforms(d.path()).unwrap();
+
+    assert_eq!(
+        std::fs::read(d.path().join("Saves/GBC/Shantae (USA).sav")).unwrap(),
+        b"progress"
+    );
+    assert!(!d.path().join("Saves/GBA/Shantae (USA).sav").exists());
+}
+
+#[test]
+fn gambatte_states_under_gba_follow_the_rom() {
+    let d = tempdir().unwrap();
+    write_gb_rom(&d.path().join("Games/GB/Tetris.gb"), 0x00);
+    let state = d
+        .path()
+        .join("States/GBA/gambatte/Tetris/resume.state");
+    std::fs::create_dir_all(state.parent().unwrap()).unwrap();
+    std::fs::write(&state, b"resume").unwrap();
+
+    migrate_platforms(d.path()).unwrap();
+
+    assert_eq!(
+        std::fs::read(d.path().join("States/GB/gambatte/Tetris/resume.state")).unwrap(),
+        b"resume"
+    );
+    assert!(!d.path().join("States/GBA/gambatte/Tetris").exists());
+}
+
+#[test]
+fn duplicated_gambatte_states_keep_only_the_roms_platform() {
+    let d = tempdir().unwrap();
+    write_gb_rom(
+        &d.path()
+            .join("Games/GBC/Shantae (USA).gbc"),
+        0xc0,
+    );
+    for plat in ["GB", "GBC"] {
+        let dir = d
+            .path()
+            .join(format!("States/{plat}/gambatte/Shantae (USA)"));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("resume.state"), b"same").unwrap();
+    }
+
+    migrate_platforms(d.path()).unwrap();
+
+    assert!(d
+        .path()
+        .join("States/GBC/gambatte/Shantae (USA)/resume.state")
+        .is_file());
+    assert!(!d
+        .path()
+        .join("States/GB/gambatte/Shantae (USA)")
+        .exists());
 }

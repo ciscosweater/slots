@@ -667,7 +667,7 @@ fn the_shelf_selection_survives_a_reboot_and_a_render() {
     app.apply(Action::GbaDown(Btn::Right));
     app.apply(Action::GbaDown(Btn::Right));
     assert_eq!(app.selected_stem(), Some("Crash"));
-    assert_eq!(read_last_shelf(d.path()).as_deref(), Some("Crash"));
+    assert_eq!(read_last_shelf(d.path()).stem.as_deref(), Some("Crash"));
 
     let rebooted = App::boot(d.path());
     assert_eq!(rebooted.selected_stem(), Some("Crash"));
@@ -686,7 +686,7 @@ fn a_held_shelf_direction_persists_the_cart_reached_by_repeat() {
     // the frame loop, rather than relying only on the initial button press.
     app.update(0.4);
     assert_eq!(app.selected_stem(), Some("Crash"));
-    assert_eq!(read_last_shelf(d.path()).as_deref(), Some("Crash"));
+    assert_eq!(read_last_shelf(d.path()).stem.as_deref(), Some("Crash"));
     app.apply(Action::GbaUp(Btn::Right));
 }
 
@@ -733,7 +733,21 @@ fn the_recents_category_survives_a_reboot() {
     .unwrap();
     let mut rebooted = App::boot(d.path());
     rebooted.apply(Action::FfStart);
+    assert_eq!(rebooted.shelf_category(), 1);
     assert_eq!(rebooted.selected_stem(), Some("Boktai"));
+
+    // Category itself is durable: leave REC selected, reboot, land on REC without pressing R2.
+    write_slot_state(
+        d.path(),
+        &SlotState {
+            clock_set: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let again = App::boot(d.path());
+    assert_eq!(again.shelf_category(), 1);
+    assert_eq!(again.selected_stem(), Some("Boktai"));
 }
 
 #[test]
@@ -755,7 +769,7 @@ fn x_toggles_the_persistent_lcd_effect() {
 }
 
 #[test]
-fn gb_and_gbc_lock_the_lcd_effect_off_without_changing_the_gba_preference() {
+fn gb_and_gbc_can_toggle_lcd_and_that_hides_the_overlay() {
     for platform in [slot_store::Platform::Gb, slot_store::Platform::Gbc] {
         let mut app = App::new(vec![
             Cart {
@@ -782,19 +796,33 @@ fn gb_and_gbc_lock_the_lcd_effect_off_without_changing_the_gba_preference() {
             },
         ]);
 
-        assert!(app.lcd_enabled(), "the shelf keeps the saved GBA setting");
+        assert!(app.lcd_enabled(), "the shelf keeps the saved setting");
         app.apply(Action::Insert);
-        assert!(!app.lcd_enabled(), "{platform:?} enabled the GBA LCD mask");
-        app.apply(Action::GbaDown(Btn::X));
-        assert!(!app.lcd_enabled(), "{platform:?} let X enable the LCD mask");
-        app.apply(Action::Eject);
+        app.on_core_ready();
         for _ in 0..120 {
             app.update(1.0 / 60.0);
         }
         assert!(
-            app.lcd_enabled(),
-            "{platform:?} changed the persisted GBA preference"
+            matches!(app.phase(), Phase::Playing { .. }),
+            "{platform:?} never reached Playing"
         );
+        assert!(
+            app.lcd_enabled(),
+            "{platform:?} cleared the LCD preference on insert"
+        );
+        assert!(
+            !app.gb_overlay_visible(),
+            "{platform:?} drew the overlay over an LCD picture"
+        );
+        app.apply(Action::GbaDown(Btn::X));
+        assert!(!app.lcd_enabled(), "{platform:?} ignored X");
+        assert!(
+            app.gb_overlay_visible(),
+            "{platform:?} hid the overlay with LCD off"
+        );
+        app.apply(Action::GbaDown(Btn::X));
+        assert!(app.lcd_enabled(), "{platform:?} could not turn LCD back on");
+        assert!(!app.gb_overlay_visible());
     }
 }
 

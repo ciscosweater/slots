@@ -3,7 +3,8 @@ use slot_store::Platform;
 
 use crate::art::render_svg;
 use crate::hud::HUD_INK;
-use crate::icon::{haloed, HALO_PX};
+use crate::icon::{haloed, symbols_font, HALO_PX};
+use crate::plate::UndoFace;
 use crate::CartFace;
 
 /// One per shelf, and the reason the carousel no longer has to say its shelf's name out loud:
@@ -30,7 +31,15 @@ const GBC_SVG: &str = include_str!("../assets/platform_gbc.svg");
 /// a height that leaves `MARK_H * 5 / 8` with a remainder squeezes every drawing by the rounding.
 pub const MARK_H: u32 = 48;
 
+/// Category tab icons in the top-right: small enough to sit as a row, large enough to read as
+/// the platform marks they reuse. Multiple of 8 for the same 5:8 box reason as `MARK_H`.
+pub const TAB_MARK_H: u32 = 24;
+pub const TAB_MARK_W: u32 = TAB_MARK_H * 5 / 8;
+const TAB_GLYPH_PX: f32 = 22.0;
+
 /// How far the mark's box is held off the right edge and the top of the screen.
+///
+/// Shared by the category tab row so the icons and the clock share one right edge.
 ///
 /// The right margin is the case's own, the one `draw_footer` prints the gauge and the clock at,
 /// rather than the 12 px `badge_at` holds the link badge off at. That is the whole of what made
@@ -46,7 +55,7 @@ pub const MARK_H: u32 = 48;
 /// their band — near enough that the corners read as a pair. Rendered at 8, 12, 16 and 20 and
 /// looked at: 8 is still the complaint, 12 is comfortable, 16 is plainly deliberate, and by 20
 /// the mark has come away from its corner and floats.
-const MARK_MARGIN: f32 = 24.0;
+pub const MARK_MARGIN: f32 = 24.0;
 const MARK_TOP: f32 = 16.0;
 
 /// Where a mark of this size goes. Its own rule rather than `badge_at`, which it used to share.
@@ -116,12 +125,37 @@ pub fn mark_box() -> (u32, u32) {
 /// coming out darker than the grey it was meant to replace. The plate is monochrome and this
 /// stays monochrome with it.
 pub fn mark_face(platform: Platform) -> CartFace {
+    platform_face(platform, MARK_W, MARK_H)
+}
+
+/// Shelf category tabs: ALL / REC as symbols, GBA / GB / GBC as the platform drawings at tab size.
+pub fn category_tab_face(category: usize) -> UndoFace {
+    let face = match category {
+        0 => glyph_tab('\u{f00a}'), // th / grid — the whole library
+        1 => glyph_tab('\u{f1da}'), // history — recents
+        2 => platform_face(Platform::Gba, TAB_MARK_W, TAB_MARK_H),
+        3 => platform_face(Platform::Gb, TAB_MARK_W, TAB_MARK_H),
+        4 => platform_face(Platform::Gbc, TAB_MARK_W, TAB_MARK_H),
+        _ => CartFace {
+            rgba: Vec::new(),
+            w: 0,
+            h: 0,
+        },
+    };
+    UndoFace {
+        rgba: face.rgba,
+        w: face.w,
+        h: face.h,
+    }
+}
+
+fn platform_face(platform: Platform, w: u32, h: u32) -> CartFace {
     let svg = match platform {
         Platform::Gba => GBA_SVG,
         Platform::Gb => GB_SVG,
         Platform::Gbc => GBC_SVG,
     };
-    let Some(rgba) = render_svg(svg, MARK_W, MARK_H) else {
+    let Some(rgba) = render_svg(svg, w, h) else {
         return CartFace {
             rgba: Vec::new(),
             w: 0,
@@ -129,7 +163,26 @@ pub fn mark_face(platform: Platform) -> CartFace {
         };
     };
     let cov: Vec<u8> = rgba.chunks_exact(4).map(|px| boosted(px[3])).collect();
-    haloed(&cov, MARK_W, MARK_H, HUD_INK)
+    haloed(&cov, w, h, HUD_INK)
+}
+
+fn glyph_tab(glyph: char) -> CartFace {
+    let Some(font) = symbols_font() else {
+        return CartFace {
+            rgba: Vec::new(),
+            w: 0,
+            h: 0,
+        };
+    };
+    let (m, cov) = font.rasterize(glyph, TAB_GLYPH_PX);
+    if m.width == 0 || m.height == 0 {
+        return CartFace {
+            rgba: Vec::new(),
+            w: 0,
+            h: 0,
+        };
+    }
+    haloed(&cov, m.width as u32, m.height as u32, HUD_INK)
 }
 
 /// One coverage byte through `INK_GAMMA`. Kept apart from the loop so a test can hold the curve
@@ -164,6 +217,16 @@ mod tests {
         }
     }
 
+    #[test]
+    fn every_category_tab_has_ink() {
+        for category in 0..5 {
+            let face = category_tab_face(category);
+            assert!(face.w > 0 && face.h > 0, "category {category} has no box");
+            let inked = face.rgba.chunks_exact(4).filter(|px| px[3] > 0).count();
+            assert!(inked > 0, "category {category} rastered to nothing");
+        }
+    }
+
     /// The box is the 5:8 the three viewBoxes were re-fitted to, exactly, with no rounding left
     /// over. `render_svg` scales x and y independently, so a height that leaves `MARK_H * 5 / 8`
     /// with a remainder does not letterbox the drawing — it squeezes it, by up to a pixel, in
@@ -175,6 +238,11 @@ mod tests {
             MARK_W * 8,
             MARK_H * 5,
             "a {MARK_W}x{MARK_H} mark is not 5:8: pick a height that is a multiple of 8"
+        );
+        assert_eq!(
+            TAB_MARK_W * 8,
+            TAB_MARK_H * 5,
+            "a {TAB_MARK_W}x{TAB_MARK_H} tab mark is not 5:8"
         );
     }
 

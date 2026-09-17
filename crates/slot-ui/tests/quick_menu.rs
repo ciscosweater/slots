@@ -60,13 +60,25 @@ fn the_rows_and_values_match_the_menu() {
             "Fast Forward Sound",
             "Colour Correction",
             "Rumble",
+            "X / Y Buttons",
+            "GB Overlay",
             "Date & Time",
             "About"
         ]
     );
     assert_eq!(
         QuickValue::ALL.map(QuickValue::text),
-        ["2×", "3×", "4×", "6×", "On", "Off"]
+        [
+            "2×",
+            "3×",
+            "4×",
+            "6×",
+            "On",
+            "Off",
+            "Shortcuts",
+            "L / R",
+            "A / B Turbo"
+        ]
     );
     assert_eq!(
         [2, 3, 4, 6].map(QuickValue::speed),

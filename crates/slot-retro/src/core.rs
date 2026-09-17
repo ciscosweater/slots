@@ -115,6 +115,9 @@ pub trait RetroCore: Send {
     /// never offered one simply has nothing to hear this through, and the default does
     /// nothing.
     fn stop_link(&mut self) {}
+    /// Push a core option. Real libretro cores honour this on the next variable poll; mocks
+    /// ignore it.
+    fn set_option(&mut self, _key: &str, _value: &str) {}
 }
 
 #[cfg(test)]

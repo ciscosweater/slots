@@ -2,8 +2,8 @@ mod common;
 
 use common::tmp_root;
 use slot_store::{
-    atomic_write, read_last_shelf, read_slot_state, write_last_shelf, write_slot_state, SlotState,
-    FF_SPEED_DEFAULT,
+    atomic_write, read_last_shelf, read_slot_state, write_last_shelf, write_slot_state, FaceButtons,
+    LastShelf, SlotState, FF_SPEED_DEFAULT,
 };
 use tempfile::tempdir;
 
@@ -25,11 +25,26 @@ fn atomic_write_leaves_no_partial_file_and_no_temp_behind() {
 #[test]
 fn the_last_shelf_selection_round_trips_separately_from_slot_state() {
     let d = tmp_root();
-    write_last_shelf(d.path(), "Pokemon = Emerald").unwrap();
-    assert_eq!(
-        read_last_shelf(d.path()).as_deref(),
-        Some("Pokemon = Emerald")
-    );
+    write_last_shelf(
+        d.path(),
+        &LastShelf {
+            stem: Some("Pokemon = Emerald".into()),
+            category: Some(2),
+        },
+    )
+    .unwrap();
+    let got = read_last_shelf(d.path());
+    assert_eq!(got.stem.as_deref(), Some("Pokemon = Emerald"));
+    assert_eq!(got.category, Some(2));
+}
+
+#[test]
+fn a_legacy_stem_only_last_shelf_file_still_reads() {
+    let d = tmp_root();
+    std::fs::write(d.path().join("System/last_shelf.txt"), b"Crash\n").unwrap();
+    let got = read_last_shelf(d.path());
+    assert_eq!(got.stem.as_deref(), Some("Crash"));
+    assert_eq!(got.category, None);
 }
 
 #[test]
@@ -55,6 +70,8 @@ fn slot_state_round_trips_including_a_stem_with_an_equals_sign() {
         ff_speed: 4,
         ff_sound: false,
         colour_correction: false,
+        gb_overlay: true,
+        face_buttons: FaceButtons::Shortcuts,
     };
     write_slot_state(d.path(), &s).unwrap();
     assert_eq!(read_slot_state(d.path()), s);
@@ -126,6 +143,8 @@ fn slot_state_round_trips_a_negative_utc_offset() {
         ff_speed: 4,
         ff_sound: false,
         colour_correction: false,
+        gb_overlay: true,
+        face_buttons: FaceButtons::Shortcuts,
     };
     write_slot_state(d.path(), &s).unwrap();
     assert_eq!(read_slot_state(d.path()).utc_offset_min, -450);
@@ -190,12 +209,22 @@ fn the_quick_menu_settings_round_trip_as_their_own_lines() {
         rumble: false,
         ff_speed: 2,
         ff_sound: true,
+        colour_correction: true,
+        gb_overlay: false,
+        face_buttons: FaceButtons::Turbo,
         ..SlotState::default()
     };
     write_slot_state(d.path(), &s).unwrap();
     assert_eq!(read_slot_state(d.path()), s);
     let text = std::fs::read_to_string(d.path().join("System/slot.state")).unwrap();
-    for line in ["rumble=0", "ff_speed=2", "ff_sound=1"] {
+    for line in [
+        "rumble=0",
+        "ff_speed=2",
+        "ff_sound=1",
+        "colour_correction=1",
+        "gb_overlay=0",
+        "face_buttons=turbo",
+    ] {
         assert!(text.lines().any(|written| written == line), "no {line}");
     }
 }

@@ -322,7 +322,9 @@ impl Shelf {
         self.set_category(self.category);
     }
 
-    fn set_category(&mut self, category: usize) {
+    /// Rebuild the visible row for a category index. Used by boot restore and by the
+    /// shoulder category controls.
+    pub fn set_category(&mut self, category: usize) {
         let selected = self.carts.get(self.index).map(|c| c.stem.clone());
         self.category = category;
         let wanted = |cart: &Cart| {

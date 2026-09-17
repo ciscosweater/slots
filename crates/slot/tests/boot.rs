@@ -5,7 +5,7 @@ mod common;
 
 use common::{boot, tmp_root_with_carts};
 use slot::app::{App, Phase};
-use slot_input::{Action, Btn};
+use slot_input::Action;
 use slot_store::{read_slot_state, write_slot_state, Platform, SlotState};
 
 fn seated(cart: &str) -> SlotState {
@@ -117,6 +117,8 @@ fn seating_a_cart_preserves_the_levels_already_in_the_file() {
             ff_speed: 4,
             ff_sound: false,
             colour_correction: false,
+            gb_overlay: true,
+            face_buttons: slot_store::FaceButtons::Shortcuts,
         },
     )
     .unwrap();
@@ -292,18 +294,22 @@ fn a_named_shelf_that_no_longer_has_the_cart_is_an_empty_slot() {
     );
 }
 
-/// The other half of the round trip: what a session actually writes down. Ringing to the Game
-/// Boy shelf and seating the cart standing on it has to record that shelf, or the next boot
+/// The other half of the round trip: what a session actually writes down. Opening the Game Boy
+/// category and seating the cart standing on it has to record that platform, or the next boot
 /// resolves the same ambiguous stem all over again and lands on the GBA cart.
 #[test]
 fn seating_a_cart_records_the_shelf_it_came_off() {
     let d = two_tetrises();
     let mut a = boot(d.path());
-    a.apply(Action::GbaDown(Btn::R1));
+    // ALL → REC → GBA → GB
+    for _ in 0..3 {
+        a.apply(Action::FfStart);
+    }
+    assert_eq!(a.shelf_category(), 3);
     assert_eq!(
         a.selected_stem(),
         Some("Tetris"),
-        "the shoulder did not ring to the Game Boy shelf"
+        "the Game Boy category did not land on Tetris"
     );
     a.apply(Action::Insert);
     a.on_core_ready();

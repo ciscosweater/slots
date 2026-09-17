@@ -133,7 +133,7 @@ fn the_gauge_stays_clear_of_the_title_on_the_left() {
             percent: 68,
             charge: Charge::Charging,
         }),
-        Printed { face: None, w: 30 },
+        Printed { face: None, w: 30, h: 0 },
         Some(TexId::from_raw(7)),
         Printed::default(),
         &mut out,
@@ -174,7 +174,7 @@ fn the_clock_stays_clear_of_the_title_on_the_right() {
         None,
         Printed::default(),
         None,
-        Printed { face: None, w: 40 },
+        Printed { face: None, w: 40, h: 0 },
         &mut out,
     );
     let clock: Vec<_> = out
@@ -205,7 +205,7 @@ fn a_switcher_with_no_gauge_still_shows_its_clock() {
         None,
         Printed::default(),
         None,
-        Printed { face: None, w: 40 },
+        Printed { face: None, w: 40, h: 0 },
         &mut out,
     );
     assert!(
@@ -220,8 +220,8 @@ fn a_switcher_with_no_gauge_still_shows_its_clock() {
 #[test]
 fn nothing_on_the_plate_moves_when_the_charge_state_changes() {
     let p = switcher();
-    let percent = Printed { face: None, w: 30 };
-    let clock = Printed { face: None, w: 40 };
+    let percent = Printed { face: None, w: 30, h: 0 };
+    let clock = Printed { face: None, w: 40, h: 0 };
     let mut idle = Vec::new();
     p.draw(
         Some(Battery {

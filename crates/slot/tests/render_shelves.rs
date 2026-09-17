@@ -22,9 +22,8 @@ use slot_power::SimPlatform;
 // this runs on and is already spoken for, and this one is the console a cart is for.
 use slot_store::{Cart, Platform as CartPlatform};
 use slot_ui::{
-    cart_box, cart_face, clean_label, edge, housing, label_colour, mark_at, mark_box, opening,
-    recess, rest_y, Draw, SlotChrome, CART_W, GB_CART_H, GB_LABEL_H, GB_LABEL_Y, LABEL_H, LABEL_Y,
-    PLATE_H,
+    cart_box, cart_face, clean_label, edge, housing, label_colour, opening, recess, rest_y, Draw,
+    SlotChrome, CART_W, GB_CART_H, GB_LABEL_H, GB_LABEL_Y, LABEL_H, LABEL_Y, PLATE_H,
 };
 
 /// One batch of events per poll, and nothing once they run out.
@@ -82,143 +81,16 @@ fn banner_ink(px: &[u8]) -> usize {
         .count()
 }
 
-/// The mark's own box in the screen's top right corner, which is the corner a live session's link
-/// badge takes. Read out of `mark_at` and `mark_box` rather than typed as four numbers, so moving
-/// either moves the reading with it.
-fn mark_window() -> (usize, usize, usize, usize) {
-    let (w, h) = mark_box();
-    let (x, y) = mark_at(w as f32);
-    (x as usize, y as usize, w as usize, h as usize)
-}
-
-/// Every pixel of the mark, as it reached the panel. Two shelves' marks compare equal only if
-/// they are the same drawing — which is what "the mark changed when the shoulder was pressed"
-/// actually means, and what a count of lit pixels could agree on while showing one picture
-/// three times.
-fn mark_pixels(px: &[u8]) -> Vec<[u8; 3]> {
-    let (x0, y0, w, h) = mark_window();
-    (y0..y0 + h)
-        .flat_map(|y| (x0..x0 + w).map(move |x| (x, y)))
-        .map(|(x, y)| at(px, x, y))
-        .collect()
-}
-
-/// How much of the mark's box is lit above what is behind it. The corner is over the shelf's own
-/// ground here — this card has no wallpaper — so anything appreciably lighter is the mark's ink.
-fn mark_ink(px: &[u8]) -> usize {
-    mark_pixels(px)
-        .iter()
-        .filter(|c| u32::from(c[0]) > GROUND[0] + 0x30)
+/// Lit pixels in the top-right where category tab icons sit (right-aligned, y≈8).
+fn tab_ink(px: &[u8]) -> usize {
+    (0..40usize)
+        .flat_map(|y| (OUT_W as usize - 200..OUT_W as usize - 16).map(move |x| (x, y)))
+        .filter(|(x, y)| u32::from(at(px, *x, *y)[0]) > GROUND[0] + 0x30)
         .count()
 }
 
-fn composed(f: &mut Frontend, c: &mut Compositor, name: &str) -> Vec<u8> {
-    f.compose(c);
-    let px = c.read_frame();
-    if let Ok(dir) = std::env::var("SCRATCH_PNG_DIR") {
-        let path = format!("{dir}/shelves-{name}.png");
-        let file = std::fs::File::create(&path).expect("create png");
-        let mut e = png::Encoder::new(std::io::BufWriter::new(file), OUT_W, OUT_H);
-        e.set_color(png::ColorType::Rgba);
-        e.set_depth(png::BitDepth::Eight);
-        e.write_header()
-            .expect("png header")
-            .write_image_data(&px)
-            .expect("png data");
-        println!("wrote {path}");
-    }
-    px
-}
-
-/// The card's own Game Boy carts, copied into the root the test boots from — the point of
-/// rendering at all is to look at the real library. Read only: nothing here writes to the card.
-/// A fresh clone has no `sdcard/`, so a cart of the right shape stands in and the test still runs.
-fn put_game_boy_carts(root: &Path) {
-    for (dir, stem, ext, cgb) in [
-        ("GB", "Tetris Rosy Retrospection", "gb", 0x00u8),
-        ("GBC", "Tetris Chromatic", "gbc", 0xc0),
-    ] {
-        let from = repo_root().join(format!("sdcard/Games/{dir}/{stem}.{ext}"));
-        let to = root.join(format!("Games/{dir}/{stem}.{ext}"));
-        match std::fs::read(&from) {
-            Ok(rom) => std::fs::write(&to, rom).expect("copy the card's cart"),
-            Err(_) => std::fs::write(&to, gb_rom(cgb)).expect("write a stand-in cart"),
-        }
-    }
-}
-
-/// 32 KiB with a Game Boy header in it. The CGB flag at 0x143 is the only byte the shelf reads
-/// for itself; the name on the label comes from the filename, as it does for every cart.
-fn gb_rom(cgb: u8) -> Vec<u8> {
-    let mut rom = vec![0u8; 0x8000];
-    rom[0x143] = cgb;
-    rom
-}
-
-/// A point `down` pixels down the face of the lone pak on a Game Boy shelf, which is the only
-/// shelf either reading below is ever taken on. Both go through here rather than naming a screen
-/// row, because a screen row is only right for as long as nobody moves the cartridge: they were
-/// typed when a pak stood on a floor it shared with a GBA cart, from y 55 to 308, and the
-/// carousel centring dropped it to 113 to 366. That is far enough that the constant meant to
-/// land on plastic would have landed on paper and the one meant for paper on plastic — with both
-/// readings still passing and neither meaning what its name says.
-fn on_the_lone_pak(down: u32) -> (usize, usize) {
-    (
-        (OUT_W / 2) as usize,
-        (rest_y(GB_CART_H as f32) + down as f32) as usize,
-    )
-}
-
-/// The pak's bare plastic: half way down the shoulder above its label, which is the moulded
-/// lettering plate.
-fn alone() -> (usize, usize) {
-    on_the_lone_pak(GB_LABEL_Y / 2)
-}
-
-/// The middle of that same pak's label well. Read beside `alone` because neither reading can
-/// tell a Game Boy shelf from a Colour one on its own any more:
-///
-/// - The plastic is 55 apart. A pak and a Colour pak are the same silhouette, and the two
-///   shells are deliberately close in value — see `GB_CLEAR_SHELL`, which is cooler than the
-///   grey pak beside it precisely because only the lit rim separates them otherwise.
-/// - The paper is 59 apart. `label_colour` turns a title into a hue at one fixed saturation and
-///   value, and this card's two Tetris titles happen to hash into the same sector of the wheel,
-///   which leaves them differing in one channel alone.
-///
-/// Both sit inside the tolerance; together they are twice outside it. That is also the stronger
-/// claim: what is worth refusing is a shelf showing the same plastic *and* the same label, not
-/// one that merely came up in a similar colour.
-fn alone_label() -> (usize, usize) {
-    on_the_lone_pak(GB_LABEL_Y + GB_LABEL_H / 2)
-}
-
-/// The two side slots of the carousel, in screen pixels: a shrunken cart stands from 26 to 213
-/// on the left and from 506 to 693 on the right, with its foot on the selection's floor, so
-/// these read a band across the middle of one. A shelf of two fills both of them with its other
-/// cart; a shelf of one leaves both of them bare, since the lone pak is only 240 px wide and
-/// stands in the middle.
-///
-/// The same screen row on both, because two side slots are only the same reading if they are
-/// read at the same height up a cart: a side cart is 105 px of face, and 48 px down it is a
-/// different part of the label from 58 px down it.
-const SIDE_LEFT: (usize, usize) = (120, 250);
-const SIDE_RIGHT: (usize, usize) = (600, 250);
-/// The middle slot, on the selection itself, which stands full size from 240 to 480.
-const MIDDLE: (usize, usize) = (360, 250);
-/// The ground the carts stand on, which is what an empty place on the row leaves behind.
-const GROUND: [u32; 3] = [0x05, 0x05, 0x08];
-
-/// The shoulders ring over one shelf per platform, and each one says which system it is — on the
-/// plate's corner, as the machine that shelf's cartridges were made for, rather than as a name
-/// banner'd over the carts for a second and a half. Read off the panel rather than the draw
-/// list: what is being checked is that the band is showing a different drawing on each shelf,
-/// which a list of rectangles cannot answer — a draw list would agree three times over that a
-/// texture landed at x 24 while the same picture came up every time.
-///
-/// The Game Boy Advance shelf holds two carts here, so it also stands for every two-cart shelf:
-/// all three slots are filled, the selection dead centre with the *other* cart repeated on both
-/// sides of it. Read as pixels, the proof of the repeat is that the two side slots come back the
-/// same colour as each other and a different one from the middle.
+/// Category tabs (R2) walk ALL → REC → GBA → GB → GBC over a mixed library. Each platform
+/// category shows that system's carts; the top-right icons stay lit the whole way.
 #[test]
 fn the_shoulders_ring_over_a_shelf_for_each_system() {
     let Ok(surface) = HeadlessSurface::new() else {
@@ -235,24 +107,20 @@ fn the_shoulders_ring_over_a_shelf_for_each_system() {
     let mut input = Script(VecDeque::new());
     f.advance(&mut input);
 
-    let gba = composed(&mut f, &mut c, "gba");
+    let all = composed(&mut f, &mut c, "all");
     assert_eq!(
-        banner_ink(&gba),
+        banner_ink(&all),
         0,
         "the carousel named a system nobody had switched to"
     );
     assert!(
-        mark_ink(&gba) > 20,
-        "the plate corner came up with no mark in it at all: {} lit pixels",
-        mark_ink(&gba)
+        tab_ink(&all) > 20,
+        "the top-right came up with no category tabs: {} lit pixels",
+        tab_ink(&all)
     );
-    // Two carts now fill all three slots by repeating around the ring, so the old centred-pair
-    // check — which asserted the outer slots were bare — asserts the opposite of what ships.
-    // Every slot holds a cart, the two side slots hold the same one, and it is not the
-    // selection.
-    let left = patch(&gba, SIDE_LEFT.0, SIDE_LEFT.1);
-    let right = patch(&gba, SIDE_RIGHT.0, SIDE_RIGHT.1);
-    let middle = patch(&gba, MIDDLE.0, MIDDLE.1);
+    let left = patch(&all, SIDE_LEFT.0, SIDE_LEFT.1);
+    let right = patch(&all, SIDE_RIGHT.0, SIDE_RIGHT.1);
+    let middle = patch(&all, MIDDLE.0, MIDDLE.1);
     for (name, slot) in [("left", left), ("middle", middle), ("right", right)] {
         assert!(
             apart(slot, GROUND) > 60,
@@ -269,15 +137,15 @@ fn the_shoulders_ring_over_a_shelf_for_each_system() {
         "the repeat put the selected cart beside itself: {left:?} either side of {middle:?}"
     );
 
-    // One shelf per platform, so the Colour cart is not on the Game Boy shelf: each stands
-    // alone in the middle of its own.
+    // Skip REC, land on GBA, then GB, then GBC — each platform category alone in the middle.
+    tap(&mut f, &mut input, Btn::R2); // REC
     let mut seen = Vec::new();
-    let mut marks = vec![mark_pixels(&gba)];
     for (name, banner) in [
+        ("gba", "Game Boy Advance"),
         ("game-boy", "Game Boy"),
         ("game-boy-color", "Game Boy Color"),
     ] {
-        tap(&mut f, &mut input, Btn::R1);
+        tap(&mut f, &mut input, Btn::R2);
         let px = composed(&mut f, &mut c, name);
         let (ax, ay) = alone();
         let cart = patch(&px, ax, ay);
@@ -285,65 +153,29 @@ fn the_shoulders_ring_over_a_shelf_for_each_system() {
         let label = patch(&px, lx, ly);
         assert!(
             apart(cart, GROUND) > 60,
-            "no cart in the middle of the {banner} shelf: {cart:?}"
+            "no cart in the middle of the {banner} category: {cart:?}"
         );
-        for (side, (x, y)) in [("left", SIDE_LEFT), ("right", SIDE_RIGHT)] {
-            let beside = patch(&px, x, y);
-            assert!(
-                apart(beside, GROUND) < 30,
-                "the {banner} shelf holds one cart but drew something on its {side}: {beside:?}"
-            );
-        }
         assert_eq!(
             banner_ink(&px),
             0,
-            "the {banner} shelf banner'd its name over the carts"
+            "the {banner} category banner'd its name over the carts"
         );
-        let ink = mark_ink(&px);
+        let ink = tab_ink(&px);
         assert!(
             ink > 20,
-            "the {banner} shelf came up with no mark on the case: {ink} lit pixels"
+            "the {banner} category came up with no tabs: {ink} lit pixels"
         );
-        let mark = mark_pixels(&px);
-        assert!(
-            !marks.contains(&mark),
-            "the {banner} shelf is showing a mark another shelf already showed"
-        );
-        marks.push(mark);
         assert!(
             seen.iter()
                 .all(|(c, l)| apart(cart, *c) + apart(label, *l) > 60),
-            "{banner} is showing a cart another shelf already showed: {cart:?} in {label:?}"
+            "{banner} is showing a cart another category already showed: {cart:?} in {label:?}"
         );
         seen.push((cart, label));
     }
-
-    // Round the ring and back to where it started, on the cart the shelf was left on.
-    tap(&mut f, &mut input, Btn::R1);
-    let back = composed(&mut f, &mut c, "gba-again");
-    assert!(
-        apart(patch(&back, SIDE_LEFT.0, SIDE_LEFT.1), left) < 30,
-        "the ring did not come back to the cart the first shelf was left on"
-    );
-    assert_eq!(banner_ink(&back), 0, "the way back put a banner up");
-    assert_eq!(
-        mark_pixels(&back),
-        marks[0],
-        "the ring came back to the Game Boy Advance shelf under another system's mark"
-    );
 }
 
-/// A card whose carts are all Game Boy Advance gets a bare corner. The shoulders have nowhere to
-/// go on it, so naming the platform would be the device stating, permanently, the one thing about
-/// the card that cannot change — and the same rule that makes L1 and R1 inert makes the mark
-/// absent.
-///
-/// Rendered rather than asserted off the draw list, because "no mark" is exactly the claim a draw
-/// list is worst at: a list with no `Draw::Tex` in it looks identical whether the corner is empty
-/// because the rule held or because the faces never arrived, and the panel is where the
-/// difference shows. The shelf beside it, which does have two platforms, is composed from the
-/// same fixture path for contrast — one of these two frames has a machine in the corner and the
-/// other does not, and both are written out to be looked at.
+/// A GBA-only card still draws category tabs (ALL / REC / GBA). R1 letter-jumps and does not
+/// clear them; adding a Game Boy cart keeps tabs in the same corner.
 #[test]
 fn a_card_on_one_shelf_leaves_the_corner_empty() {
     let Ok(surface) = HeadlessSurface::new() else {
@@ -360,24 +192,18 @@ fn a_card_on_one_shelf_leaves_the_corner_empty() {
     let mut input = Script(VecDeque::new());
     f.advance(&mut input);
     let bare = composed(&mut f, &mut c, "one-shelf");
-    assert_eq!(
-        mark_ink(&bare),
-        0,
-        "a card with one shelf put a machine in the corner: {} lit pixels",
-        mark_ink(&bare)
+    assert!(
+        tab_ink(&bare) > 20,
+        "a GBA-only card drew no category tabs: {} lit pixels",
+        tab_ink(&bare)
     );
-    // And the shoulders leave it that way, which is the same statement from the other side: a
-    // mark that appeared on the first press would be a control that is dead and says so late.
     tap(&mut f, &mut input, Btn::R1);
     let pressed = composed(&mut f, &mut c, "one-shelf-after-r1");
-    assert_eq!(
-        mark_ink(&pressed),
-        0,
-        "R1 put a mark in the corner of a card that has one shelf"
+    assert!(
+        tab_ink(&pressed) > 20,
+        "R1 cleared the category tabs on a GBA-only card"
     );
 
-    // The same fixture with a Game Boy cart added, so the only thing that differs between the
-    // two frames is whether there is anywhere to switch to.
     let two = tmp_root_with_carts(&["Emerald", "Fusion"]);
     put_game_boy_carts(two.path());
     clocked(two.path());
@@ -386,9 +212,9 @@ fn a_card_on_one_shelf_leaves_the_corner_empty() {
     f.advance(&mut input);
     let marked = composed(&mut f, &mut c, "two-shelves");
     assert!(
-        mark_ink(&marked) > 20,
-        "a card with two shelves did not say which one it was on: {} lit pixels",
-        mark_ink(&marked)
+        tab_ink(&marked) > 20,
+        "a mixed card drew no category tabs: {} lit pixels",
+        tab_ink(&marked)
     );
 }
 

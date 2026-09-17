@@ -104,6 +104,7 @@ enum Cmd {
     /// Drops the transport — which is what actually closes the wire, see `TcpLink`'s `Drop`
     /// — and marks the session no longer active.
     EndLink,
+    SetOption(String, String),
 }
 
 struct Shared {
@@ -265,6 +266,14 @@ impl EmuHandle {
     /// request as far as the worker is concerned.
     pub fn end_link(&self) {
         let _ = self.cmds.send(Cmd::EndLink);
+    }
+
+    /// Push a libretro core option onto the emulator thread. Most options take effect on the
+    /// next frame the core asks for variables.
+    pub fn set_option(&self, key: &str, value: &str) {
+        let _ = self
+            .cmds
+            .send(Cmd::SetOption(key.to_owned(), value.to_owned()));
     }
 
     pub fn set_input(&self, mask: ButtonMask) {
@@ -517,6 +526,7 @@ impl Worker {
                 link.clear();
                 link.set_active(false);
             }
+            Cmd::SetOption(key, value) => core.set_option(&key, &value),
         }
     }
 

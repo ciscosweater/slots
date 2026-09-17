@@ -12,8 +12,8 @@ use slot_power::{Platform, Power};
 use slot_store::format_stamp;
 use slot_ui::{
     arrows_hint_face, badge_face, cart_placeholder_for, cart_shadow, cart_shadow_for,
-    category_face, chip_face, chip_shadow_face, date_time_text, favorite_mark_face, hhmm,
-    hint_face, icon_face, mark_face, menu_face, photo_face, quick_caret_face, quick_label_face,
+    category_tab_face, chip_face, chip_shadow_face, date_time_text, favorite_mark_face, hhmm,
+    hint_face, icon_face, menu_face, photo_face, quick_caret_face, quick_label_face,
     quick_legend_faces, quick_value_face, set_clock_hint_face, socket_face, sticker_face,
     title_face, toast_face, word_face, Icon, LinkBadge, PowerChoice, Printed, QuickMenuFaces,
     QuickRow, QuickValue, StickerFields, StickerPage, Toast, UndoFace, ALERT_PX, BOLT_PX, CART_H,
@@ -275,13 +275,13 @@ impl Frontend {
                 self.static_upload_stage = 1;
             }
             1 => {
-                let category_faces = ["ALL", "REC", "GBA", "GB", "GBC"]
-                    .into_iter()
-                    .map(|label| {
-                        let face = category_face(label);
-                        Printed::new(
+                let category_faces = (0..5)
+                    .map(|category| {
+                        let face = category_tab_face(category);
+                        Printed::sized(
                             compositor.create_texture(face.w, face.h, &face.rgba),
                             face.w,
+                            face.h,
                         )
                     })
                     .collect();
@@ -306,14 +306,6 @@ impl Frontend {
                         mark.h,
                     );
                 }
-                let marks = slot_store::Platform::ALL
-                    .iter()
-                    .map(|platform| {
-                        let face = mark_face(*platform);
-                        compositor.create_texture(face.w, face.h, &face.rgba)
-                    })
-                    .collect();
-                self.session.app_mut().set_mark_faces(marks);
                 // The clock screen's instruction never changes. Upload it with the other key
                 // caps so reopening Date & Time only has to rasterise the line under the caret.
                 let clock_hint = set_clock_hint_face();
@@ -655,10 +647,14 @@ impl Frontend {
         );
         self.draws.clear();
         self.session.app().draw(&mut self.draws);
-        let overlay = match self.session.app().game_platform() {
-            Some(slot_store::Platform::Gb) => self.gb_overlay,
-            Some(slot_store::Platform::Gbc) => self.gbc_overlay,
-            _ => None,
+        let overlay = if self.session.app().gb_overlay_visible() {
+            match self.session.app().game_platform() {
+                Some(slot_store::Platform::Gb) => self.gb_overlay,
+                Some(slot_store::Platform::Gbc) => self.gbc_overlay,
+                _ => None,
+            }
+        } else {
+            None
         };
         if let Some(tex) = overlay {
             let mut i = 0;

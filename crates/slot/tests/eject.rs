@@ -213,6 +213,8 @@ fn eject_preserves_the_levels() {
             ff_speed: 4,
             ff_sound: false,
             colour_correction: false,
+            gb_overlay: true,
+            face_buttons: slot_store::FaceButtons::Shortcuts,
         },
     )
     .unwrap();

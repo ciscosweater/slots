@@ -47,6 +47,56 @@ pub struct SlotState {
     pub ff_sound: bool,
     /// Whether the selected core should apply its console LCD colour correction.
     pub colour_correction: bool,
+    /// GB/GBC screen overlay artwork. Drawn only when on, LCD is off, and picture is Actual.
+    pub gb_overlay: bool,
+    /// What X and Y do while a game is playing.
+    pub face_buttons: FaceButtons,
+}
+
+/// In-game mapping for the face buttons that the GBA never had.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum FaceButtons {
+    /// X toggles the LCD mask; Y toggles colour correction.
+    #[default]
+    Shortcuts,
+    /// X is L; Y is R.
+    Shoulders,
+    /// X is turbo A; Y is turbo B.
+    Turbo,
+}
+
+impl FaceButtons {
+    pub const ALL: [FaceButtons; 3] = [
+        FaceButtons::Shortcuts,
+        FaceButtons::Shoulders,
+        FaceButtons::Turbo,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            FaceButtons::Shortcuts => "shortcuts",
+            FaceButtons::Shoulders => "shoulders",
+            FaceButtons::Turbo => "turbo",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<FaceButtons> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "shortcuts" => Some(FaceButtons::Shortcuts),
+            "shoulders" => Some(FaceButtons::Shoulders),
+            "turbo" => Some(FaceButtons::Turbo),
+            _ => None,
+        }
+    }
+
+    pub fn next(self, right: bool) -> FaceButtons {
+        let i = Self::ALL.iter().position(|v| *v == self).unwrap_or(0);
+        if right {
+            Self::ALL[(i + 1) % Self::ALL.len()]
+        } else {
+            Self::ALL[(i + Self::ALL.len() - 1) % Self::ALL.len()]
+        }
+    }
 }
 
 /// Not derived. `read_slot_state` falls back here on a first boot, and all zeroes would
@@ -66,6 +116,8 @@ impl Default for SlotState {
             ff_speed: FF_SPEED_DEFAULT,
             ff_sound: false,
             colour_correction: false,
+            gb_overlay: true,
+            face_buttons: FaceButtons::default(),
         }
     }
 }
@@ -84,7 +136,7 @@ pub fn read_slot_state(root: &Path) -> SlotState {
 
 pub fn write_slot_state(root: &Path, s: &SlotState) -> std::io::Result<()> {
     let text = format!(
-        "version=2\ncart={}\ncart_platform={}\nbrightness={}\nblue_light={}\nvolume={}\nmuted={}\nclock_set={}\nutc_offset_min={}\nrumble={}\nff_speed={}\nff_sound={}\ncolour_correction={}\n",
+        "version=2\ncart={}\ncart_platform={}\nbrightness={}\nblue_light={}\nvolume={}\nmuted={}\nclock_set={}\nutc_offset_min={}\nrumble={}\nff_speed={}\nff_sound={}\ncolour_correction={}\ngb_overlay={}\nface_buttons={}\n",
          s.cart.as_deref().unwrap_or(""),
          s.cart_platform.map_or(String::new(), platform_key),
         s.brightness,
@@ -96,7 +148,9 @@ pub fn write_slot_state(root: &Path, s: &SlotState) -> std::io::Result<()> {
         s.rumble as u8,
         s.ff_speed,
          s.ff_sound as u8,
-         s.colour_correction as u8
+         s.colour_correction as u8,
+         s.gb_overlay as u8,
+         s.face_buttons.as_str(),
     );
     atomic_write(&state_path(root), text.as_bytes())
 }
@@ -123,6 +177,8 @@ fn parse(text: &str) -> Option<SlotState> {
     let mut ff_speed = None;
     let mut ff_sound = None;
     let mut colour_correction = None;
+    let mut gb_overlay = None;
+    let mut face_buttons = None;
     for line in text.lines().filter(|l| !l.is_empty()) {
         let Some((key, value)) = line.split_once('=') else {
             continue;
@@ -143,6 +199,8 @@ fn parse(text: &str) -> Option<SlotState> {
             "ff_speed" => ff_speed = value.parse().ok().filter(|n| FF_SPEEDS.contains(n)),
             "ff_sound" => ff_sound = flag(value),
             "colour_correction" => colour_correction = flag(value),
+            "gb_overlay" => gb_overlay = flag(value),
+            "face_buttons" => face_buttons = FaceButtons::parse(value),
             _ => {}
         }
     }
@@ -166,6 +224,8 @@ fn parse(text: &str) -> Option<SlotState> {
         ff_speed: ff_speed.unwrap_or(fallback.ff_speed),
         ff_sound: ff_sound.unwrap_or(fallback.ff_sound),
         colour_correction: colour_correction.unwrap_or(fallback.colour_correction),
+        gb_overlay: gb_overlay.unwrap_or(fallback.gb_overlay),
+        face_buttons: face_buttons.unwrap_or(fallback.face_buttons),
     })
 }
 

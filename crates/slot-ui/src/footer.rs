@@ -19,6 +19,7 @@ const FOOTER_MARGIN: f32 = 24.0;
 pub struct Printed {
     pub face: Option<TexId>,
     pub w: u32,
+    pub h: u32,
 }
 
 impl Printed {
@@ -26,6 +27,15 @@ impl Printed {
         Printed {
             face: Some(face),
             w,
+            h: HINT_H,
+        }
+    }
+
+    pub fn sized(face: TexId, w: u32, h: u32) -> Self {
+        Printed {
+            face: Some(face),
+            w,
+            h,
         }
     }
 }

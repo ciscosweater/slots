@@ -200,6 +200,8 @@ fn the_cards_setting_reaches_the_core_through_the_session() {
         let state = SlotState {
             clock_set: true,
             colour_correction: colour,
+            gb_overlay: true,
+            face_buttons: slot_store::FaceButtons::Shortcuts,
             ..SlotState::default()
         };
         write_slot_state(d.path(), &state).expect("write slot.state");

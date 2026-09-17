@@ -797,6 +797,10 @@ impl RetroCore for LibretroCore {
         let _a = Active::bind(&mut self.host);
         unsafe { halt_link() };
     }
+
+    fn set_option(&mut self, key: &str, value: &str) {
+        LibretroCore::set_option(self, key, value);
+    }
 }
 
 #[cfg(test)]

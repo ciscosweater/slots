@@ -208,6 +208,24 @@ pub fn core_options(which: Core) -> Vec<(&'static str, &'static str)> {
     }
 }
 
+/// The libretro option that tracks the quick menu's colour-correction switch for a live core.
+pub fn colour_correction_option(which: Core, on: bool) -> (&'static str, &'static str) {
+    match which {
+        Core::Mgba => (
+            "mgba_color_correction",
+            if on { "Auto" } else { "OFF" },
+        ),
+        Core::Gpsp => (
+            "gpsp_color_correction",
+            if on { "enabled" } else { "disabled" },
+        ),
+        Core::Gambatte => (
+            "gambatte_gbc_color_correction",
+            if on { "GBC only" } else { "disabled" },
+        ),
+    }
+}
+
 pub fn apply_core_options(core: &mut LibretroCore, which: Core) {
     for (key, value) in core_options(which) {
         core.set_option(key, value);
@@ -242,7 +260,14 @@ pub fn apply_core_options_with(
         }
         Core::Gambatte => {
             for (key, value) in core_options(which) {
-                core.set_option(key, value);
+                if key == "gambatte_gbc_color_correction" {
+                    core.set_option(
+                        key,
+                        if colour { "GBC only" } else { "disabled" },
+                    );
+                } else {
+                    core.set_option(key, value);
+                }
             }
         }
     }
