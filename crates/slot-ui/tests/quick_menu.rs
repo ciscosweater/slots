@@ -63,6 +63,7 @@ fn the_rows_and_values_match_the_menu() {
             "X / Y Buttons",
             "GB Overlay",
             "LCD Effect",
+            "Reset Display",
             "Date & Time",
             "About"
         ]
@@ -100,7 +101,11 @@ fn the_rows_and_values_match_the_menu() {
             .into_iter()
             .filter(|row| row.opens())
             .collect::<Vec<_>>(),
-        vec![QuickRow::DateTime, QuickRow::About]
+        vec![
+            QuickRow::ResetDisplay,
+            QuickRow::DateTime,
+            QuickRow::About
+        ]
     );
 }
 

@@ -6,11 +6,12 @@ use slot_input::{Action, Btn, MUTE_CHORD_MS};
 use slot_power::{Battery, Charge, LedState, LidPolicy, Power};
 use slot_retro::LinkChannel;
 use slot_store::{
-    format_stamp, legacy_from_disk, legacy_prefs, read_favorites, read_last_shelf, read_lcd,
-    read_pixelify, read_recents, read_slot_state, resolve_display, touch_recent, write_display_field,
-    write_favorites, write_last_shelf, write_pixelify, write_recents, write_slot_state, Cart, Core,
-    DisplayField, DisplayPrefs, DisplayTarget, FaceButtons, LastShelf, Platform, SlotState,
-    StateEntry, StateRing, Theme, BLUE_LIGHT_MAX, BRIGHTNESS_MAX, FF_SPEEDS, RING_MAX, VOLUME_MAX,
+    clear_display_target, format_stamp, legacy_from_disk, legacy_prefs, read_favorites,
+    read_last_shelf, read_lcd, read_pixelify, read_recents, read_slot_state, reset_legacy,
+    resolve_display, touch_recent, write_display_field, write_favorites, write_last_shelf,
+    write_pixelify, write_recents, write_slot_state, Cart, Core, DisplayField, DisplayPrefs,
+    DisplayTarget, FaceButtons, LastShelf, Platform, SlotState, StateEntry, StateRing, Theme,
+    BLUE_LIGHT_MAX, BRIGHTNESS_MAX, FF_SPEEDS, RING_MAX, VOLUME_MAX,
 };
 use slot_ui::{
     board_at, board_zoom, draw_backdrop, draw_empty_slot, draw_footer, draw_printed, draw_sticker,
@@ -921,7 +922,7 @@ impl App {
                 VideoMode::Stretch => QuickValue::FillScreen,
                 VideoMode::Actual => QuickValue::ActualSize,
             }),
-            QuickRow::DateTime | QuickRow::About => None,
+            QuickRow::DateTime | QuickRow::About | QuickRow::ResetDisplay => None,
         }
     }
 
@@ -1880,6 +1881,7 @@ impl App {
                     rows.push(QuickRow::Overlay);
                     rows.push(QuickRow::Picture);
                 }
+                rows.push(QuickRow::ResetDisplay);
                 rows
             }
             _ => QuickRow::ALL.to_vec(),
@@ -1976,7 +1978,7 @@ impl App {
         self.phase = Phase::QuickMenu { row, resume };
     }
 
-    /// A on a row. Only Date & Time and About open anything.
+    /// A on a row. Only Date & Time and About open anything; Reset Display clears this scope.
     fn open_quick_row(&mut self, row: QuickRow) {
         match row {
             QuickRow::DateTime => {
@@ -1985,6 +1987,7 @@ impl App {
                 self.phase = clock_screen(self.utc_secs(), self.state.utc_offset_min, true);
             }
             QuickRow::About => self.phase = Phase::About,
+            QuickRow::ResetDisplay => self.reset_display(),
             QuickRow::FastForward
             | QuickRow::FastForwardSound
             | QuickRow::ColourCorrection
@@ -1994,6 +1997,42 @@ impl App {
             | QuickRow::LcdEffect
             | QuickRow::Picture => {}
         }
+    }
+
+    /// Clear display prefs for the current write target and re-apply what remains underneath.
+    fn reset_display(&mut self) {
+        let Some(root) = self.root.clone() else {
+            return;
+        };
+        match self.display_write_target() {
+            Some((platform, Some(stem))) => {
+                if let Err(e) =
+                    clear_display_target(&root, DisplayTarget::Game { platform, stem: &stem })
+                {
+                    eprintln!("slot: display: {e}");
+                }
+                // Picture is per-cart only; clearing its line restores Actual.
+                if let Err(e) = slot_store::ini::remove(&root, video_mode::VIDEO_MODE_FILE, &stem) {
+                    eprintln!("slot: video: {e}");
+                }
+                self.video_mode = VideoMode::default();
+                self.apply_cart_display(platform, &stem);
+            }
+            Some((platform, None)) => {
+                if let Err(e) = clear_display_target(&root, DisplayTarget::Platform(platform)) {
+                    eprintln!("slot: display: {e}");
+                }
+                self.apply_shelf_display_prefs();
+            }
+            None => {
+                // ALL / REC: restore the legacy globals that still back unresolved platforms.
+                if let Err(e) = reset_legacy(&root) {
+                    eprintln!("slot: display: {e}");
+                }
+                self.apply_shelf_display_prefs();
+            }
+        }
+        self.hud.toast(Toast::DisplayReset, self.now());
     }
 
     /// Left or Right on the row in hand. It takes effect at once and goes straight to the card,
@@ -2061,7 +2100,7 @@ impl App {
                 self.set_picture(mode);
                 return;
             }
-            QuickRow::DateTime | QuickRow::About => return,
+            QuickRow::DateTime | QuickRow::About | QuickRow::ResetDisplay => return,
         }
         self.persist();
     }
@@ -2311,9 +2350,12 @@ impl App {
     }
 
     /// The game layer's own power, which answers to the phase rather than to an event: an
-    /// insert, a resume and a wake all bring the picture up the same way.
+    /// insert, a resume and a wake all bring the picture up the same way. Play settings keep
+    /// the panel lit — they sit over a paused frame, not instead of one — so the iris must
+    /// not walk shut behind the scrim.
     fn step_screen(&mut self, dt: f32) {
-        let lit = matches!(self.phase, Phase::Playing { .. } | Phase::Polaroids { .. });
+        let lit = matches!(self.phase, Phase::Playing { .. } | Phase::Polaroids { .. })
+            || self.play_settings_open();
         let step = if lit {
             dt / POWER_ON_S
         } else {

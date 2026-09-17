@@ -22,9 +22,10 @@ pub use core::{
     core_for, core_for_cart, read_selected_cores, write_selected_core, Core, SELECTED_CORE_FILE,
 };
 pub use display_prefs::{
-    legacy_from_disk, legacy_prefs, resolve_display, write_field as write_display_field,
-    write_game as write_display_game, write_platform as write_display_platform, DisplayField,
-    DisplayPrefs, DisplayTarget, DISPLAY_FILE,
+    clear_target as clear_display_target, legacy_from_disk, legacy_prefs, reset_legacy,
+    resolve_display, write_field as write_display_field, write_game as write_display_game,
+    write_platform as write_display_platform, DisplayField, DisplayPrefs, DisplayTarget,
+    DISPLAY_FILE,
 };
 pub use favorites::{read_favorites, write_favorites, FAVORITES_FILE};
 pub use font::{read_pixelify, write_pixelify, FONT_FILE};

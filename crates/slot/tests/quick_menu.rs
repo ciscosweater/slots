@@ -8,7 +8,7 @@ use slot::app::{App, Phase};
 use slot_input::{Action, Btn};
 use slot_store::{read_slot_state, write_slot_state, SlotState};
 use slot_ui::{
-    edge, Draw, Icon, QuickMenuFaces, QuickRow, QuickValue, TexId, MENU_PAD, OUT_H, OUT_W,
+    edge, Draw, Icon, QuickMenuFaces, QuickRow, QuickValue, TexId, Toast, MENU_PAD, OUT_H, OUT_W,
     QUICK_EDGE, QUICK_PITCH, QUICK_TOP,
 };
 use tempfile::TempDir;
@@ -89,7 +89,7 @@ fn menu_over_a_game_opens_display_settings_and_b_resumes_playing() {
     assert!(a.play_settings_open());
     for want in [
         QuickRow::ColourCorrection,
-        QuickRow::ColourCorrection,
+        QuickRow::ResetDisplay,
     ] {
         press(&mut a, Btn::Down);
         assert_eq!(a.quick_menu(), Some(want));
@@ -122,10 +122,90 @@ fn menu_over_a_gba_game_omits_overlay_and_picture() {
     press(&mut a, Btn::Down);
     assert_eq!(a.quick_menu(), Some(QuickRow::ColourCorrection));
     press(&mut a, Btn::Down);
+    assert_eq!(a.quick_menu(), Some(QuickRow::ResetDisplay));
+    press(&mut a, Btn::Down);
     assert_eq!(
         a.quick_menu(),
-        Some(QuickRow::ColourCorrection),
+        Some(QuickRow::ResetDisplay),
         "GBA must not grow GB Overlay or Picture rows"
+    );
+}
+
+#[test]
+fn play_settings_keep_the_game_screen_lit() {
+    let d = tmp_root_with_carts(&["Emerald", "Fusion"]);
+    let mut a = app_playing_in(d.path(), "Emerald");
+    a.set_game_ready(true);
+    assert!(
+        (a.screen_power() - 1.0).abs() < 0.01,
+        "expected a fully lit game before opening settings"
+    );
+    a.apply(Action::QuickMenu);
+    assert!(a.play_settings_open());
+    // Longer than POWER_OFF_S: without the lit guard the iris would already be dark.
+    a.update(0.5);
+    assert!(
+        (a.screen_power() - 1.0).abs() < 0.01,
+        "play settings let the game iris close behind the scrim: {}",
+        a.screen_power()
+    );
+}
+
+#[test]
+fn reset_display_clears_game_override_back_to_platform() {
+    let d = tmp_root_with_carts(&["Emerald", "Fusion"]);
+    slot_store::write_display_platform(
+        d.path(),
+        slot_store::Platform::Gba,
+        slot_store::DisplayField::Lcd,
+        false,
+    )
+    .unwrap();
+    slot_store::write_display_game(
+        d.path(),
+        slot_store::Platform::Gba,
+        "Emerald",
+        slot_store::DisplayField::Lcd,
+        true,
+    )
+    .unwrap();
+    let mut a = app_playing_in(d.path(), "Emerald");
+    assert!(a.lcd_enabled());
+    a.apply(Action::QuickMenu);
+    open_play_row(&mut a, QuickRow::ResetDisplay);
+    press(&mut a, Btn::A);
+    assert!(!a.lcd_enabled());
+    assert!(
+        !slot_store::resolve_display(
+            d.path(),
+            slot_store::Platform::Gba,
+            Some("Emerald"),
+            slot_store::DisplayPrefs::built_in(),
+        )
+        .lcd
+    );
+    assert_eq!(a.toast(), Some(Toast::DisplayReset));
+}
+
+#[test]
+fn reset_display_on_console_tab_clears_platform_keys() {
+    let (d, mut a, _) = on_carousel();
+    go_to_console_tab(&mut a, 2);
+    open_at(&mut a, QuickRow::LcdEffect);
+    press(&mut a, Btn::Right);
+    assert!(!a.lcd_enabled());
+    press(&mut a, Btn::Down);
+    assert_eq!(a.quick_menu(), Some(QuickRow::ResetDisplay));
+    press(&mut a, Btn::A);
+    assert!(a.lcd_enabled());
+    assert!(
+        slot_store::resolve_display(
+            d.path(),
+            slot_store::Platform::Gba,
+            None,
+            slot_store::DisplayPrefs::built_in(),
+        )
+        .lcd
     );
 }
 
@@ -198,7 +278,8 @@ fn menu_over_a_gb_game_includes_picture() {
         QuickRow::ColourCorrection,
         QuickRow::Overlay,
         QuickRow::Picture,
-        QuickRow::Picture,
+        QuickRow::ResetDisplay,
+        QuickRow::ResetDisplay,
     ] {
         press(&mut a, Btn::Down);
         assert_eq!(a.quick_menu(), Some(want));
@@ -218,6 +299,7 @@ fn up_and_down_move_the_bar_and_stop_at_the_ends() {
         QuickRow::FaceButtons,
         QuickRow::Overlay,
         QuickRow::LcdEffect,
+        QuickRow::ResetDisplay,
         QuickRow::DateTime,
         QuickRow::About,
         QuickRow::About,
@@ -282,7 +364,7 @@ fn rumble_and_fast_forward_sound_flip_on_either_arrow_and_save() {
 fn the_arrows_change_nothing_on_a_row_that_opens() {
     let (d, mut a, _) = on_carousel();
     let before = std::fs::read(d.path().join("System/slot.state")).expect("read slot.state");
-    for row in [QuickRow::DateTime, QuickRow::About] {
+    for row in [QuickRow::ResetDisplay, QuickRow::DateTime, QuickRow::About] {
         open_at(&mut a, row);
         press(&mut a, Btn::Left);
         press(&mut a, Btn::Right);
@@ -688,6 +770,7 @@ fn open_play_row(a: &mut App, row: QuickRow) {
         QuickRow::ColourCorrection,
         QuickRow::Overlay,
         QuickRow::Picture,
+        QuickRow::ResetDisplay,
     ];
     let i = rows.iter().position(|r| *r == row).expect("playing row");
     for _ in 0..i {

@@ -17,13 +17,14 @@ pub enum QuickRow {
     Overlay,
     LcdEffect,
     Picture,
+    ResetDisplay,
     DateTime,
     About,
 }
 
 impl QuickRow {
     /// Shelf menu, top to bottom. Picture stays out: it is per-cart and only live in-game.
-    pub const ALL: [QuickRow; 9] = [
+    pub const ALL: [QuickRow; 10] = [
         QuickRow::FastForward,
         QuickRow::FastForwardSound,
         QuickRow::ColourCorrection,
@@ -31,12 +32,13 @@ impl QuickRow {
         QuickRow::FaceButtons,
         QuickRow::Overlay,
         QuickRow::LcdEffect,
+        QuickRow::ResetDisplay,
         QuickRow::DateTime,
         QuickRow::About,
     ];
 
     /// Every row that has a rastered label, including Picture for the in-game menu.
-    pub const LABELS: [QuickRow; 10] = [
+    pub const LABELS: [QuickRow; 11] = [
         QuickRow::FastForward,
         QuickRow::FastForwardSound,
         QuickRow::ColourCorrection,
@@ -45,12 +47,13 @@ impl QuickRow {
         QuickRow::Overlay,
         QuickRow::LcdEffect,
         QuickRow::Picture,
+        QuickRow::ResetDisplay,
         QuickRow::DateTime,
         QuickRow::About,
     ];
 
     /// In-game display settings shared by every platform. Overlay and Picture are appended
-    /// only for Game Boy carts.
+    /// only for Game Boy carts; Reset Display is always last.
     pub const PLAYING: [QuickRow; 2] = [
         QuickRow::LcdEffect,
         QuickRow::ColourCorrection,
@@ -82,6 +85,7 @@ impl QuickRow {
             QuickRow::Overlay => "GB Overlay",
             QuickRow::LcdEffect => "LCD Effect",
             QuickRow::Picture => "Picture",
+            QuickRow::ResetDisplay => "Reset Display",
             QuickRow::DateTime => "Date & Time",
             QuickRow::About => "About",
         }
@@ -89,7 +93,10 @@ impl QuickRow {
 
     /// A row A opens, rather than one the arrows change.
     pub fn opens(self) -> bool {
-        matches!(self, QuickRow::DateTime | QuickRow::About)
+        matches!(
+            self,
+            QuickRow::ResetDisplay | QuickRow::DateTime | QuickRow::About
+        )
     }
 
     /// The row above within `rows`, stopping at the top.

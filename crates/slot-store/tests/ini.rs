@@ -117,3 +117,16 @@ fn writing_collapses_a_duplicate_the_file_already_had() {
         Some("actual")
     );
 }
+
+#[test]
+fn remove_drops_a_key_and_leaves_the_neighbours() {
+    let d = root_with(Some("# keep\nEmerald = stretch\nFusion = actual\n"));
+    ini::remove(d.path(), FILE, "Emerald").unwrap();
+    assert_eq!(ini::value(d.path(), FILE, "Emerald"), None);
+    assert_eq!(
+        ini::value(d.path(), FILE, "Fusion").as_deref(),
+        Some("actual")
+    );
+    let text = std::fs::read_to_string(d.path().join(FILE)).unwrap();
+    assert!(text.contains("# keep"));
+}

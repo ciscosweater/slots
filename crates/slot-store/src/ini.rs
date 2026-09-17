@@ -101,3 +101,30 @@ pub fn write(root: &Path, file: &str, key: &str, value: &str) -> std::io::Result
     }
     crate::atomic::atomic_write(&path, out.as_bytes())
 }
+
+/// Drop every line for `key`, leaving the rest of the file alone. A missing key is fine.
+pub fn remove(root: &Path, file: &str, key: &str) -> std::io::Result<()> {
+    let path = root.join(file);
+    let Ok(existing) = std::fs::read_to_string(&path) else {
+        return Ok(());
+    };
+
+    let mut out = String::with_capacity(existing.len());
+    let mut changed = false;
+    for line in existing.lines() {
+        let is_this_key = line
+            .split_once('=')
+            .map(|(k, _)| k.trim() == key)
+            .unwrap_or(false);
+        if is_this_key {
+            changed = true;
+            continue;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    if !changed {
+        return Ok(());
+    }
+    crate::atomic::atomic_write(&path, out.as_bytes())
+}

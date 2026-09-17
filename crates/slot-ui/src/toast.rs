@@ -26,10 +26,11 @@ pub enum Toast {
     FontPixelify,
     FontOriginal,
     PeerEnded,
+    DisplayReset,
 }
 
 impl Toast {
-    pub const ALL: [Toast; 15] = [
+    pub const ALL: [Toast; 16] = [
         Toast::StateSaved,
         Toast::StateLoaded,
         Toast::NeedsGpsp,
@@ -45,6 +46,7 @@ impl Toast {
         Toast::FontPixelify,
         Toast::FontOriginal,
         Toast::PeerEnded,
+        Toast::DisplayReset,
     ];
 
     /// Position in `ALL`, which is the order faces are uploaded in.
@@ -69,6 +71,7 @@ impl Toast {
             Toast::FontPixelify => "Font: Pixelify",
             Toast::FontOriginal => "Font: Original",
             Toast::PeerEnded => "Link was ended",
+            Toast::DisplayReset => "Display Reset",
         }
     }
 }
