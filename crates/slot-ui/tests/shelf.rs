@@ -204,6 +204,53 @@ fn categories_cycle_and_filter_by_platform() {
 }
 
 #[test]
+fn favorites_stay_in_alphabetical_order_on_the_library() {
+    use std::collections::BTreeSet;
+
+    let mut shelf = shelf_with(3);
+    shelf.select(2);
+    shelf.sort_by_favorites(&BTreeSet::from(["Game 2".to_string()]));
+    assert_eq!(
+        shelf
+            .carts
+            .iter()
+            .map(|cart| cart.stem.as_str())
+            .collect::<Vec<_>>(),
+        ["Game 0", "Game 1", "Game 2"],
+        "starring a cart must not pull it to the front of ALL"
+    );
+    assert_eq!(shelf.index, 2);
+}
+
+#[test]
+fn leaving_favorites_returns_to_the_same_all_cart() {
+    use std::collections::BTreeSet;
+
+    let mut shelf = shelf_with(3);
+    shelf.sort_by_favorites(&BTreeSet::from(["Game 0".to_string()]));
+    shelf.select(2);
+    shelf.next_category();
+    shelf.next_category();
+    shelf.next_category();
+    assert_eq!(shelf.category(), 5);
+    assert_eq!(
+        shelf
+            .carts
+            .iter()
+            .map(|cart| cart.stem.as_str())
+            .collect::<Vec<_>>(),
+        ["Game 0"]
+    );
+    while shelf.category() > 0 {
+        shelf.previous_category();
+    }
+    assert_eq!(
+        shelf.carts[shelf.index].stem, "Game 2",
+        "Favorites stole ALL's selection on the way back"
+    );
+}
+
+#[test]
 fn favorites_do_not_override_recent_order() {
     use std::collections::BTreeSet;
 

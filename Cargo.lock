@@ -1863,7 +1863,7 @@ checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
 name = "slot"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "cpal",
  "gilrs",
@@ -1882,7 +1882,7 @@ dependencies = [
 
 [[package]]
 name = "slot-gfx"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "gl",
  "glutin",
@@ -1894,36 +1894,36 @@ dependencies = [
 
 [[package]]
 name = "slot-input"
-version = "1.0.0"
+version = "1.1.0"
 
 [[package]]
 name = "slot-power"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "tempfile",
 ]
 
 [[package]]
 name = "slot-retro"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "libloading",
 ]
 
 [[package]]
 name = "slot-sfxcut"
-version = "1.0.0"
+version = "1.1.0"
 
 [[package]]
 name = "slot-store"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "tempfile",
 ]
 
 [[package]]
 name = "slot-ui"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "fontdue",
  "png 0.17.16",

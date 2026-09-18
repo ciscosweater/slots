@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased — `slots` fork
+## Unreleased
+
+## 1.1.0 — 2026-09-18
 
 This fork starts from [`slot`](https://github.com/BrandonKowalski/slot) by Brandon T. Kowalski.
 The original GBA-focused frontend remains the foundation; this fork adds:

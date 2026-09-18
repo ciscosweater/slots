@@ -248,13 +248,13 @@ Build, verify and package a device tree:
 ```sh
 ./scripts/build-release.sh --out dist-device
 ./scripts/verify-release.sh dist-device
-./scripts/package-release.sh v1.0.0 --tree dist-device
+./scripts/package-release.sh v1.1.0 --tree dist-device
 ```
 
 Or build and package in one command:
 
 ```sh
-./scripts/package-release.sh v1.0.0
+./scripts/package-release.sh v1.1.0
 ```
 
 The resulting ZIP and SHA-256 checksum are written to `dist/releases/`. The release scripts also

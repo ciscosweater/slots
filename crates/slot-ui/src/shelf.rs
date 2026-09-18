@@ -79,6 +79,9 @@ pub struct Shelf {
     all_complete_artwork: Vec<bool>,
     platform_filter: Option<slot_store::Platform>,
     category: usize,
+    /// Last highlighted cart in each tab. Switching away from ALL onto an empty Favorites
+    /// row must not come back having stolen ALL's place.
+    last_in_category: [Option<Cart>; CATEGORY_COUNT],
     /// The cart silhouette in black, drawn under a dimmed cart. One texture for the whole
     /// row: every cart is the same shape.
     shadow: Option<TexId>,
@@ -112,6 +115,7 @@ impl Shelf {
             all_complete_artwork: vec![false; cart_count],
             platform_filter: None,
             category: 0,
+            last_in_category: std::array::from_fn(|_| None),
             shadow: None,
             gb_shadow: None,
             placeholder: None,
@@ -310,11 +314,33 @@ impl Shelf {
     }
 
     /// Rebuild the visible row for a category index. Used by boot restore and by the
-    /// shoulder category controls.
+    /// shoulder category controls. Each tab keeps its own cursor so Favorites cannot
+    /// overwrite ALL when the current cart is not in that list.
     pub fn set_category(&mut self, category: usize) {
-        let selected = self.carts.get(self.index).cloned();
+        let current = self.carts.get(self.index).cloned();
+        let switching = category != self.category;
+        if switching {
+            self.last_in_category[self.category] = current.clone();
+        }
         self.category = category;
         self.rebuild_visible();
+        let selected = if switching {
+            let remembered = self.last_in_category[category]
+                .as_ref()
+                .filter(|want| self.carts.iter().any(|cart| same_cart(cart, want)));
+            if remembered.is_some() {
+                remembered.cloned()
+            } else if current
+                .as_ref()
+                .is_some_and(|want| self.carts.iter().any(|cart| same_cart(cart, want)))
+            {
+                current
+            } else {
+                None
+            }
+        } else {
+            current
+        };
         self.restore_selection(selected.as_ref());
         self.settle_here();
     }
@@ -463,19 +489,18 @@ impl Shelf {
         self.jump_letter(-1);
     }
 
-    /// Put favourites first without losing the texture paired with each cart or changing
-    /// which cart is selected. The jump is immediate because the row itself was reordered;
-    /// animating through every cart between the old and new indices would imply browsing.
+    /// Record the favourite set. ALL and platform tabs keep alphabetical order; only the
+    /// Favorites tab is rebuilt, so starring a cart cannot jump it to the front of another row.
     pub fn sort_by_favorites(&mut self, favorites: &BTreeSet<String>) {
-        let selected = self.carts.get(self.index).cloned();
         self.favorites = favorites.clone();
-        if self.category == FAVORITES_CATEGORY {
-            self.rebuild_visible();
-        } else {
-            self.sort_visible();
+        if self.category != FAVORITES_CATEGORY {
+            return;
         }
+        let selected = self.carts.get(self.index).cloned();
+        self.rebuild_visible();
         self.restore_selection(selected.as_ref());
         self.settle_here();
+        self.last_in_category[FAVORITES_CATEGORY] = self.carts.get(self.index).cloned();
     }
 
     pub fn hold_left(&mut self, now: Millis) {
@@ -866,15 +891,8 @@ impl Shelf {
                     .then_with(|| a.stem.cmp(&b.stem))
                     .then_with(|| (a.platform as u8).cmp(&(b.platform as u8)))
             } else {
-                let favorite_order = if self.category == FAVORITES_CATEGORY {
-                    std::cmp::Ordering::Equal
-                } else {
-                    self.favorites
-                        .contains(&b.stem)
-                        .cmp(&self.favorites.contains(&a.stem))
-                };
-                favorite_order
-                    .then_with(|| a.stem.cmp(&b.stem))
+                a.stem
+                    .cmp(&b.stem)
                     .then_with(|| (a.platform as u8).cmp(&(b.platform as u8)))
             }
         });

@@ -134,7 +134,7 @@ fn a_root_with_no_games_directory_scans_as_empty() {
 }
 
 #[test]
-fn favorites_are_shelved_first_and_each_group_stays_alphabetical() {
+fn favorites_do_not_reorder_the_scanned_library() {
     let d = tmp_root();
     for name in ["Advance.gba", "Boktai.gba", "Crash.gba", "Zelda.gba"] {
         write_rom(&d, &format!("GBA/{name}"), "GAME");
@@ -149,5 +149,5 @@ fn favorites_are_shelved_first_and_each_group_stays_alphabetical() {
         .into_iter()
         .map(|cart| cart.stem)
         .collect();
-    assert_eq!(stems, ["Boktai", "Zelda", "Advance", "Crash"]);
+    assert_eq!(stems, ["Advance", "Boktai", "Crash", "Zelda"]);
 }

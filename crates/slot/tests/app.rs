@@ -641,7 +641,7 @@ fn on_shelf(stems: &[&str]) -> (tempfile::TempDir, App) {
 }
 
 #[test]
-fn y_toggles_a_persistent_favorite_and_moves_it_to_the_front() {
+fn y_toggles_a_persistent_favorite_without_reordering_the_shelf() {
     let (d, mut app) = on_shelf(&["Advance", "Boktai", "Crash"]);
     app.apply(Action::GbaDown(Btn::Right));
     app.apply(Action::GbaDown(Btn::Right));
@@ -649,6 +649,11 @@ fn y_toggles_a_persistent_favorite_and_moves_it_to_the_front() {
 
     app.apply(Action::GbaDown(Btn::Y));
     assert_eq!(app.selected_stem(), Some("Crash"));
+    assert_eq!(
+        app.shelf_index(),
+        2,
+        "favoriting Crash jumped it to the front of ALL"
+    );
     assert_eq!(app.toast(), Some(Toast::Favorited));
     assert!(read_favorites(d.path()).contains("Crash"));
 
@@ -677,6 +682,31 @@ fn the_favorites_tab_filters_the_shelf_and_removes_a_cart_immediately() {
     assert_eq!(app.shelf_total(), 0);
     assert_eq!(app.toast(), Some(Toast::Unfavorited));
     assert!(read_favorites(d.path()).is_empty());
+}
+
+#[test]
+fn switching_to_favorites_does_not_steal_the_all_selection() {
+    let (_d, mut app) = on_shelf(&["Advance", "Boktai", "Crash"]);
+    app.apply(Action::GbaDown(Btn::Y));
+    app.apply(Action::GbaDown(Btn::Right));
+    app.apply(Action::GbaDown(Btn::Right));
+    assert_eq!(app.selected_stem(), Some("Crash"));
+
+    for _ in 0..3 {
+        app.apply(Action::FfStart);
+    }
+    assert_eq!(app.shelf_category(), 5);
+    assert_eq!(app.selected_stem(), Some("Advance"));
+
+    for _ in 0..3 {
+        app.apply(Action::RewindStart);
+    }
+    assert_eq!(app.shelf_category(), 0);
+    assert_eq!(
+        app.selected_stem(),
+        Some("Crash"),
+        "coming back from Favorites landed on the starred cart"
+    );
 }
 
 #[test]

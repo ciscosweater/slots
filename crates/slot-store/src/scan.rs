@@ -5,7 +5,6 @@ use std::time::UNIX_EPOCH;
 
 use crate::gba::{header_code, header_title};
 use crate::platform::Platform;
-use crate::read_favorites;
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Cart {
@@ -55,7 +54,7 @@ pub fn scan(root: &Path) -> Result<Vec<Cart>, StoreError> {
     }
     // Builds before platform namespacing only supported GBA and kept ROMs in Games/.
     scan_dir(root, &root.join("Games"), Platform::Gba, true, &mut carts)?;
-    sort_carts(root, &mut carts);
+    sort_carts(&mut carts);
     Ok(carts)
 }
 
@@ -94,7 +93,7 @@ pub fn scan_cached(root: &Path) -> Result<Vec<Cart>, StoreError> {
     if cache.as_ref().is_some_and(|old| old.len() != records.len()) {
         dirty = true;
     }
-    sort_carts(root, &mut carts);
+    sort_carts(&mut carts);
     if dirty {
         let path = root.join("System").join("library.index");
         let text = encode_cache(&records);
@@ -246,13 +245,10 @@ fn artwork_path(root: &Path, platform: Platform, legacy: bool, stem: &str) -> Op
     }
 }
 
-fn sort_carts(root: &Path, carts: &mut [Cart]) {
-    let favorites = read_favorites(root);
+fn sort_carts(carts: &mut [Cart]) {
     carts.sort_by(|a, b| {
-        favorites
-            .contains(&b.stem)
-            .cmp(&favorites.contains(&a.stem))
-            .then_with(|| a.stem.cmp(&b.stem))
+        a.stem
+            .cmp(&b.stem)
             .then_with(|| (a.platform as u8).cmp(&(b.platform as u8)))
     });
 }
