@@ -39,12 +39,15 @@ jobs:
       # need. zip is missing, and so is cmake, which core:device builds mGBA with. Bullseye is
       # past its security support, so its Release files are no longer re-signed and apt refuses
       # them as expired unless told the date does not matter; nothing installed here needs a
-      # security update.
+      # security update. Pin libarchive to the Bullseye main build: the security mirror can leave
+      # a newer arm64 index entry behind after removing the referenced .deb, which otherwise makes
+      # an otherwise healthy release fail before the build starts.
       - name: Install zip, cmake and Task
         run: |
           set -eu
           apt-get -o Acquire::Check-Valid-Until=false update
-          apt-get install -y --no-install-recommends zip cmake
+          apt-get install -y --no-install-recommends \
+            zip cmake libarchive13=3.4.3-2+deb11u1
           curl -fsSL https://taskfile.dev/install.sh | sh -s -- -b /usr/local/bin
 
       # Named for the tag, so what comes out of the archive says which version it is rather
