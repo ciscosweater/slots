@@ -47,7 +47,8 @@ jobs:
           set -eu
           apt-get -o Acquire::Check-Valid-Until=false update
           apt-get install -y --no-install-recommends \
-            zip cmake libarchive13=3.4.3-2+deb11u1
+            zip cmake libarchive13=3.4.3-2+deb11u1 \
+            pkg-config libudev-dev libasound2-dev libxkbcommon-dev libwayland-dev libx11-dev
           curl -fsSL https://taskfile.dev/install.sh | sh -s -- -b /usr/local/bin
 
       # Named for the tag, so what comes out of the archive says which version it is rather
