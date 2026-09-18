@@ -50,9 +50,11 @@ jobs:
           # the stable Bullseye archive rather than failing on a stale security entry.
           sed -i '/bullseye-security/d' /etc/apt/sources.list
           apt-get update
-          apt-get install -y --no-install-recommends \
+          apt-get install -y --allow-downgrades --no-install-recommends \
             zip cmake libarchive13=3.4.3-2+deb11u1 \
-            pkg-config libudev-dev libasound2-dev libxkbcommon-dev libwayland-dev libx11-dev
+            pkg-config libsystemd0=247.3-7+deb11u5 \
+            libudev1=247.3-7+deb11u5 libudev-dev=247.3-7+deb11u5 \
+            libasound2-dev libxkbcommon-dev libwayland-dev libx11-dev
           curl -fsSL https://taskfile.dev/install.sh | sh -s -- -b /usr/local/bin
 
       # Named for the tag, so what comes out of the archive says which version it is rather
