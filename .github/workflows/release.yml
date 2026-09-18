@@ -45,7 +45,11 @@ jobs:
       - name: Install zip, cmake and Task
         run: |
           set -eu
-          apt-get -o Acquire::Check-Valid-Until=false update
+          # The archived Bullseye security index can point at packages the mirror has
+          # already removed. The release container only needs build-time libraries, so use
+          # the stable Bullseye archive rather than failing on a stale security entry.
+          sed -i '/bullseye-security/d' /etc/apt/sources.list
+          apt-get update
           apt-get install -y --no-install-recommends \
             zip cmake libarchive13=3.4.3-2+deb11u1 \
             pkg-config libudev-dev libasound2-dev libxkbcommon-dev libwayland-dev libx11-dev
